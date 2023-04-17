@@ -1,0 +1,175 @@
+#!/usr/bin/make -f
+
+# For reproducible builds.
+export DATE	 = date --utc --date="@$(SOURCE_DATE_EPOCH)"
+export WHOAMI	 = echo buildd
+export HOSTNAME	 = debian
+
+# The generated object files are linked into kernel modules.
+export DEB_BUILD_MAINT_OPTIONS = hardening=-stackprotector
+
+include /usr/share/dpkg/pkg-info.mk
+
+include debian/rules.defs
+NVIDIA_TESLA		?=
+LINUX_KMOD_VARIANT	?=
+LINUX_KMOD_TESTED	?=
+ARCH_LIST		?= amd64
+
+NVIDIA_RELEASE		 = $(DEB_VERSION_UPSTREAM)
+version			 = $(NVIDIA_RELEASE)
+version_major		 = $(firstword $(subst ., ,$(version)))
+ifeq (yes,$(NVIDIA_TESLA))
+variant			 = $(if $(NVIDIA_TESLA),tesla)
+variant_description	 = $(if $(NVIDIA_TESLA), (Tesla version))
+else
+variant			 = $(if $(NVIDIA_TESLA),tesla-$(NVIDIA_TESLA))
+variant_description	 = $(if $(NVIDIA_TESLA), (Tesla $(NVIDIA_TESLA) version))
+endif
+-variant		 = $(if $(variant),-$(variant))
+nvidia			 = nvidia$(-variant)
+current			 = $(if $(variant),$(variant),current)
+module-current		 = $(current)$(LINUX_KMOD_VARIANT)
+module			 = nvidia-$(module-current)
+nvidia-kernel		 = $(nvidia)$(LINUX_KMOD_VARIANT)-kernel
+debhelper_compat	:= $(shell sed -rn 's/.*debhelper-compat \(= ([0-9]+)\).*/\1/p' debian/control)
+
+CONTROL_PREFIXES	 = nvidia-kernel
+RENAME_nvidia-kernel	 = $(nvidia-kernel)
+renamed_prefix		 = $(or $(RENAME_$1),$(subst nvidia,$(if $(filter %nvidia0 %nvidia1 %nvidia2,$1),$(nvidia-),$(nvidia)),$1))
+CONTROL_PREFIXES_RENAMED = $(foreach p,$(CONTROL_PREFIXES),$(call renamed_prefix,$p))
+
+# $1=file, $2=prefix
+applyprefixrename	 = $(patsubst debian/$2%,debian/$(call renamed_prefix,$2)%,$1)
+# $1=file, $2=prefixlist
+applyprefixrenamelist	 = $(if $2,$(call applyprefixrenamelist,$(call applyprefixrename,$1,$(firstword $2)),$(wordlist 2,$(words $2),$2)),$1)
+
+ALL_CONTROL	:= $(wildcard $(patsubst %,debian/%*,$(CONTROL_PREFIXES)))
+LEGACY_CONTROL	:= $(wildcard $(patsubst %,debian/%*,$(CONTROL_PREFIXES_RENAMED)))
+RENAME_CONTROL	 = $(filter-out $(LEGACY_CONTROL),$(ALL_CONTROL))
+RENAMED_CONTROL	 = $(foreach f,$(RENAME_CONTROL),$(call applyprefixrenamelist,$f,$(CONTROL_PREFIXES)))
+
+TEMPLATE_DIRS	 = debian
+TEMPLATE_DIRS	+= debian/module/debian
+TEMPLATE_DIRS	+= debian/patches/module
+TEMPLATE_DIRS	+= debian/tests
+TEMPLATES	:= $(filter-out %.modules.in,$(wildcard $(addsuffix /*.in,$(TEMPLATE_DIRS))))
+
+AUTOGEN		 = $(TEMPLATES:.in=)
+AUTOGEN		+= $(RENAMED_CONTROL:.in=)
+AUTOGEN		+= debian/module/debian/bug-control
+AUTOGEN		+= debian/module/debian/control.modules.in
+AUTOGEN		+= debian/bug-control
+AUTOGEN		+= debian/substvars
+AUTOGEN		+= $(AUTOKEEP)
+AUTOKEEP	 =
+AUTOKEEP	+= debian/tests/autopkgtest-pkg-dkms.conf
+AUTOKEEP	+= debian/tests/control
+
+
+.PHONY: binary binary-arch binary-indep build build-arch build-indep clean install
+binary binary-arch binary-indep build build-arch build-indep clean install:
+	dh $@
+
+prepare: $(AUTOGEN)
+	cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null push -a || test $$? = 2
+
+override_dh_auto_build: prepare
+	dh_auto_build -- kernel-open/nvidia/nv-kernel.o_binary kernel-open/nvidia-modeset/nv-modeset-kernel.o_binary NV_VERBOSE=1
+	find kernel-open -name '*.o_binary' -type l -exec sh -c 'ln -fv "$$(readlink -f "{}")" "{}"' \;
+
+override_dh_auto_test: J_FLAG ?= $(patsubst parallel=%,-j%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+override_dh_auto_test: TEST_KERNEL ?= $(shell ls -dvr1 /lib/modules/*/build 2>/dev/null | cut -d/ -f4 | head -n 1)
+override_dh_auto_test:
+	$(RM) -r test-module-build
+	cp -a kernel-open test-module-build
+	$(MAKE) $(J_FLAG) -C test-module-build NV_VERBOSE=1 KERNEL_UNAME=$(TEST_KERNEL)
+
+# nothing to do
+override_dh_auto_install:
+
+override_dh_auto_clean:
+	$(MAKE) nvidia.clean nvidia-modeset.clean
+	find kernel-open -name '*.o_binary' | xargs -r $(RM) -v
+	$(RM) -r test-module-build
+
+execute_after_dh_clean:
+	cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null pop -a || test $$? = 2
+	$(RM) -r kernel-open/.pc/
+	$(RM) $(filter-out $(AUTOKEEP),$(AUTOGEN))
+	$(if $(AUTOKEEP),$(MAKE) -f debian/rules $(AUTOKEEP))
+
+execute_after_dh_install: pack-module-source
+
+override_dh_bugfiles:
+	dh_bugfiles -A
+
+override_dh_gencontrol:
+	dh_gencontrol -- \
+		-V'nvidia:Version=$(version)' \
+		-V'nvidia:Version:major=$(version_major)' \
+		-V'nvidia=$(nvidia)' \
+		-V'nvidia-kernel=$(nvidia-kernel)' \
+		-V'nvidia:Variant=$(variant)' \
+		-V'nvidia:VariantDesc=$(variant_description)' \
+		-V'nvidia:debhelper-compat=$(debhelper_compat)' \
+		-V'nvidia:kmod:tested:Linux=$(strip $(or $(LINUX_KMOD_TESTED_$(DEB_HOST_ARCH)),$(LINUX_KMOD_TESTED),???))' \
+		-Vnvidia:Models="`cat debian/control.models`"
+
+# used by dpkg-genchanges
+debian/substvars:
+	echo 'nvidia:VariantDesc=$(variant_description)' > $@
+	echo 'nvidia:VariantDescShort=$(variant_description_short)' >> $@
+
+module_source_pkg	 = debian/$(nvidia-kernel)-source
+module_source_txz	 = $(module_source_pkg)/usr/src/$(nvidia-kernel).tar.xz
+pack-module-source:
+	find $(module_source_pkg) \( -name '*.binary' -o -name '*.in' -not -name '*.modules.in' \) -print -delete
+	tar c \
+		-C $(module_source_pkg)/usr/src \
+		--owner=root --group=root \
+		--mode=a=rX,u+w \
+		--sort=name \
+		--mtime='@$(SOURCE_DATE_EPOCH)' \
+		--clamp-mtime \
+		modules | xz -9 > $(module_source_txz)
+	tar tfv $(module_source_txz)
+	$(RM) -r $(module_source_pkg)/usr/src/modules
+
+############################################################################
+
+.PHONY: autogen
+autogen: $(AUTOGEN)
+
+# Generating control files
+%:: %.in debian/rules debian/rules.defs
+	perl -p \
+	-e 's{#VERSION#}{$(version)}g;' \
+	-e 's{#MAJOR#}{$(version_major)}g;' \
+	-e 's{#NVIDIA#}{$(nvidia)}g;' \
+	-e 's{#VARIANT#}{$(-variant)}g;' \
+	-e 's{#NVIDIA-KERNEL#}{$(nvidia-kernel)}g;' \
+	-e 's{#MODULE#}{$(module)}g;' \
+	-e 's{#MODULE_CURRENT#}{$(module-current)}g;' \
+	-e 's{#ARCH_LIST#}{$(ARCH_LIST)}g;' \
+	-e 's{#AUTOPKGTEST_ARCH_LIST#}{$(ARCH_LIST)}g;' \
+	< $< > $@
+	chmod --reference=$< $@
+
+debian/module/debian/control.modules.in: debian/control debian/module/debian/control.modules.in.binary
+	sed -n '/^#/d; 0,/^$$/p' $< > $@
+	cat $(filter-out $<,$^) >> $@
+
+debian/module/debian/bug-control: debian/bug-control
+	cp $< $@
+	echo "" >> $@
+	echo "Submit-As: $(nvidia-kernel)-source" >> $@
+
+
+define rename-template
+$2%: $1%
+	cp -a $$< $$@
+endef
+$(foreach p,$(CONTROL_PREFIXES),$(eval $(call rename-template,$p,$(call renamed_prefix,$p))))
+
+include debian/bug-control.mk

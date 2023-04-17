@@ -1,0 +1,12 @@
+---
+include:
+  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/salsa-ci.yml
+  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/pipeline-jobs.yml
+
+variables:
+  SALSA_CI_COMPONENTS: 'main contrib non-free non-free-firmware'
+  SALSA_CI_DISABLE_BUILD_PACKAGE_I386: 1
+
+# some standard flags are not used while building a kernel module
+blhc:
+  allow_failure: true

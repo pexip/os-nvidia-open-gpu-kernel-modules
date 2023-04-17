@@ -1,0 +1,7 @@
+LINUX_KMOD_VARIANT	 = -open
+
+LINUX_KMOD_TESTED	 = 6.2
+
+ARCH_LIST		 = amd64
+ARCH_LIST		+= arm64
+#ARCH_LIST		+= ppc64el

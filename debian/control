@@ -1,0 +1,100 @@
+Source: nvidia-open-gpu-kernel-modules
+Section: contrib/kernel
+Priority: optional
+Maintainer: Debian NVIDIA Maintainers <pkg-nvidia-devel@lists.alioth.debian.org>
+Uploaders:
+ Andreas Beckmann <anbe@debian.org>,
+Build-Depends:
+ debhelper-compat (= 13),
+Build-Depends-Arch:
+ dh-sequence-dkms,
+ quilt,
+ linux-headers-amd64 [amd64] <!nocheck>,
+ linux-headers-arm64 [arm64] <!nocheck>,
+ linux-headers-powerpc64le [ppc64el] <!nocheck>,
+Rules-Requires-Root: no
+Standards-Version: 4.6.2
+Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules
+Vcs-Browser: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules
+Vcs-Git: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules.git
+Testsuite: autopkgtest-pkg-dkms
+
+#Package: ${nvidia-kernel}-support
+Package: nvidia-open-kernel-support
+Architecture: amd64 arm64
+Multi-Arch: foreign
+Depends:
+ ${nvidia}-alternative-${nvidia:Version} | nvidia-alternative-${nvidia:Version} | nvidia-tesla-alternative-${nvidia:Version},
+ nvidia-kernel-common (>= 20151021),
+ nvidia-modprobe (>= ${nvidia:Version:major}),
+ ${misc:Depends}
+Provides:
+ nvidia-kernel-support-any,
+ ${nvidia-kernel}-support--v1,
+ nvidia-open-kernel-support-${nvidia:Version},
+Conflicts:
+ nvidia-open-kernel-support-${nvidia:Version},
+Description: NVIDIA open kernel module support files${nvidia:VariantDesc}
+ The NVIDIA binary driver provides optimized hardware acceleration of
+ OpenGL/GLX/EGL/GLES applications via a direct-rendering X Server
+ for graphics cards using NVIDIA chip sets.
+ .
+ ${nvidia:Models}
+ .
+ This package provides supporting configuration for the kernel module.
+
+#Package: ${nvidia-kernel}-dkms
+Package: nvidia-open-kernel-dkms
+Architecture: amd64 arm64
+Multi-Arch: foreign
+Pre-Depends:
+ nvidia-installer-cleanup,
+Depends:
+ firmware-${nvidia}-gsp (= ${nvidia:Version}) | firmware-nvidia-gsp-${nvidia:Version},
+ ${nvidia-kernel}-support--v1,
+ ${misc:Depends}
+Provides:
+ ${nvidia-kernel}-${nvidia:Version},
+ nvidia-open-kernel-${nvidia:Version},
+ nvidia-open-kernel-dkms-any (= ${nvidia:Version}),
+Description: NVIDIA open kernel module DKMS source${nvidia:VariantDesc}
+ This package builds the NVIDIA binary kernel modules needed by
+ ${nvidia}-driver, using DKMS.
+ Provided that you have the kernel header packages installed, the kernel
+ module will be built for your running kernel and automatically rebuilt for
+ any new kernel headers that are installed.
+ .
+ The NVIDIA binary driver provides optimized hardware acceleration of
+ OpenGL/GLX/EGL/GLES applications via a direct-rendering X Server
+ for graphics cards using NVIDIA chip sets.
+ .
+ ${nvidia:Models}
+ .
+ Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
+
+#Package: ${nvidia-kernel}-source
+Package: nvidia-open-kernel-source
+Architecture: amd64 arm64
+Depends:
+ debhelper-compat (= ${nvidia:debhelper-compat}),
+ module-assistant,
+ ${misc:Depends}
+Recommends:
+ firmware-${nvidia}-gsp (= ${nvidia:Version}) | firmware-nvidia-gsp-${nvidia:Version},
+ ${nvidia-kernel}-support--v1,
+Description: NVIDIA open kernel module source${nvidia:VariantDesc}
+ This package provides the source for the NVIDIA binary kernel modules
+ needed by ${nvidia}-driver in a form suitable
+ for use by module-assistant.
+ .
+ The NVIDIA binary driver provides optimized hardware acceleration of
+ OpenGL/GLX/EGL/GLES applications via a direct-rendering X Server
+ for graphics cards using NVIDIA chip sets.
+ .
+ PLEASE read /usr/share/doc/${nvidia-kernel}-source/README.Debian.gz
+ for building information. If you want the kernel module to be automatically
+ installed via DKMS, install ${nvidia-kernel}-dkms instead.
+ .
+ ${nvidia:Models}
+ .
+ Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.

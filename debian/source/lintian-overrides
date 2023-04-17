@@ -1,0 +1,14 @@
+# upstream provides no signatures
+debian-watch-does-not-check-openpgp-signature
+
+# running tests would require nvidia hardware and using the kernel module
+superficial-tests
+
+# debian/patches/module/series gets generated and applied during the build process
+patch-file-present-but-not-mentioned-in-series [debian/patches/module/*.patch]
+
+# generated file (no source available)
+very-long-line-length-in-source-file * > 512 [src/common/sdk/nvidia/inc/ctrl/ctrl0000/ctrl0000system.h:*]
+
+# binary data
+very-long-line-length-in-source-file * > 512 [src/nvidia-modeset/src/shaders/g_*_shaders:*]
