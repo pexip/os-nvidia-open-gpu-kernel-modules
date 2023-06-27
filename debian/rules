@@ -99,6 +99,8 @@ override_dh_auto_install: J_FLAG ?= $(patsubst parallel=%,-j%,$(filter parallel=
 override_dh_auto_install:
 	mkdir -p "debian/$(nvidia-kernel)-$(kernel_abi)/lib/modules/$(kernel_abi)"
 	$(MAKE) $(J_FLAG) -C module-build NV_VERBOSE=1 KERNEL_UNAME="$(kernel_abi)" INSTALL_MOD_PATH="$(CURDIR)/debian/$(nvidia-kernel)-$(kernel_abi)" modules_install
+	find "debian/$(nvidia-kernel)-$(kernel_abi)/lib/modules/$(kernel_abi)" -name 'nvidia*.ko' -exec sh -c 'mv "{}" $$(echo "{}" | sed -e "s#nvidia\([a-z-]*.ko\)#$(module)\1#")' \;
+
 
 # nothing to do
 override_dh_auto_test:
