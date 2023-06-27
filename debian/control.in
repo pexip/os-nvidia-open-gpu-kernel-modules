@@ -102,7 +102,7 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
  Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
 
 #Package: ${nvidia-kernel}-prebuilt
-Package: nvidia-open-kernel-5.15.0-1pexip1-amd64
+Package: nvidia-open-kernel-@KABI@
 Architecture: amd64 arm64
 Depends:
  linux-image-${kernel:ABIVersion},
@@ -124,7 +124,7 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
  .
  This package is built for linux-image-${kernel:ABIVersion}.
 
-Package: nvidia-open-kernel-prebuilt-amd64
+Package: nvidia-open-kernel-prebuilt-@ARCH@
 Architecture: amd64 arm64
 Depends:
  nvidia-open-kernel-@KABI@,
