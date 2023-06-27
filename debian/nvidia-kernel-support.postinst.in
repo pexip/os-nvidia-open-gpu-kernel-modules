@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+
+if [ "$1" = "configure" ] ; then
+
+        # activate our trigger
+        dpkg-trigger --no-await register-nvidia-alternative
+        dpkg-trigger --no-await register-nvidia-tesla-alternative
+
+fi
+
+#DEBHELPER#
+
