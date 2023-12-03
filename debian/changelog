@@ -1,3 +1,55 @@
+nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sun, 03 Dec 2023 12:31:14 +0100
+
+nvidia-open-gpu-kernel-modules (525.147.05-1) unstable; urgency=medium
+
+  * New upstream production branch release 525.147.05 (2023-10-31).
+    * Fixed CVE-2023-31022.  (Closes: #1055144)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5491
+  * Refresh patches.
+  * Fix FTBFS with quilt 0.67.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 22 Nov 2023 01:17:56 +0100
+
+nvidia-open-gpu-kernel-modules (525.125.06-2) unstable; urgency=medium
+
+  * Backport get_user_pages changes from 535.86.05 to fix kernel module build
+    for Linux 6.5.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 19 Sep 2023 16:28:49 +0200
+
+nvidia-open-gpu-kernel-modules (525.125.06-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jul 2023 12:17:23 +0200
+
+nvidia-open-gpu-kernel-modules (525.125.06-1) unstable; urgency=medium
+
+  * New upstream production branch release 525.125.06 (2023-06-26).
+    * Fixed CVE-2023-25515, CVE-2023-25516.  (Closes: #1039686)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5468
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jul 2023 10:54:38 +0200
+
+nvidia-open-gpu-kernel-modules (525.116.04-1) unstable; urgency=medium
+
+  * New upstream production branch release 525.116.04 (2023-05-09).
+  * New upstream production branch release 525.116.03 (2023-04-25).
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 11 Jul 2023 12:26:29 +0200
+
+nvidia-open-gpu-kernel-modules (525.105.17-2) unstable; urgency=medium
+
+  * Backport drm_driver_has_dumb_destroy changes from 525.116.03 to fix kernel
+    module build for Linux 6.4.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 27 Jun 2023 14:58:55 +0200
+
 nvidia-open-gpu-kernel-modules (525.105.17-1) unstable; urgency=medium
 
   * New upstream production branch release 525.105.17 (2023-03-30).

@@ -35,3 +35,11 @@ do
 		fi
 	fi
 done
+
+for psrc in "$ngd/debian/patches/module"/*.patch
+do
+	pdst=${psrc#$ngd/}
+	if ! cmp -s "$psrc" "$pdst" ; then
+		cp -v "$psrc" "$pdst"
+	fi
+done

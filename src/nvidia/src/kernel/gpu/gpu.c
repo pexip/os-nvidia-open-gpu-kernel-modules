@@ -489,6 +489,10 @@ NV_STATUS gpuConstruct_IMPL
     // allocate OS-specific GPU extension area
     osInitOSHwInfo(pGpu);
 
+    // Initialize NvFBC session count and list.
+
+    // Initialize NvENC session count and list.
+
     return gpuConstructPhysical(pGpu);
 }
 
@@ -4692,17 +4696,25 @@ gpuReadBusConfigCycle_IMPL
     NvU32   *pData
 )
 {
-    NvU32 domain   = gpuGetDomain(pGpu);
-    NvU8  bus      = gpuGetBus(pGpu);
-    NvU8  device   = gpuGetDevice(pGpu);
-    NvU8  function = 0;
+    NvU32  domain              = gpuGetDomain(pGpu);
+    NvU8   bus                 = gpuGetBus(pGpu);
+    NvU8   device              = gpuGetDevice(pGpu);
+    NvU8   function            = 0;
+    NvBool bIsCCFeatureEnabled = NV_FALSE;
 
-    if (pGpu->hPci == NULL)
+    if (IS_PASSTHRU(pGpu) && !bIsCCFeatureEnabled)
     {
-        pGpu->hPci = osPciInitHandle(domain, bus, device, function, NULL, NULL);
+        gpuReadVgpuConfigReg_HAL(pGpu, index, pData);
     }
+    else
+    {
+        if (pGpu->hPci == NULL)
+        {
+            pGpu->hPci = osPciInitHandle(domain, bus, device, function, NULL, NULL);
+        }
 
-    *pData = osPciReadDword(pGpu->hPci, index);
+        *pData = osPciReadDword(pGpu->hPci, index);
+    }
 
     return NV_OK;
 }
