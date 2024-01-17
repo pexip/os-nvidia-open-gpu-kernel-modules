@@ -10,9 +10,8 @@ Build-Depends:
 Build-Depends-Arch:
  dh-sequence-dkms,
  quilt,
- linux-headers-amd64 (= 5.15.131-1pexip3) [amd64] <!nocheck>,
- linux-headers-arm64 (= 5.15.131-1pexip3) [arm64] <!nocheck>,
- linux-headers-powerpc64le (= 5.15.131-1pexip3) [ppc64el] <!nocheck>,
+ linux-headers-5.15.0-1pexip1-amd64 (= 5.15.131-1pexip3) [amd64] <!nocheck>,
+ linux-headers-5.15.0-1pexip1-arm64 (= 5.15.131-1pexip3) [arm64] <!nocheck>,
 Rules-Requires-Root: no
 Standards-Version: 4.6.2
 Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules
