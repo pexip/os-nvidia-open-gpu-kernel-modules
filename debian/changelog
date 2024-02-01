@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (525.105.17-1+pexip24u5) pexip-bookworm; urgency=medium
+
+  * New versioning scheme
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 01 Feb 2024 16:14:30 +0000
+
 nvidia-open-gpu-kernel-modules (525.105.17-1pexip4) pexip-bookworm; urgency=medium
 
   * Force kernel to pexip version.
