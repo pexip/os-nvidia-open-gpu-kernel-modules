@@ -337,6 +337,11 @@ RmLogGpuCrash(OBJGPU *pGpu)
             "NVRM: A GPU crash dump has been created. If possible, please run\n"
             "NVRM: nvidia-bug-report.sh as root to collect this data before\n"
             "NVRM: the NVIDIA kernel module is unloaded.\n");
+        if (hypervisorIsVgxHyper())
+        {
+            nv_printf(NV_DBG_ERRORS, "NVRM: Dumping nvlogs buffers\n");
+            nvlogDumpToKernelLog(NV_FALSE);
+        }
     }
 
     // Restore the disconnected properties, if they were reset
@@ -492,6 +497,8 @@ done:
         new_event->fd       = fd;
         new_event->active   = NV_TRUE;
         new_event->refcount = 0;
+
+        nvfp->bCleanupRmapi = NV_TRUE;
 
         NV_PRINTF(LEVEL_INFO, "allocated OS event:\n");
         NV_PRINTF(LEVEL_INFO, "   hParent: 0x%x\n", hParent);
@@ -2457,16 +2464,29 @@ void NV_API_CALL rm_cleanup_file_private(
 {
     THREAD_STATE_NODE threadState;
     void      *fp;
-    RM_API *pRmApi = rmapiGetInterface(RMAPI_EXTERNAL);
+    RM_API *pRmApi;
     RM_API_CONTEXT rmApiContext = {0};
     NvU32 i;
 
     NV_ENTER_RM_RUNTIME(sp,fp);
+
+    //
+    // Skip cleaning up this fd if:
+    // - no RMAPI clients and events were ever allocated on this fd
+    // - no RMAPI object handles were exported on this fd
+    // Access nvfp->handles without locking as fd cleanup is synchronised by the kernel
+    //
+    if (!nvfp->bCleanupRmapi && nvfp->handles == NULL)
+        goto done;
+
+    pRmApi = rmapiGetInterface(RMAPI_EXTERNAL);
     threadStateInit(&threadState, THREAD_STATE_FLAGS_NONE);
     threadStateSetTimeoutOverride(&threadState, 10 * 1000);
 
-    if (rmapiPrologue(pRmApi, &rmApiContext) != NV_OK)
+    if (rmapiPrologue(pRmApi, &rmApiContext) != NV_OK) {
+        NV_EXIT_RM_RUNTIME(sp,fp);
         return;
+    }
 
     // LOCK: acquire API lock
     if (rmapiLockAcquire(API_LOCK_FLAGS_NONE, RM_LOCK_MODULES_OSAPI) == NV_OK)
@@ -2500,6 +2520,7 @@ void NV_API_CALL rm_cleanup_file_private(
     rmapiEpilogue(pRmApi, &rmApiContext);
     threadStateFree(&threadState, THREAD_STATE_FLAGS_NONE);
 
+done:
     if (nvfp->ctl_nvfp != NULL)
     {
         nv_put_file_private(nvfp->ctl_nvfp_priv);

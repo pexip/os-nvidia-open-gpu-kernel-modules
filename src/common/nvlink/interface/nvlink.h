@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2014-2022 NVidia Corporation
+    Copyright (c) 2014-2023 NVidia Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -119,6 +119,12 @@ struct nvlink_device
     NvU32 numIoctrls;
     NvU32 numLinksPerIoctrl;
     NvU32 numActiveLinksPerIoctrl;
+
+    //
+    // boolean indicating if a given device
+    // is a reduced nvlink config
+    //
+    NvBool bReducedNvlinkConfig;
 
     // Client private information
     void *pDevInfo;
@@ -397,6 +403,10 @@ NvBool nvlink_lib_is_initialized(void);
  */
 NvBool nvlink_lib_is_device_list_empty(void);
 
+/*
+ * Get if a device registerd to the nvlink corelib has a reduced nvlink config
+ */
+NvBool nvlink_lib_is_registerd_device_with_reduced_config(void);
 
 /************************************************************************************************/
 /************************** NVLink library driver-side interface ********************************/
@@ -428,6 +438,11 @@ NvlStatus nvlink_lib_register_link(nvlink_device *dev, nvlink_link *link);
  * During the call, the calling driver must support callbacks into the driver from Core
  */
 NvlStatus nvlink_lib_unregister_link(nvlink_link *link);
+
+/*
+* Gets number of devices with type deviceType
+*/
+NvlStatus nvlink_lib_return_device_count_by_type(NvU32 deviceType, NvU32 *numDevices);
 
 
 /************************************************************************************************/
@@ -465,6 +480,7 @@ NvlStatus nvlink_lib_is_link_using_ALI(nvlink_link *link, NvBool *usingALI);
  * Set the training state for the given link as non-ALI or ALI
  */
 NvlStatus nvlink_lib_link_set_training_mode(nvlink_link *link, NvBool enableALI);
+
 /************************************************************************************************/
 /*************************** NVLink topology discovery functions ********************************/
 /************************************************************************************************/

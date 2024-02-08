@@ -267,6 +267,7 @@ struct KernelGsp {
     NvU32 (*__kgspReadUcodeFuseVersion__)(struct OBJGPU *, struct KernelGsp *, NvU32);
     NV_STATUS (*__kgspResetHw__)(struct OBJGPU *, struct KernelGsp *);
     NvBool (*__kgspIsEngineInReset__)(struct OBJGPU *, struct KernelGsp *);
+    NvBool (*__kgspIsWpr2Up__)(struct OBJGPU *, struct KernelGsp *);
     NvU32 (*__kgspGetFrtsSize__)(struct OBJGPU *, struct KernelGsp *);
     NvU64 (*__kgspGetPrescrubbedTopFbSize__)(struct OBJGPU *, struct KernelGsp *);
     NV_STATUS (*__kgspExtractVbiosFromRom__)(struct OBJGPU *, struct KernelGsp *, KernelGspVbiosImg **);
@@ -334,13 +335,15 @@ struct KernelGsp {
     RM_LIBOS_LOG_MEM rmLibosLogMem[3];
     RM_LIBOS_LOG_MEM gspPluginInitTaskLogMem[32];
     RM_LIBOS_LOG_MEM gspPluginVgpuTaskLogMem[32];
+    NvBool bHasVgpuLogs;
     void *pLogElf;
     NvU64 logElfDataSize;
+    PORT_MUTEX *pNvlogFlushMtx;
     NvBool bLibosLogsPollingEnabled;
     NvBool bInInit;
     NvBool bInLockdown;
     NvBool bPollingForRpcResponse;
-    NvBool bXid119Printed;
+    NvBool bFatalError;
     MEMORY_DESCRIPTOR *pMemDesc_simAccessBuf;
     SimAccessBuffer *pSimAccessBuf;
     NvP64 pSimAccessBufPriv;
@@ -411,6 +414,8 @@ NV_STATUS __nvoc_objCreate_KernelGsp(KernelGsp**, Dynamic*, NvU32);
 #define kgspResetHw_HAL(pGpu, pKernelGsp) kgspResetHw_DISPATCH(pGpu, pKernelGsp)
 #define kgspIsEngineInReset(pGpu, pKernelGsp) kgspIsEngineInReset_DISPATCH(pGpu, pKernelGsp)
 #define kgspIsEngineInReset_HAL(pGpu, pKernelGsp) kgspIsEngineInReset_DISPATCH(pGpu, pKernelGsp)
+#define kgspIsWpr2Up(pGpu, pKernelGsp) kgspIsWpr2Up_DISPATCH(pGpu, pKernelGsp)
+#define kgspIsWpr2Up_HAL(pGpu, pKernelGsp) kgspIsWpr2Up_DISPATCH(pGpu, pKernelGsp)
 #define kgspGetFrtsSize(pGpu, pKernelGsp) kgspGetFrtsSize_DISPATCH(pGpu, pKernelGsp)
 #define kgspGetFrtsSize_HAL(pGpu, pKernelGsp) kgspGetFrtsSize_DISPATCH(pGpu, pKernelGsp)
 #define kgspGetPrescrubbedTopFbSize(pGpu, pKernelGsp) kgspGetPrescrubbedTopFbSize_DISPATCH(pGpu, pKernelGsp)
@@ -688,6 +693,14 @@ NvBool kgspIsEngineInReset_TU102(struct OBJGPU *pGpu, struct KernelGsp *pKernelG
 
 static inline NvBool kgspIsEngineInReset_DISPATCH(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp) {
     return pKernelGsp->__kgspIsEngineInReset__(pGpu, pKernelGsp);
+}
+
+NvBool kgspIsWpr2Up_TU102(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp);
+
+NvBool kgspIsWpr2Up_GH100(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp);
+
+static inline NvBool kgspIsWpr2Up_DISPATCH(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp) {
+    return pKernelGsp->__kgspIsWpr2Up__(pGpu, pKernelGsp);
 }
 
 NvU32 kgspGetFrtsSize_TU102(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp);
@@ -1065,14 +1078,24 @@ static inline NV_STATUS kgspStartLogPolling(struct OBJGPU *pGpu, struct KernelGs
 #define kgspStartLogPolling(pGpu, pKernelGsp) kgspStartLogPolling_IMPL(pGpu, pKernelGsp)
 #endif //__nvoc_kernel_gsp_h_disabled
 
-void kgspDumpGspLogs_IMPL(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp, NvBool arg0);
+void kgspDumpGspLogs_IMPL(struct KernelGsp *pKernelGsp, NvBool arg0);
 
 #ifdef __nvoc_kernel_gsp_h_disabled
-static inline void kgspDumpGspLogs(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp, NvBool arg0) {
+static inline void kgspDumpGspLogs(struct KernelGsp *pKernelGsp, NvBool arg0) {
     NV_ASSERT_FAILED_PRECOMP("KernelGsp was disabled!");
 }
 #else //__nvoc_kernel_gsp_h_disabled
-#define kgspDumpGspLogs(pGpu, pKernelGsp, arg0) kgspDumpGspLogs_IMPL(pGpu, pKernelGsp, arg0)
+#define kgspDumpGspLogs(pKernelGsp, arg0) kgspDumpGspLogs_IMPL(pKernelGsp, arg0)
+#endif //__nvoc_kernel_gsp_h_disabled
+
+void kgspDumpGspLogsUnlocked_IMPL(struct KernelGsp *pKernelGsp, NvBool arg0);
+
+#ifdef __nvoc_kernel_gsp_h_disabled
+static inline void kgspDumpGspLogsUnlocked(struct KernelGsp *pKernelGsp, NvBool arg0) {
+    NV_ASSERT_FAILED_PRECOMP("KernelGsp was disabled!");
+}
+#else //__nvoc_kernel_gsp_h_disabled
+#define kgspDumpGspLogsUnlocked(pKernelGsp, arg0) kgspDumpGspLogsUnlocked_IMPL(pKernelGsp, arg0)
 #endif //__nvoc_kernel_gsp_h_disabled
 
 NV_STATUS kgspExecuteSequencerBuffer_IMPL(struct OBJGPU *pGpu, struct KernelGsp *pKernelGsp, void *pRunCpuSeqParams);
