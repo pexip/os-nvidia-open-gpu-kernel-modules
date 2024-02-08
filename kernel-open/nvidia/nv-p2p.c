@@ -431,6 +431,8 @@ static int nv_p2p_get_pages(
             goto failed;
         }
 
+        (*page_table)->gpu_uuid = gpu_uuid;
+
         rc = nvidia_dev_get_uuid(gpu_uuid, sp);
         if (rc != 0)
         {
@@ -461,10 +463,11 @@ static int nv_p2p_get_pages(
         {
             goto failed;
         }
+
+        (*page_table)->gpu_uuid = gpu_uuid;
     }
 
     bGetPages = NV_TRUE;
-    (*page_table)->gpu_uuid = gpu_uuid;
 
     status = os_alloc_mem((void *)&(*page_table)->pages,
              (entries * sizeof(page)));
@@ -503,8 +506,13 @@ static int nv_p2p_get_pages(
     (*page_table)->page_size = page_size_index;
 
     os_free_mem(physical_addresses);
+    physical_addresses = NULL;
+
     os_free_mem(wreqmb_h);
+    wreqmb_h = NULL;
+
     os_free_mem(rreqmb_h);
+    rreqmb_h = NULL;
 
     if (free_callback != NULL)
     {

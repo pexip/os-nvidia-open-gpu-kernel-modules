@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -40,52 +40,62 @@ enum
     /*!
      * Read the BIOS Size
      */
-    RM_SOE_CORE_CMD_READ_BIOS_SIZE,
+    RM_SOE_CORE_CMD_READ_BIOS_SIZE = 0x0,
 
     /*!
      * Read the BIOS
      */
-    RM_SOE_CORE_CMD_READ_BIOS,
+    RM_SOE_CORE_CMD_READ_BIOS = 0x1,
 
     /*!
      * Run DMA self-test
      */
-    RM_SOE_CORE_CMD_DMA_SELFTEST,
+    RM_SOE_CORE_CMD_DMA_SELFTEST = 0x2,
 
     /*!
      * Perform I2C transaction
      */
-    RM_SOE_CORE_CMD_I2C_ACCESS,
+    RM_SOE_CORE_CMD_I2C_ACCESS = 0x3,
 
     /*!
      * Issue NPORT Reset
      */
-    RM_SOE_CORE_CMD_ISSUE_NPORT_RESET,
+    RM_SOE_CORE_CMD_ISSUE_NPORT_RESET = 0x4,
 
     /*!
      * Restore NPORT state
      */
-    RM_SOE_CORE_CMD_RESTORE_NPORT_STATE,
+    RM_SOE_CORE_CMD_RESTORE_NPORT_STATE = 0x5,
 
     /*!
      * Set NPORT TPROD state
      */
-    RM_SOE_CORE_CMD_SET_NPORT_TPROD_STATE,
+    RM_SOE_CORE_CMD_SET_NPORT_TPROD_STATE = 0x6,
 
     /*!
      * Read VRs
      */
-    RM_SOE_CORE_CMD_GET_VOLTAGE_VALUES,
+    RM_SOE_CORE_CMD_GET_VOLTAGE_VALUES = 0x7,
 
     /*!
      * Init PLM2 protected registers
      */
-    RM_SOE_CORE_CMD_INIT_L2_STATE,
+    RM_SOE_CORE_CMD_INIT_L2_STATE = 0x8,
 
     /*!
      * Read Power
      */
-    RM_SOE_CORE_CMD_GET_POWER_VALUES,
+    RM_SOE_CORE_CMD_GET_POWER_VALUES = 0x9,
+
+    /*!
+     * Set NPORT interrupts
+     */
+    RM_SOE_CORE_CMD_SET_NPORT_INTRS = 0xA,
+
+    /*!
+     * Disable NPORT fatal interrupt
+     */
+    RM_SOE_CORE_CMD_DISABLE_NPORT_FATAL_INTR = 0xF,
 };
 
 // Timeout for SOE reset callback function
@@ -162,6 +172,36 @@ typedef struct
     NvU8   cmdType;
 } RM_SOE_CORE_CMD_GET_POWER;
 
+typedef struct
+{
+    NvU8   cmdType;
+    NvU32  nport;
+    NvBool bEnable;
+} RM_SOE_CORE_CMD_NPORT_INTRS;
+
+typedef struct
+{
+    NvU8   cmdType;
+    NvU32  nport;
+    NvU32  nportIntrEnable;
+    NvU8   nportIntrType;
+} RM_SOE_CORE_CMD_NPORT_FATAL_INTR;
+
+/*!
+ * NPORT Interrupt Types 
+ */
+enum
+{
+    RM_SOE_CORE_NPORT_ROUTE_INTERRUPT,
+    RM_SOE_CORE_NPORT_INGRESS_INTERRUPT,
+    RM_SOE_CORE_NPORT_EGRESS_0_INTERRUPT,
+    RM_SOE_CORE_NPORT_EGRESS_1_INTERRUPT,
+    RM_SOE_CORE_NPORT_TSTATE_INTERRUPT,
+    RM_SOE_CORE_NPORT_SOURCETRACK_INTERRUPT,
+    RM_SOE_CORE_NPORT_MULTICAST_INTERRUPT,
+    RM_SOE_CORE_NPORT_REDUCTION_INTERRUPT
+};
+
 typedef union
 {
     NvU8 cmdType;
@@ -174,8 +214,9 @@ typedef union
     RM_SOE_CORE_CMD_GET_VOLTAGE getVoltage;
     RM_SOE_CORE_CMD_L2_STATE l2State;
     RM_SOE_CORE_CMD_GET_POWER getPower;
+    RM_SOE_CORE_CMD_NPORT_INTRS nportIntrs;
+    RM_SOE_CORE_CMD_NPORT_FATAL_INTR nportDisableIntr;
 } RM_SOE_CORE_CMD;
-
 
 typedef struct
 {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2017-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2017-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -43,6 +43,7 @@
 #include "published/turing/tu102/dev_riscv_pri.h"
 #include "published/turing/tu102/dev_fbif_v4.h"
 #include "published/turing/tu102/dev_falcon_v4.h"
+#include "published/turing/tu102/dev_fb.h"  // for NV_PFB_PRI_MMU_WPR2_ADDR_HI
 #include "published/turing/tu102/dev_fuse.h"
 #include "published/turing/tu102/dev_ram.h"
 #include "published/turing/tu102/dev_gc6_island.h"
@@ -730,7 +731,20 @@ kgspResetHw_TU102
 )
 {
     GPU_FLD_WR_DRF_DEF(pGpu, _PGSP, _FALCON_ENGINE, _RESET, _TRUE);
+
+    // Reg read cycles needed for signal propagation.
+    for (NvU32 i = 0; i < FLCN_RESET_PROPAGATION_DELAY_COUNT; i++)
+    {
+        GPU_REG_RD32(pGpu, NV_PGSP_FALCON_ENGINE);
+    }
+
     GPU_FLD_WR_DRF_DEF(pGpu, _PGSP, _FALCON_ENGINE, _RESET, _FALSE);
+
+    // Reg read cycles needed for signal propagation.
+    for (NvU32 i = 0; i < FLCN_RESET_PROPAGATION_DELAY_COUNT; i++)
+    {
+        GPU_REG_RD32(pGpu, NV_PGSP_FALCON_ENGINE);
+    }
 
     return NV_OK;
 }
@@ -760,31 +774,46 @@ kgspHealthCheck_TU102
     NvU32 mb0 = GPU_REG_RD32(pGpu, NV_PGSP_MAILBOX(0));
 
     //
-    // Check for an error message in the GSP mailbox.  Any error here is severe
-    // enough that it should be reported as an Xid.  Clear the error so more can
-    // potentially be reported by GSP, if it was able to recover.  In that case,
-    // it's possible that GSP will skip reporting some more errors that happened
-    // before the clear, and it will just update the "skipped" count.
+    // Check for an error message in the GSP mailbox.  Any error reported here is
+    // almost certainly fatal.
     //
     if (FLD_TEST_DRF(_GSP, _ERROR, _TAG, _VAL, mb0))
     {
         NvU32 mb1 = GPU_REG_RD32(pGpu, NV_PGSP_MAILBOX(1));
+        NvU32 skipped = DRF_VAL(_GSP, _ERROR, _SKIPPED, mb0);
 
+        pKernelGsp->bFatalError = NV_TRUE;
+
+        // Clear the mailbox
         GPU_REG_WR32(pGpu, NV_PGSP_MAILBOX(0), 0);
 
-        NV_PRINTF(LEVEL_NOTICE,
+        NV_PRINTF(LEVEL_ERROR,
                   "********************************* GSP Failure **********************************\n");
 
         nvErrorLog_va((void*)pGpu, GSP_ERROR,
-                      "GSP Error: Task %d raised error code 0x%x for reason 0x%x at 0x%x (%d more errors skipped)",
+                      "GSP Error: Task %d raised error code 0x%x for reason 0x%x at 0x%x.  The GPU likely needs to be reset.",
                       DRF_VAL(_GSP, _ERROR, _TASK, mb0),
                       DRF_VAL(_GSP, _ERROR, _CODE, mb0),
                       DRF_VAL(_GSP, _ERROR, _REASON, mb0),
-                      mb1,
-                      DRF_VAL(_GSP, _ERROR, _SKIPPED, mb0));
+                      mb1);
+        NVLOG_PRINTF(NV_PRINTF_MODULE, NVLOG_ROUTE_RM, LEVEL_ERROR, NV_PRINTF_ADD_PREFIX
+                     ("GSP Error: Task %d raised error code 0x%x for reason 0x%x at 0x%x"),
+                     DRF_VAL(_GSP, _ERROR, _TASK, mb0),
+                     DRF_VAL(_GSP, _ERROR, _CODE, mb0),
+                     DRF_VAL(_GSP, _ERROR, _REASON, mb0),
+                     mb1);
 
-        NV_PRINTF(LEVEL_NOTICE,
+        // Check if GSP had more errors to report (unlikely)
+        if (skipped)
+        {
+            NV_PRINTF(LEVEL_ERROR, "%d more errors skipped\n", skipped);
+        }
+
+        NV_PRINTF(LEVEL_ERROR,
                   "********************************************************************************\n");
+
+        KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
+        kmemsysCheckEccCounts_HAL(pGpu, pKernelMemorySystem);
     }
 }
 
@@ -830,7 +859,7 @@ kgspService_TU102
         // provides RM a chance to handle it so we have better debugability
         // into GSP-RISCV issues.
         //
-        kgspDumpGspLogs(pGpu, pKernelGsp, NV_FALSE);
+        kgspDumpGspLogs(pKernelGsp, NV_FALSE);
         kgspHealthCheck_HAL(pGpu, pKernelGsp);
     }
     if (intrStatus & DRF_DEF(_PFALCON, _FALCON_IRQSTAT, _SWGEN0, _TRUE))
@@ -887,6 +916,18 @@ kgspWaitForProcessorSuspend_TU102
     return gpuTimeoutCondWait(pGpu, _kgspIsProcessorSuspended, pKernelGsp, NULL);
 }
 
+NvBool
+kgspIsWpr2Up_TU102
+(
+    OBJGPU    *pGpu,
+    KernelGsp *pKernelGsp
+)
+{
+    NvU32 data = GPU_REG_RD32(pGpu, NV_PFB_PRI_MMU_WPR2_ADDR_HI);
+    NvU32 wpr2HiVal = DRF_VAL(_PFB, _PRI_MMU_WPR2_ADDR_HI, _VAL, data);
+    return (wpr2HiVal != 0);
+}
+
 #define FWSECLIC_PROG_START_TIMEOUT     50000    // 50ms
 #define FWSECLIC_PROG_COMPLETE_TIMEOUT  2000000  // 2s
 
@@ -931,12 +972,15 @@ kgspWaitForGfwBootOk_TU102
         }
 
         status = gpuCheckTimeout(pGpu, &timeout);
-        if (status == NV_ERR_TIMEOUT)
-        {
-            NV_PRINTF(LEVEL_ERROR,
-                      "Timeout waiting for GFW_BOOT to complete\n");
-        }
     }
+
+    // The wait failed if we reach here (as above loop returns upon success).
+    NV_PRINTF(LEVEL_ERROR, "failed to wait for GFW_BOOT: 0x%x (progress 0x%x)\n",
+              status, GPU_REG_RD_DRF(pGpu,
+                        _PGC6,
+                        _AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT,
+                        _PROGRESS));
+    NV_PRINTF(LEVEL_ERROR, "(the GPU may be in a bad state and may need to be reset)\n");
 
     return status;
 }

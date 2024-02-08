@@ -569,7 +569,27 @@ typedef struct
 
     // Ganged Link table
     NvU64 *ganged_link_table;
+
+    //
+    // Mask of links on the LR10 device connected to a disabled
+    // remote link
+    //
+    NvU64 disabledRemoteEndLinkMask;
+
+    //
+    // Bool indicating if disabledRemoteEndLinkMask
+    // has been cached previously
+    //
+    NvBool bDisabledRemoteEndLinkMaskCached;
 } lr10_device;
+
+#define NVSWITCH_NUM_DEVICES_PER_DELTA_LR10 6
+
+typedef struct {
+    NvU32 switchPhysicalId;
+    NvU64 accessLinkMask;
+    NvU64 trunkLinkMask;
+} lr10_links_connected_to_disabled_remote_end;
 
 #define NVSWITCH_GET_CHIP_DEVICE_LR10(_device)                  \
     (                                                           \
@@ -632,6 +652,7 @@ void      nvswitch_setup_link_loopback_mode_lr10(nvswitch_device *device, NvU32 
 void nvswitch_reset_persistent_link_hw_state_lr10(nvswitch_device *device, NvU32 linkNumber);
 void nvswitch_store_topology_information_lr10(nvswitch_device *device, nvlink_link *link);
 void nvswitch_init_lpwr_regs_lr10(nvlink_link *link);
+void nvswitch_program_l1_scratch_reg_lr10(nvswitch_device *device, NvU32 linkNumber);
 NvlStatus nvswitch_set_training_mode_lr10(nvswitch_device *device);
 NvBool nvswitch_i2c_is_device_access_allowed_lr10(nvswitch_device *device, NvU32 port, NvU8 addr, NvBool bIsRead);
 NvU32     nvswitch_get_sublink_width_lr10(nvswitch_device *device,NvU32 linkNumber);
@@ -660,5 +681,7 @@ NvlStatus nvswitch_launch_ALI_lr10(nvswitch_device *device);
 NvlStatus nvswitch_reset_and_train_link_lr10(nvswitch_device *device, nvlink_link *link);
 
 NvlStatus nvswitch_ctrl_get_bios_info_lr10(nvswitch_device *device, NVSWITCH_GET_BIOS_INFO_PARAMS *p);
+NvBool    nvswitch_does_link_need_termination_enabled_lr10(nvswitch_device *device, nvlink_link *link);
+NvlStatus nvswitch_link_termination_setup_lr10(nvswitch_device *device, nvlink_link* link);
 
 #endif //_LR10_H_

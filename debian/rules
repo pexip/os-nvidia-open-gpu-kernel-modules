@@ -110,7 +110,7 @@ override_dh_auto_clean: control-file
 	$(RM) -r module-build
 
 execute_after_dh_clean:
-	cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null pop -a || test $$? = 2
+	if [ -f debian/patches/module/series ]; then cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null pop -a || test $$? = 2 ; fi
 	$(RM) -r kernel-open/.pc/
 	$(RM) $(filter-out $(AUTOKEEP),$(AUTOGEN))
 	$(if $(AUTOKEEP),$(MAKE) -f debian/rules $(AUTOKEEP))
