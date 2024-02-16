@@ -102,7 +102,6 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
 
 #Package: ${nvidia-kernel}-prebuilt
 Package: nvidia-open-kernel-6.6.15+pexip-amd64
-Package: nvidia-open-kernel-6.6.15+pexip-amd64
 Architecture: amd64 arm64
 Depends:
  linux-image-${kernel:ABIVersion},
