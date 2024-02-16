@@ -10,8 +10,8 @@ Build-Depends:
 Build-Depends-Arch:
  dh-sequence-dkms,
  quilt,
- linux-headers-5.15.0-1pexip1-amd64 (= 5.15.131-1+pexip24u4) [amd64] <!nocheck>,
- linux-headers-5.15.0-1pexip1-arm64 (= 5.15.131-1+pexip24u4) [arm64] <!nocheck>,
+ linux-headers-6.6.15+pexip-amd64 (= 6.6.15-2+pexip24u1) [amd64] <!nocheck>,
+ linux-headers-6.6.15+pexip-arm64 (= 6.6.15-2+pexip24u1) [arm64] <!nocheck>,
 Rules-Requires-Root: no
 Standards-Version: 4.6.2
 Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules
@@ -101,7 +101,8 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
  Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
 
 #Package: ${nvidia-kernel}-prebuilt
-Package: nvidia-open-kernel-5.15.0-1pexip1-amd64
+Package: nvidia-open-kernel-6.6.15+pexip-amd64
+Package: nvidia-open-kernel-6.6.15+pexip-amd64
 Architecture: amd64 arm64
 Depends:
  linux-image-${kernel:ABIVersion},
