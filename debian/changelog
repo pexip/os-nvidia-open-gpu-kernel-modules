@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u2) pexip; urgency=medium
+
+  * Update for kernel 6.6.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 16 Feb 2024 16:25:05 +0000
+
 nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u1) pexip; urgency=medium
 
   * New upstream release.
