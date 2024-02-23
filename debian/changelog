@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u3) pexip; urgency=medium
+
+  * Fix module rename code to deal with .ko.xz files
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 23 Feb 2024 16:48:58 +0000
+
 nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u2) pexip; urgency=medium
 
   * Update for kernel 6.6.
