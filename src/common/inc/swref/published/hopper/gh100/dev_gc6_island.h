@@ -41,5 +41,8 @@
 #define NV_PGC6_SCI_SYS_TIMER_OFFSET_1                           0x00118df8 /* RW-4R */
 #define NV_PGC6_SCI_SYS_TIMER_OFFSET_1_NSEC                            28:0 /* RWEUF */
 #define NV_PGC6_SCI_SYS_TIMER_OFFSET_1_NSEC_ZERO                 0x00000000 /* RWE-V */
+#define NV_PGC6_AON_SECURE_SCRATCH_GROUP_20                      0x001182cc /* RW-4R */
+#define NV_PGC6_AON_SECURE_SCRATCH_GROUP_20_DATA                       31:0 /* RWIVF */
+#define NV_PGC6_AON_SECURE_SCRATCH_GROUP_20_DATA_INIT            0x00000000 /* RWI-V */
 
 #endif // __gh100_dev_gc6_island_h__

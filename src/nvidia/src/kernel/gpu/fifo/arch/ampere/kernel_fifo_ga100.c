@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,6 +21,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+// FIXME XXX
+#define NVOC_KERNEL_GRAPHICS_MANAGER_H_PRIVATE_ACCESS_ALLOWED
+
 #include "kernel/gpu/fifo/kernel_fifo.h"
 #include "kernel/gpu/fifo/kernel_channel_group_api.h"
 #include "kernel/gpu/fifo/kernel_channel_group.h"
@@ -32,20 +35,9 @@
 
 #include "published/ampere/ga100/dev_ram.h"
 #include "published/ampere/ga100/dev_ctrl.h"
+#include "published/ampere/ga100/dev_runlist.h"
 
-/**
- * @brief Translates between 2 engine values
- *
- * To iterate through a value for all engines call with inType of
- * ENGINE_INFO_TYPE_INVALID for 0 through fifoGetNumEngines().
- *
- * @param pGpu
- * @param pKernelFifo
- * @param[in] inType ENGINE_INFO_TYPE_*
- * @param[in] inVal
- * @param[in] outType ENGINE_INFO_TYPE_*
- * @param[out] pOutVal
- */
+
 NV_STATUS
 kfifoEngineInfoXlate_GA100
 (
@@ -94,10 +86,13 @@ kfifoEngineInfoXlate_GA100
         if (outType == ENGINE_INFO_TYPE_MMU_FAULT_ID)
         {
             NvU32 grIdx, startSubctxId;
+            NV_STATUS status;
             RM_ENGINE_TYPE rmEngineType;
 
-            NV_ASSERT_OK_OR_RETURN(kfifoEngineInfoXlate_GV100(pGpu, pKernelFifo, inType, inVal,
-                                                              ENGINE_INFO_TYPE_RM_ENGINE_TYPE, (NvU32 *)&rmEngineType));
+            status = kfifoEngineInfoXlate_GV100(pGpu, pKernelFifo, inType, inVal,
+                                                ENGINE_INFO_TYPE_RM_ENGINE_TYPE, (NvU32 *)&rmEngineType);
+            if (status != NV_OK)
+                return status;
 
             // check if rmEngineType corresponding to input is GR
             if (RM_ENGINE_TYPE_IS_GR(rmEngineType))
@@ -146,29 +141,6 @@ kfifoChannelGroupGetLocalMaxSubcontext_GA100
     return kfifoChannelGroupGetLocalMaxSubcontext_GM107(pGpu, pKernelFifo,
                                                         pKernelChannelGroup,
                                                         bLegacyMode);
-}
-
-/*!
- * @brief Clear USERD memory
- */
-void
-kfifoSetupUserD_GA100
-(
-    KernelFifo *pKernelFifo,
-    NvU8       *pUserD
-)
-{
-    NV_ASSERT_OR_RETURN_VOID(pUserD != NULL);
-
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_PUT ),                  0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_GET ),                  0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_REF ),                  0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_PUT_HI ),               0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_TOP_LEVEL_GET ),        0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_TOP_LEVEL_GET_HI ),     0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_GET_HI ),               0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_GP_GET ),               0 );
-    MEM_WR32( pUserD + SF_OFFSET( NV_RAMUSERD_GP_PUT ),               0 );
 }
 
 /*!
@@ -346,3 +318,93 @@ kfifoGetMaxCeChannelGroups_GA100
 
     return maxCeChannels;
 }
+
+/**
+ * @brief Starts halting a channel. A start operation must be matched with a
+ * complete operation later to wait for the channel to be preempted.
+ *
+ * @param[in] pGpu           GPU object pointer
+ * @param[in] pKernelFifo    Kernel FIFO object pointer
+ * @param[in] pKernelChannel Pointer to the channel to be halted.
+ */
+void
+kfifoStartChannelHalt_GA100
+(
+    OBJGPU        *pGpu,
+    KernelFifo    *pKernelFifo,
+    KernelChannel *pKernelChannel
+)
+{
+    NvU32       chramPriBase;
+    NvU32       channelVal;
+    NvU32       runlistId;
+    NvU32       runlistPriBase;
+    NvU32       runlistVal = 0;
+
+    runlistId = kchannelGetRunlistId(pKernelChannel);
+    if (kfifoEngineInfoXlate_HAL(pGpu, pKernelFifo,
+            ENGINE_INFO_TYPE_RUNLIST,        runlistId,
+            ENGINE_INFO_TYPE_CHRAM_PRI_BASE, &chramPriBase) != NV_OK)
+    {
+        return;
+    }
+    if (kfifoEngineInfoXlate_HAL(pGpu, pKernelFifo,
+            ENGINE_INFO_TYPE_RUNLIST,          runlistId,
+            ENGINE_INFO_TYPE_RUNLIST_PRI_BASE, &runlistPriBase) != NV_OK)
+    {
+        return;
+    }
+
+    // Disable this channel.
+    channelVal = FLD_SET_DRF(_CHRAM, _CHANNEL, _WRITE_CONTROL, _ONES_CLEAR_BITS, 0);
+    channelVal = FLD_SET_DRF(_CHRAM, _CHANNEL, _ENABLE, _IN_USE, channelVal);
+    GPU_REG_WR32(pGpu, chramPriBase + NV_CHRAM_CHANNEL(pKernelChannel->ChID), channelVal);
+
+    // Preempt the channel.
+    runlistVal = FLD_SET_DRF(_RUNLIST, _PREEMPT, _TYPE, _RUNLIST, 0);
+    GPU_REG_WR32(pGpu, runlistPriBase + NV_RUNLIST_PREEMPT, runlistVal);
+}
+
+/**
+ * @brief Completes halting a channel, waiting the channel preemption to
+ * complete, up to the specified timeout.
+ *
+ * @param[in] pGpu           GPU object pointer
+ * @param[in] pKernelFifo    Kernel FIFO object pointer
+ * @param[in] pKernelChannel Pointer to the channel in process of being halted.
+ * @param[in] pTimeout       Specifies the timeout to wait for the channel
+ *                           preemption.
+ */
+void
+kfifoCompleteChannelHalt_GA100
+(
+    OBJGPU        *pGpu,
+    KernelFifo    *pKernelFifo,
+    KernelChannel *pKernelChannel,
+    RMTIMEOUT     *pTimeout
+)
+{
+    NvU32       runlistId;
+    NvU32       runlistPriBase;
+    NvU32       runlistVal = 0;
+
+    runlistId = kchannelGetRunlistId(pKernelChannel);
+    if (kfifoEngineInfoXlate_HAL(pGpu, pKernelFifo,
+            ENGINE_INFO_TYPE_RUNLIST,          runlistId,
+            ENGINE_INFO_TYPE_RUNLIST_PRI_BASE, &runlistPriBase) != NV_OK)
+    {
+        return;
+    }
+
+    // Wait for the preemption to complete.
+    do
+    {
+        if (gpuCheckTimeout(pGpu, pTimeout) == NV_ERR_TIMEOUT)
+        {
+            break;
+        }
+
+        runlistVal = GPU_REG_RD32(pGpu, runlistPriBase + NV_RUNLIST_PREEMPT);
+    } while (FLD_TEST_DRF(_RUNLIST, _PREEMPT, _RUNLIST_PREEMPT_PENDING, _TRUE, runlistVal));
+}
+

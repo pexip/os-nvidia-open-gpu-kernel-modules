@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2021 NVIDIA Corporation
+    Copyright (c) 2021-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -62,11 +62,18 @@ NvU8 uvm_hal_maxwell_fault_buffer_get_ve_id_unsupported(NvU16 mmu_engine_id, uvm
     return 0;
 }
 
-void uvm_hal_maxwell_fault_buffer_parse_entry_unsupported(uvm_parent_gpu_t *parent_gpu,
-                                                         NvU32 index,
-                                                         uvm_fault_buffer_entry_t *buffer_entry)
+uvm_fault_type_t uvm_hal_maxwell_fault_buffer_get_fault_type_unsupported(const NvU32 *fault_entry)
+{
+    UVM_ASSERT_MSG(false, "fault_buffer_get_fault_type is not supported.\n");
+    return UVM_FAULT_TYPE_COUNT;
+}
+
+NV_STATUS uvm_hal_maxwell_fault_buffer_parse_replayable_entry_unsupported(uvm_parent_gpu_t *parent_gpu,
+                                                                          NvU32 index,
+                                                                          uvm_fault_buffer_entry_t *buffer_entry)
 {
     UVM_ASSERT_MSG(false, "fault_buffer_parse_entry is not supported on GPU: %s.\n", parent_gpu->name);
+    return NV_ERR_NOT_SUPPORTED;
 }
 
 bool uvm_hal_maxwell_fault_buffer_entry_is_valid_unsupported(uvm_parent_gpu_t *parent_gpu, NvU32 index)

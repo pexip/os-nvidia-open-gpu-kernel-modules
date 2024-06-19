@@ -66,7 +66,7 @@ dispswConstruct_IMPL
 
     if (!pKernelDisplay)
     {
-        NV_PRINTF(LEVEL_ERROR, "Display is not enabled, can't create class\n");
+        NV_PRINTF(LEVEL_INFO, "Display is not enabled, can't create class\n");
         return (NV_ERR_INVALID_ARGUMENT);
     }
 
@@ -128,13 +128,13 @@ dispswDestruct_IMPL
 
 NV_STATUS dispswReleaseSemaphoreAndNotifierFill
 (
-    OBJGPU   *pGpu, 
+    OBJGPU   *pGpu,
     NvU64     gpuVA,
     NvU32     vaSpace,
     NvU32     releasevalue,
     NvU32     flags,
     NvU32     completionStatus,
-    NvHandle  hClient,
+    RsClient *pClient,
     NvHandle  hEvent
 )
 {
@@ -144,7 +144,7 @@ NV_STATUS dispswReleaseSemaphoreAndNotifierFill
 
     if (flags & F_SEMAPHORE_ADDR_VALID)
     {
-        bFound = CliGetDmaMappingInfo(hClient,
+        bFound = CliGetDmaMappingInfo(pClient,
                                       hEvent,
                                       vaSpace,
                                       gpuVA,
@@ -153,10 +153,10 @@ NV_STATUS dispswReleaseSemaphoreAndNotifierFill
         if (!bFound)
             return NV_ERR_INVALID_ADDRESS;
     }
-    else if (flags & F_SEMAPHORE_RELEASE) 
+    else if (flags & F_SEMAPHORE_RELEASE)
     {
         status =  semaphoreFillGPUVA(pGpu,
-                                     hClient,
+                                     pClient,
                                      vaSpace,
                                      gpuVA,
                                      releasevalue,
@@ -164,10 +164,10 @@ NV_STATUS dispswReleaseSemaphoreAndNotifierFill
                                      NV_TRUE);
         return status;
     }
-    else if (flags & F_NOTIFIER_FILL) 
+    else if (flags & F_NOTIFIER_FILL)
     {
         status = notifyFillNotifierGPUVA(pGpu,
-                                         hClient,
+                                         pClient,
                                          vaSpace,
                                          gpuVA,
                                          releasevalue, /* Info32 */

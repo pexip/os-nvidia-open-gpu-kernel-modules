@@ -1297,6 +1297,9 @@ typedef enum nvswitch_pri_error_instance
     NVSWITCH_PPRIV_WRITE_PRT
 } NVSWITCH_PRI_ERROR_INSTANCE;
 
+#define NVSWITCH_ERROR_MAX_DESCRPTION_LEN 70
+#define NVSWITCH_RAW_ERROR_DATA_SIZE      16
+
 typedef struct nvswitch_error
 {
     NvU32  error_value;                 /* NVSWITCH_ERR_* */
@@ -1305,6 +1308,9 @@ typedef struct nvswitch_error
     NvU32  subinstance;                 /* Used for lane# or similar */
     NV_DECLARE_ALIGNED(NvU64 time, 8);  /* Platform time (nsec) */
     NvBool error_resolved;              /* If an error is correctable, set to true. */
+    NvU32  error_data[NVSWITCH_RAW_ERROR_DATA_SIZE]; /* Data from NVSWITCH_REPORT_DATA */
+    NvU32  error_data_size;             /* Size of error_data */
+    NvU8   error_description[NVSWITCH_ERROR_MAX_DESCRPTION_LEN]; /* Short description of error */
 } NVSWITCH_ERROR;
 
 #define NVSWITCH_ERROR_COUNT_SIZE 64
@@ -4031,12 +4037,13 @@ typedef struct
 #define CTRL_NVSWITCH_SET_NVLINK_ERROR_THRESHOLD            0x52
 #define CTRL_NVSWITCH_GET_NVLINK_ERROR_THRESHOLD            0x53
 #define CTRL_NVSWITCH_GET_VOLTAGE                           0x54
-#define CTRL_NVSWITCH_GET_BOARD_PART_NUMBER                 0x55
-#define CTRL_NVSWITCH_GET_POWER                             0x56
-#define CTRL_NVSWITCH_GET_SYS_INFO                          0x57
-#define CTRL_NVSWITCH_GET_TIME_INFO                         0x58
-#define CTRL_NVSWITCH_GET_TEMP_DATA                         0x59
-#define CTRL_NVSWITCH_GET_TEMP_SAMPLES                      0x60
+#define CTRL_NVSWITCH_RESERVED_11                           0x55
+#define CTRL_NVSWITCH_GET_BOARD_PART_NUMBER                 0x56
+#define CTRL_NVSWITCH_GET_POWER                             0x57
+#define CTRL_NVSWITCH_GET_SYS_INFO                          0x58
+#define CTRL_NVSWITCH_GET_TIME_INFO                         0x59
+#define CTRL_NVSWITCH_GET_TEMP_DATA                         0x60
+#define CTRL_NVSWITCH_GET_TEMP_SAMPLES                      0x61
 
 #ifdef __cplusplus
 }

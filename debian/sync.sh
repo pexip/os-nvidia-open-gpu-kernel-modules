@@ -16,6 +16,7 @@ debian/rules.defs
 debian/sync.sh
 debian/watch
 debian/source/lintian-overrides
+debian/tests/autopkgtest-pkg-dkms.conf
 debian/tests/control
 debian/upstream/metadata
 "

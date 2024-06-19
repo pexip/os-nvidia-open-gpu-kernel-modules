@@ -381,6 +381,7 @@ gpuresControl_IMPL
     RS_RES_CONTROL_PARAMS_INTERNAL *pParams
 )
 {
+    NV_ASSERT_OR_RETURN(pGpuResource->pGpu != NULL, NV_ERR_INVALID_STATE);
     gpuresControlSetup(pParams, pGpuResource);
 
     return resControl_IMPL(staticCast(pGpuResource, RsResource),
@@ -457,7 +458,7 @@ gpuresGetByDeviceOrSubdeviceHandle
         return status;
 
     // Must be device or subdevice
-    if (!dynamicCast(*ppGpuResource, Device) && 
+    if (!dynamicCast(*ppGpuResource, Device) &&
         !dynamicCast(*ppGpuResource, Subdevice))
     {
         return NV_ERR_INVALID_OBJECT_HANDLE;

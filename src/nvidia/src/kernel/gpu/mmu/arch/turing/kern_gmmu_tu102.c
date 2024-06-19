@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -420,11 +420,55 @@ kgmmuIsNonReplayableFaultPending_TU102
 void
 kgmmuClearNonReplayableFaultIntr_TU102
 (
-    POBJGPU            pGpu,
+    OBJGPU            *pGpu,
     KernelGmmu        *pKernelGmmu,
     THREAD_STATE_NODE *pThreadState
 )
 {
     Intr *pIntr = GPU_GET_INTR(pGpu);
     intrClearLeafVector_HAL(pGpu, pIntr, NV_PFB_PRI_MMU_INT_VECTOR_FAULT_NOTIFY_NON_REPLAYABLE, pThreadState);
+}
+
+/*!
+ * @brief Clear replayable fault interrupt.
+ *
+ * @param[in] pGpu              OBJGPU pointer
+ * @param[in] pKernelGmmu       KernelGmmu pointer
+ * @param[in] pThreadState      THREAD_STATE_NODE pointer
+ */
+void
+kgmmuClearReplayableFaultIntr_TU102
+(
+    OBJGPU            *pGpu,
+    KernelGmmu        *pKernelGmmu,
+    THREAD_STATE_NODE *pThreadState
+)
+{
+    Intr *pIntr = GPU_GET_INTR(pGpu);
+    intrClearLeafVector_HAL(pGpu, pIntr, NV_PFB_PRI_MMU_INT_VECTOR_FAULT_NOTIFY_REPLAYABLE, pThreadState);
+}
+
+NvU32
+kgmmuGetEccCounts_TU102
+(
+    OBJGPU     *pGpu,
+    KernelGmmu *pKernelGmmu
+)
+{
+    NvU32 mmuCount = 0;
+    NvU32 regVal;
+
+    // L2TLB
+    regVal = GPU_REG_RD32(pGpu, NV_PFB_PRI_MMU_L2TLB_ECC_UNCORRECTED_ERR_COUNT);
+    mmuCount += DRF_VAL(_PFB_PRI_MMU, _L2TLB_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
+
+    // HUBTLB
+    regVal = GPU_REG_RD32(pGpu, NV_PFB_PRI_MMU_HUBTLB_ECC_UNCORRECTED_ERR_COUNT);
+    mmuCount += DRF_VAL(_PFB_PRI_MMU, _HUBTLB_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
+
+    // FILLUNIT
+    regVal = GPU_REG_RD32(pGpu, NV_PFB_PRI_MMU_FILLUNIT_ECC_UNCORRECTED_ERR_COUNT);
+    mmuCount += DRF_VAL(_PFB_PRI_MMU, _FILLUNIT_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
+
+    return mmuCount;
 }

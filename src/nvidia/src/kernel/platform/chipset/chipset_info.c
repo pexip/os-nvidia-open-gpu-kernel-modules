@@ -948,6 +948,30 @@ Nvidia_T194_setupFunc
 }
 
 static NV_STATUS
+Nvidia_TH500_setupFunc
+(
+    OBJCL *pCl
+)
+{
+    if (!pCl->FHBAddr.valid)
+        return NV_ERR_GENERIC;
+
+    if (clInsertPcieConfigSpaceBase(pCl, 0, 0, 0, (NvU8)(PCI_MAX_BUSES - 1)) == NV_OK)
+        pCl->setProperty(pCl, PDB_PROP_CL_PCIE_CONFIG_ACCESSIBLE, NV_TRUE);
+
+    // Enable Gen2 ASLM
+    pCl->setProperty(pCl, PDB_PROP_CL_ASLM_SUPPORTS_GEN2_LINK_UPGRADE, NV_TRUE);
+
+    pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
+
+    pCl->setProperty(pCl, PDB_PROP_CL_BUG_3562968_WAR_ALLOW_PCIE_ATOMICS, NV_TRUE);
+
+    _Set_ASPM_L0S_L1(pCl, NV_FALSE, NV_FALSE);
+
+    return NV_OK;
+}
+
+static NV_STATUS
 SiS_656_setupFunc
 (
     OBJCL *pCl
@@ -1210,6 +1234,19 @@ Mellanox_BlueField_setupFunc
     return NV_OK;
 }
 
+// Mellanox BlueField3 Setup Function
+static NV_STATUS
+Mellanox_BlueField3_setupFunc
+(
+    OBJCL *pCl
+)
+{
+    // Bug 4151565: BlueField 3 does not support WC mapping 
+    pCl->setProperty(pCl, PDB_PROP_CL_DISABLE_IOMAP_WC, NV_TRUE);
+    return NV_OK;
+}
+
+
 // Amazon Gravitron2 Setup Function
 static NV_STATUS
 Amazon_Gravitron2_setupFunc
@@ -1255,6 +1292,18 @@ Ampere_Altra_setupFunc
 
 static NV_STATUS
 Arm_NeoverseN1_setupFunc
+(
+    OBJCL *pCl
+)
+{
+    // TODO Need to check if any more PDB properties should be set
+    pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
+    return NV_OK;
+}
+
+// Ampere AmpereOne Setup Function
+static NV_STATUS
+Ampere_AmpereOne_setupFunc
 (
     OBJCL *pCl
 )

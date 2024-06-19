@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1999-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1999-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -74,7 +74,7 @@ static NvBool RmIsDeviceRefNeeded(NVOS54_PARAMETERS *pApi)
 {
     switch(pApi->cmd)
     {
-        case NV00FD_CTRL_CMD_ATTACH_MEM:
+        case NV00FD_CTRL_CMD_ATTACH_GPU:
             return NV_TRUE;
         default:
             return NV_FALSE;
@@ -92,8 +92,8 @@ static NV_STATUS RmGetDeviceFd(NVOS54_PARAMETERS *pApi, NvS32 *pFd)
 
     switch(pApi->cmd)
     {
-        case NV00FD_CTRL_CMD_ATTACH_MEM:
-            paramSize = sizeof(NV00FD_CTRL_ATTACH_MEM_PARAMS);
+        case NV00FD_CTRL_CMD_ATTACH_GPU:
+            paramSize = sizeof(NV00FD_CTRL_ATTACH_GPU_PARAMS);
             break;
         default:
             return NV_ERR_INVALID_ARGUMENT;
@@ -107,8 +107,8 @@ static NV_STATUS RmGetDeviceFd(NVOS54_PARAMETERS *pApi, NvS32 *pFd)
 
     switch(pApi->cmd)
     {
-        case NV00FD_CTRL_CMD_ATTACH_MEM:
-            *pFd = (NvS32)((NV00FD_CTRL_ATTACH_MEM_PARAMS *)pKernelParams)->devDescriptor;
+        case NV00FD_CTRL_CMD_ATTACH_GPU:
+            *pFd = (NvS32)((NV00FD_CTRL_ATTACH_GPU_PARAMS *)pKernelParams)->devDescriptor;
             break;
         default:
             NV_ASSERT(0);
@@ -157,25 +157,11 @@ static void RmCreateOsDescriptor(NVOS32_PARAMETERS *pApi, API_SECURITY_INFO secI
     }
     else if (rmStatus == NV_ERR_INVALID_ADDRESS)
     {
-        rmStatus = os_lookup_user_io_memory(pDescriptor, pageCount,
-                &pPteArray, &pPageArray);
+        rmStatus = os_lookup_user_io_memory(pDescriptor, pageCount, &pPteArray);
         if (rmStatus == NV_OK)
         {
-            if (pPageArray != NULL)
-            {
-                pApi->data.AllocOsDesc.descriptor = (NvP64)(NvUPtr)pPageArray;
-                pApi->data.AllocOsDesc.descriptorType = NVOS32_DESCRIPTOR_TYPE_OS_PAGE_ARRAY;
-            }
-            else if (pPteArray != NULL)
-            {
-                pApi->data.AllocOsDesc.descriptor = (NvP64)(NvUPtr)pPteArray;
-                pApi->data.AllocOsDesc.descriptorType = NVOS32_DESCRIPTOR_TYPE_OS_IO_MEMORY;
-            }
-            else
-            {
-                NV_ASSERT_FAILED("unknown memory import type");
-                rmStatus = NV_ERR_NOT_SUPPORTED;
-            }
+            pApi->data.AllocOsDesc.descriptor = (NvP64)(NvUPtr)pPteArray;
+            pApi->data.AllocOsDesc.descriptorType = NVOS32_DESCRIPTOR_TYPE_OS_IO_MEMORY;
         }
     }
     if (rmStatus != NV_OK)

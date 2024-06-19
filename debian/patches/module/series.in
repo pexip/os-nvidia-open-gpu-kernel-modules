@@ -4,11 +4,11 @@ bashisms.patch
 # kernel support
 0001-bump-minimum-supported-kernel-version-to-3.10.patch
 0002-conftest.sh-remove-empty-lines-from-uts_release-outp.patch
-ppc64el.patch
+0034-fix-typos.patch
 
 # build system updates
 fragile-ARCH.patch
+conftest-verbose.patch
 use-kbuild-compiler.patch
 use-kbuild-flags.patch
-conftest-verbose.patch
 conftest-prefer-arch-headers.patch

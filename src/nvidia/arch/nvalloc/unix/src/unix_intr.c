@@ -174,6 +174,18 @@ static NvBool osInterruptPending(
                     }
                 }
 
+                if (IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) &&
+                    !IS_VIRTUAL(pGpu) && bitVectorTest(&intr0Pending, MC_ENGINE_IDX_TMR))
+                {
+                    // We have to clear the top level interrupt bit here since otherwise
+                    // the bottom half will attempt to service the interrupt on the CPU
+                    // side before GSP receives the notification and services it
+                    intrClearLeafVector_HAL(pGpu, pIntr, MC_ENGINE_IDX_TMR, &threadState);
+                    bitVectorClr(&intr0Pending, MC_ENGINE_IDX_TMR);
+
+                    NV_ASSERT_OK(intrTriggerPrivDoorbell_HAL(pGpu, pIntr, NV_DOORBELL_NOTIFY_LEAF_SERVICE_TMR_HANDLE));
+                }
+
                 if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_ENABLED) &&
                     !pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_HANDLE_LOCKLESS))
                 {
@@ -303,9 +315,6 @@ NV_STATUS osIsr(
  */
 NvBool osLockShouldToggleInterrupts(OBJGPU *pGpu)
 {
-    if (pGpu->getProperty(pGpu, PDB_PROP_GPU_TEGRA_SOC_NVDISPLAY))
-        return NV_TRUE;
-
     return (!pGpu->getProperty(pGpu, PDB_PROP_GPU_IN_PM_CODEPATH) &&
              gpuIsStateLoaded(pGpu) &&
             !pGpu->getProperty(pGpu, PDB_PROP_GPU_IN_SLI_LINK_CODEPATH));
@@ -591,10 +600,10 @@ NV_STATUS NV_API_CALL rm_gpu_copy_mmu_faults(
         goto done;
     }
 
-    // Non-replayable faults are copied to the client shadow buffer by GSP-RM.
     if (IS_GSP_CLIENT(pGpu))
     {
-        status = NV_ERR_NOT_SUPPORTED;
+        // Non-replayable faults are copied to the client shadow buffer by GSP-RM.
+        status = NV_OK;
         goto done;
     }
 
@@ -614,11 +623,6 @@ static NV_STATUS _rm_gpu_copy_mmu_faults_unlocked(
     THREAD_STATE_NODE *pThreadState
 )
 {
-    // Non-replayable faults are copied to the client shadow buffer by GSP-RM.
-    if (IS_GSP_CLIENT(pGpu))
-    {
-        return NV_ERR_NOT_SUPPORTED;
-    }
 
     return NV_OK;
 }
@@ -667,7 +671,7 @@ NV_STATUS rm_gpu_handle_mmu_faults(
             {
                 // We have to clear the top level interrupt bit here since otherwise
                 // the bottom half will attempt to service the interrupt on the CPU
-                // side before GSP recieves the notification and services it
+                // side before GSP receives the notification and services it
                 kgmmuClearNonReplayableFaultIntr_HAL(pGpu, pKernelGmmu, &threadState);
                 status = intrTriggerPrivDoorbell_HAL(pGpu, pIntr, NV_DOORBELL_NOTIFY_LEAF_SERVICE_NON_REPLAYABLE_FAULT_HANDLE);
 
@@ -682,7 +686,15 @@ NV_STATUS rm_gpu_handle_mmu_faults(
         }
         else
         {
-            status = _rm_gpu_copy_mmu_faults_unlocked(pGpu, faultsCopied, &threadState);
+            if (IS_GSP_CLIENT(pGpu))
+            {
+                // Non-replayable faults are copied to the client shadow buffer by GSP-RM.
+                status = NV_OK;
+            }
+            else
+            {
+                status = _rm_gpu_copy_mmu_faults_unlocked(pGpu, faultsCopied, &threadState);
+            }
         }
 
         threadStateFreeISRLockless(&threadState, pGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
@@ -694,3 +706,27 @@ NV_STATUS rm_gpu_handle_mmu_faults(
     return status;
 }
 
+NvBool NV_API_CALL rm_is_msix_allowed(
+    nvidia_stack_t *sp,
+    nv_state_t     *nv
+)
+{
+    nv_priv_t           *pNvp = NV_GET_NV_PRIV(nv);
+    THREAD_STATE_NODE    threadState;
+    void                *fp;
+    NvBool               ret = NV_FALSE;
+
+    NV_ENTER_RM_RUNTIME(sp,fp);
+    threadStateInit(&threadState, THREAD_STATE_FLAGS_NONE);
+
+    if (rmapiLockAcquire(API_LOCK_FLAGS_NONE, RM_LOCK_MODULES_INIT) == NV_OK)
+    {
+        ret = gpumgrIsDeviceMsixAllowed(nv->regs->cpu_address,
+                                        pNvp->pmc_boot_1, pNvp->pmc_boot_42);
+        rmapiLockRelease();
+    }
+
+    threadStateFree(&threadState, THREAD_STATE_FLAGS_NONE);
+    NV_EXIT_RM_RUNTIME(sp,fp);
+    return ret;
+}

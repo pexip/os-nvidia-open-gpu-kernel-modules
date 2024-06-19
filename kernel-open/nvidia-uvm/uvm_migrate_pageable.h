@@ -34,8 +34,8 @@ typedef struct
 {
     uvm_va_space_t                  *va_space;
     struct mm_struct                *mm;
-    unsigned long                   start;
-    unsigned long                   length;
+    const unsigned long             start;
+    const unsigned long             length;
     uvm_processor_id_t              dst_id;
 
     // dst_node_id may be clobbered by uvm_migrate_pageable().
@@ -43,6 +43,7 @@ typedef struct
     uvm_populate_permissions_t      populate_permissions;
     bool                            touch : 1;
     bool                            skip_mapped : 1;
+    bool                            populate_on_cpu_alloc_failures : 1;
     NvU64                           *user_space_start;
     NvU64                           *user_space_length;
 } uvm_migrate_args_t;
@@ -58,11 +59,13 @@ typedef struct
 #ifdef UVM_MIGRATE_VMA_SUPPORTED
 #include <linux/migrate.h>
 
-// The calls to migrate_vma are capped at 32MB to set an upper bound on the
+// The calls to migrate_vma are capped at 512 pages to set an upper bound on the
 // amount of metadata that needs to be allocated for the operation. This number
-// was chosen because performance seems to plateau at this size.
-#define UVM_MIGRATE_VMA_MAX_SIZE (32UL * 1024 * 1024)
-#define UVM_MIGRATE_VMA_MAX_PAGES (UVM_MIGRATE_VMA_MAX_SIZE >> PAGE_SHIFT)
+// was chosen because performance seems to plateau at this size on 64K-pages
+// kernels. On kernels with PAGE_SIZE == 4K, 512 pages correspond to 2M VA block,
+// which is also a standard size for batch operations.
+#define UVM_MIGRATE_VMA_MAX_PAGES (512UL)
+#define UVM_MIGRATE_VMA_MAX_SIZE (UVM_MIGRATE_VMA_MAX_PAGES * PAGE_SIZE)
 
 typedef struct
 {
@@ -215,6 +218,9 @@ NV_STATUS uvm_migrate_pageable(uvm_migrate_args_t *uvm_migrate_args);
 NV_STATUS uvm_migrate_pageable_init(void);
 
 void uvm_migrate_pageable_exit(void);
+
+NV_STATUS uvm_test_skip_migrate_vma(UVM_TEST_SKIP_MIGRATE_VMA_PARAMS *params, struct file *filp);
+
 #else // UVM_MIGRATE_VMA_SUPPORTED
 
 static NV_STATUS uvm_migrate_pageable(uvm_migrate_args_t *uvm_migrate_args)
@@ -248,6 +254,10 @@ static void uvm_migrate_pageable_exit(void)
 {
 }
 
+static inline NV_STATUS uvm_test_skip_migrate_vma(UVM_TEST_SKIP_MIGRATE_VMA_PARAMS *params, struct file *filp)
+{
+    return NV_OK;
+}
 #endif // UVM_MIGRATE_VMA_SUPPORTED
 
 #endif

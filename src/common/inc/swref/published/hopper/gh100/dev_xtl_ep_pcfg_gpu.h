@@ -27,6 +27,12 @@
 #define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS                                                                     0x00000004           /* RW-4R */
 #define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_IO_SPACE                                                        0:0                  /* RWIVF */
 #define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_IO_SPACE_ENABLE                                                 0x00000001           /* RW--V */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_MEM_SPACE                                                       1:1                  /* RWIVF */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_MEM_SPACE_DEFAULT                                               0x00000000           /* RWI-V */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_MEM_SPACE_ENABLE                                                0x00000001           /* RW--V */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_BUS_MASTER                                                      2:2                  /* RWIVF */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_BUS_MASTER_DISABLE                                              0x00000000           /* RWI-V */
+#define NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS_CMD_BUS_MASTER_ENABLE                                               0x00000001           /* RW--V */
 #define NV_EP_PCFG_GPU_REVISION_ID_AND_CLASSCODE                                                               0x00000008           /* R--4R */
 #define NV_EP_PCFG_GPU_REVISION_ID_AND_CLASSCODE_PGM_INTERFACE                                                 15:8                 /* R-IVF */
 #define NV_EP_PCFG_GPU_REVISION_ID_AND_CLASSCODE_SUB_CLASSCODE                                                 23:16                /* R-IVF */
@@ -36,6 +42,8 @@
 #define NV_EP_PCFG_GPU_BARREG0_REG_ADDR_TYPE                                                                   2:1                  /* R-IVF */
 #define NV_EP_PCFG_GPU_BARREG0_REG_ADDR_TYPE_32BIT                                                             0x00000000           /* R-I-V */
 #define NV_EP_PCFG_GPU_BARREG0_REG_ADDR_TYPE_64BIT                                                             0x00000002           /* R---V */
+#define NV_EP_PCFG_GPU_BARREG0_REG_BASE_ADDRESS                                                                31:18                /* RWIVF */
+#define NV_EP_PCFG_GPU_BARREG0_REG_BASE_ADDRESS_INIT                                                           0x00000000           /* RWI-V */
 #define NV_EP_PCFG_GPU_BARREG5                                                                                 0x00000024           /* RW-4R */
 #define NV_EP_PCFG_GPU_SUBSYSTEM_ID                                                                            0x0000002C           /* R--4R */
 #define NV_EP_PCFG_GPU_MSI_64_HEADER                                                                           0x00000048           /* RW-4R */

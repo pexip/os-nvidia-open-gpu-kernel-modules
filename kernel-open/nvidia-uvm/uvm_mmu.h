@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2022 NVIDIA Corporation
+    Copyright (c) 2015-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -36,7 +36,9 @@
 #define UVM_PAGE_SIZE_AGNOSTIC 0
 
 // Memory layout of UVM's kernel VA space.
-// The following memory regions are not to scale.
+// The following memory regions are not to scale. The memory layout is linear,
+// i.e., no canonical form address conversion.
+//
 // Hopper:
 // +----------------+ 128PB
 // |                |
@@ -48,7 +50,11 @@
 // |                |
 // |   (not used)   |
 // |                |
-// ------------------ 64PB + 8TB
+// ------------------ 64PB + 8TB + 256GB (UVM_GPU_MAX_PHYS_MEM)
+// |     vidmem     |
+// |  flat mapping  | ==> UVM_GPU_MAX_PHYS_MEM
+// |     (256GB)    |
+// ------------------ 64PB + 8TB (flat_vidmem_va_base)
 // |peer ident. maps|
 // |32 * 256GB = 8TB| ==> NV_MAX_DEVICES * UVM_PEER_IDENTITY_VA_SIZE
 // ------------------ 64PB
@@ -57,7 +63,7 @@
 // |                |
 // +----------------+ 0 (rm_va_base)
 //
-// Pascal-Ampere:
+// Pascal-Ada:
 // +----------------+ 512TB
 // |                |
 // |   (not used)   |
@@ -103,7 +109,7 @@
 // +----------------+ 0 (rm_va_base)
 
 // Maximum memory of any GPU.
-#define UVM_GPU_MAX_PHYS_MEM (256ull * 1024 * 1024 * 1024)
+#define UVM_GPU_MAX_PHYS_MEM (256 * UVM_SIZE_1GB)
 
 // The size of VA that should be reserved per peer identity mapping.
 // This should be at least the maximum amount of memory of any GPU.
@@ -209,11 +215,14 @@ struct uvm_mmu_mode_hal_struct
     // memory out-of-range error so we can immediately identify bad PTE usage.
     NvU64 (*poisoned_pte)(void);
 
-    // write a PDE bit-pattern to entry based on the data in entries (which may
+    // Write a PDE bit-pattern to entry based on the data in allocs (which may
     // point to two items for dual PDEs).
-    // any of allocs are allowed to be NULL, in which case they are to be
-    // treated as empty.
-    void (*make_pde)(void *entry, uvm_mmu_page_table_alloc_t **allocs, NvU32 depth);
+    // Any of allocs are allowed to be NULL, in which case they are to be
+    // treated as empty. make_pde() uses dir and child_index to compute the
+    // mapping PDE VA. On ATS-enabled systems, we may set PDE's PCF as
+    // ATS_ALLOWED or ATS_NOT_ALLOWED based on the mapping PDE VA, even for
+    // invalid/clean PDE entries.
+    void (*make_pde)(void *entry, uvm_mmu_page_table_alloc_t **allocs, uvm_page_directory_t *dir, NvU32 child_index);
 
     // size of an entry in a directory/table.  Generally either 8 or 16 bytes.
     // (in the case of Pascal dual PDEs)
@@ -223,7 +232,7 @@ struct uvm_mmu_mode_hal_struct
     NvU32 (*entries_per_index)(NvU32 depth);
 
     // For dual PDEs, this is ether 1 or 0, depending on the page size.
-    // This is used to index the host copy only.  GPU PDEs are always entirely
+    // This is used to index the host copy only. GPU PDEs are always entirely
     // re-written using make_pde.
     NvLength (*entry_offset)(NvU32 depth, NvU32 page_size);
 
@@ -289,10 +298,15 @@ struct uvm_page_tree_struct
 
         // PDE0 where all big-page entries are invalid, and small-page entries
         // point to ptes_invalid_4k.
-        // pde0 is only used on Pascal-Ampere, i.e., they have the same PDE
-        // format.
-        uvm_mmu_page_table_alloc_t pde0;
+        // pde0 is used on Pascal+ GPUs, i.e., they have the same PDE format.
+        uvm_page_directory_t *pde0;
     } map_remap;
+
+    // On ATS-enabled systems where the CPU VA width is smaller than the GPU VA
+    // width, the excess address range is set with ATS_NOT_ALLOWED on all  leaf
+    // PDEs covering that range. We have at most 2 no_ats_ranges, due to
+    // canonical form address systems.
+    uvm_page_table_range_t no_ats_ranges[2];
 
     // Tracker for all GPU operations on the tree
     uvm_tracker_t tracker;
@@ -359,21 +373,32 @@ void uvm_page_tree_deinit(uvm_page_tree_t *tree);
 // the same page size without an intervening put_ptes. To duplicate a subset of
 // an existing range or change the size of an existing range, use
 // uvm_page_table_range_get_upper() and/or uvm_page_table_range_shrink().
-NV_STATUS uvm_page_tree_get_ptes(uvm_page_tree_t *tree, NvU32 page_size, NvU64 start, NvLength size,
-        uvm_pmm_alloc_flags_t pmm_flags, uvm_page_table_range_t *range);
+NV_STATUS uvm_page_tree_get_ptes(uvm_page_tree_t *tree,
+                                 NvU32 page_size,
+                                 NvU64 start,
+                                 NvLength size,
+                                 uvm_pmm_alloc_flags_t pmm_flags,
+                                 uvm_page_table_range_t *range);
 
 // Same as uvm_page_tree_get_ptes(), but doesn't synchronize the GPU work.
 //
 // All pending operations can be waited on with uvm_page_tree_wait().
-NV_STATUS uvm_page_tree_get_ptes_async(uvm_page_tree_t *tree, NvU32 page_size, NvU64 start, NvLength size,
-        uvm_pmm_alloc_flags_t pmm_flags, uvm_page_table_range_t *range);
+NV_STATUS uvm_page_tree_get_ptes_async(uvm_page_tree_t *tree,
+                                       NvU32 page_size,
+                                       NvU64 start,
+                                       NvLength size,
+                                       uvm_pmm_alloc_flags_t pmm_flags,
+                                       uvm_page_table_range_t *range);
 
 // Returns a single-entry page table range for the addresses passed.
 // The size parameter must be a page size supported by this tree.
 // This is equivalent to calling uvm_page_tree_get_ptes() with size equal to
 // page_size.
-NV_STATUS uvm_page_tree_get_entry(uvm_page_tree_t *tree, NvU32 page_size, NvU64 start,
-        uvm_pmm_alloc_flags_t pmm_flags, uvm_page_table_range_t *single);
+NV_STATUS uvm_page_tree_get_entry(uvm_page_tree_t *tree,
+                                  NvU32 page_size,
+                                  NvU64 start,
+                                  uvm_pmm_alloc_flags_t pmm_flags,
+                                  uvm_page_table_range_t *single);
 
 // For a single-entry page table range, write the PDE (which could be a dual
 // PDE) to the GPU.
@@ -472,8 +497,8 @@ NV_STATUS uvm_page_table_range_vec_create(uvm_page_tree_t *tree,
 // new_range_vec will contain the upper portion of range_vec, starting at
 // new_end + 1.
 //
-// new_end + 1 is required to be within the address range of range_vec and be aligned to
-// range_vec's page_size.
+// new_end + 1 is required to be within the address range of range_vec and be
+// aligned to range_vec's page_size.
 //
 // On failure, the original range vector is left unmodified.
 NV_STATUS uvm_page_table_range_vec_split_upper(uvm_page_table_range_vec_t *range_vec,
@@ -495,18 +520,22 @@ void uvm_page_table_range_vec_destroy(uvm_page_table_range_vec_t *range_vec);
 // for each offset.
 // The caller_data pointer is what the caller passed in as caller_data to
 // uvm_page_table_range_vec_write_ptes().
-typedef NvU64 (*uvm_page_table_range_pte_maker_t)(uvm_page_table_range_vec_t *range_vec, NvU64 offset,
-        void *caller_data);
+typedef NvU64 (*uvm_page_table_range_pte_maker_t)(uvm_page_table_range_vec_t *range_vec,
+                                                  NvU64 offset,
+                                                  void *caller_data);
 
-// Write all PTEs covered by the range vector using the given PTE making function.
+// Write all PTEs covered by the range vector using the given PTE making
+// function.
 //
 // After writing all the PTEs a TLB invalidate operation is performed including
 // the passed in tlb_membar.
 //
 // See comments about uvm_page_table_range_pte_maker_t for details about the
 // PTE making callback.
-NV_STATUS uvm_page_table_range_vec_write_ptes(uvm_page_table_range_vec_t *range_vec, uvm_membar_t tlb_membar,
-        uvm_page_table_range_pte_maker_t pte_maker, void *caller_data);
+NV_STATUS uvm_page_table_range_vec_write_ptes(uvm_page_table_range_vec_t *range_vec,
+                                              uvm_membar_t tlb_membar,
+                                              uvm_page_table_range_pte_maker_t pte_maker,
+                                              void *caller_data);
 
 // Set all PTEs covered by the range vector to an empty PTE
 //
@@ -592,13 +621,18 @@ static bool uvm_mmu_page_size_supported(uvm_page_tree_t *tree, NvU32 page_size)
 
 static NvU32 uvm_mmu_biggest_page_size_up_to(uvm_page_tree_t *tree, NvU32 max_page_size)
 {
+    NvU32 gpu_page_sizes = tree->hal->page_sizes();
+    NvU32 smallest_gpu_page_size = gpu_page_sizes & ~(gpu_page_sizes - 1);
     NvU32 page_sizes;
     NvU32 page_size;
 
     UVM_ASSERT_MSG(is_power_of_2(max_page_size), "0x%x\n", max_page_size);
 
+    if (max_page_size < smallest_gpu_page_size)
+        return 0;
+
     // Calculate the supported page sizes that are not larger than the max
-    page_sizes = tree->hal->page_sizes() & (max_page_size | (max_page_size - 1));
+    page_sizes = gpu_page_sizes & (max_page_size | (max_page_size - 1));
 
     // And pick the biggest one of them
     page_size = 1 << __fls(page_sizes);
@@ -625,8 +659,9 @@ static NvU64 uvm_page_table_range_size(uvm_page_table_range_t *range)
 
 // Get the physical address of the entry at entry_index within the range
 // (counted from range->start_index).
-static uvm_gpu_phys_address_t uvm_page_table_range_entry_address(uvm_page_tree_t *tree, uvm_page_table_range_t *range,
-        size_t entry_index)
+static uvm_gpu_phys_address_t uvm_page_table_range_entry_address(uvm_page_tree_t *tree,
+                                                                 uvm_page_table_range_t *range,
+                                                                 size_t entry_index)
 {
     NvU32 entry_size = uvm_mmu_pte_size(tree, range->page_size);
     uvm_gpu_phys_address_t entry = range->table->phys_alloc.addr;
@@ -641,6 +676,14 @@ static uvm_aperture_t uvm_page_table_range_aperture(uvm_page_table_range_t *rang
 {
     return range->table->phys_alloc.addr.aperture;
 }
+
+// Given a GPU or CPU physical address that refers to pages tables, retrieve an
+// address suitable for CE writes to those page tables. This should be used
+// instead of uvm_gpu_address_copy because PTE writes are used to bootstrap the
+// various flat virtual mappings, so we usually ensure that PTE writes work even
+// if virtual mappings are required for other accesses. This is only needed when
+// CE has system-wide physical addressing restrictions.
+uvm_gpu_address_t uvm_mmu_gpu_address(uvm_gpu_t *gpu, uvm_gpu_phys_address_t phys_addr);
 
 NV_STATUS uvm_test_invalidate_tlb(UVM_TEST_INVALIDATE_TLB_PARAMS *params, struct file *filp);
 

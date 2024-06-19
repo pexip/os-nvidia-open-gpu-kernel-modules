@@ -39,6 +39,7 @@
 #include <gpu/gpu.h>
 #include "kernel/gpu/intr/intr.h"
 #include <gpu/bif/kernel_bif.h>
+#include "gpu/disp/kern_disp.h"
 
 //
 // GPU lock
@@ -1485,6 +1486,9 @@ rmGpuGroupLockRelease(GPU_MASK gpuMask, NvU32 flags)
 {
     OBJSYS *pSys = SYS_GET_INSTANCE();
     OBJGPU *pDpcGpu = NULL;
+
+    if (gpuMask == 0)
+        return NV_SEMA_RELEASE_SUCCEED;
 
     //
     // QuadroSync (previously known as GSync) is a cross GPU feature that

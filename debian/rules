@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 
 # For reproducible builds.
-export DATE	 = date --utc --date="@$(SOURCE_DATE_EPOCH)"
+export DATE	 = env LC_ALL=POSIX date --utc --date="@$(SOURCE_DATE_EPOCH)"
 export WHOAMI	 = echo buildd
 export HOSTNAME	 = debian
 
@@ -10,15 +10,16 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=-stackprotector
 
 include /usr/share/dpkg/pkg-info.mk
 
+NVIDIA_RELEASE		 = $(DEB_VERSION_UPSTREAM)
+NVIDIA_MAJOR		 = $(firstword $(subst ., ,$(NVIDIA_RELEASE)))
 include debian/rules.defs
 NVIDIA_TESLA		?=
 LINUX_KMOD_VARIANT	?=
 LINUX_KMOD_TESTED	?=
 ARCH_LIST		?= amd64
 
-NVIDIA_RELEASE		 = $(DEB_VERSION_UPSTREAM)
 version			 = $(NVIDIA_RELEASE)
-version_major		 = $(firstword $(subst ., ,$(version)))
+version_major		 = $(NVIDIA_MAJOR)
 ifeq (yes,$(NVIDIA_TESLA))
 variant			 = $(if $(NVIDIA_TESLA),tesla)
 variant_description	 = $(if $(NVIDIA_TESLA), (Tesla version))
@@ -132,7 +133,7 @@ pack-module-source:
 		--sort=name \
 		--mtime='@$(SOURCE_DATE_EPOCH)' \
 		--clamp-mtime \
-		modules | xz -9 > $(module_source_txz)
+		modules | xz -T1 -9 > $(module_source_txz)
 	tar tfv $(module_source_txz)
 	$(RM) -r $(module_source_pkg)/usr/src/modules
 

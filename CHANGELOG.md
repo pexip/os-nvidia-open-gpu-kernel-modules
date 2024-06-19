@@ -1,10 +1,64 @@
 # Changelog
 
+## Release 535 Entries
+
+### [535.129.03] 2023-10-31
+
+### [535.113.01] 2023-09-21
+
+#### Fixed
+
+- Fixed building main against current centos stream 8 fails, [#550](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/550) by @airlied
+
+### [535.104.05] 2023-08-22
+
+### [535.98] 2023-08-08
+
+### [535.86.10] 2023-07-31
+
+### [535.86.05] 2023-07-18
+
+### [535.54.03] 2023-06-14
+
+### [535.43.02] 2023-05-30
+
+#### Fixed
+
+- Fixed console restore with traditional VGA consoles.
+
+#### Added
+
+- Added support for Run Time D3 (RTD3) on Ampere and later GPUs.
+- Added support for G-Sync on desktop GPUs.
+
+## Release 530 Entries
+
+### [530.41.03] 2023-03-23
+
+### [530.30.02] 2023-02-28
+
+#### Changed
+
+- GSP firmware is now distributed as `gsp_tu10x.bin` and `gsp_ga10x.bin` to better reflect the GPU architectures supported by each firmware file in this release.
+    - The .run installer will continue to install firmware to /lib/firmware/nvidia/<version> and the nvidia.ko kernel module will load the appropriate firmware for each GPU at runtime.
+  
+#### Fixed
+
+- Add support for resizable BAR on Linux when NVreg_EnableResizableBar=1 module param is set. [#3](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/3) by @sjkelly
+
+#### Added
+
+- Support for power management features like Suspend, Hibernate and Resume.
+
 ## Release 525 Entries
+
+### [525.147.05] 2023-10-31
 
 #### Fixed
 
 - Fix nvidia_p2p_get_pages(): Fix double-free in register-callback error path, [#557](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/557) by @BrendanCunningham
+
+### [525.125.06] 2023-06-26
 
 ### [525.116.04] 2023-05-09
 

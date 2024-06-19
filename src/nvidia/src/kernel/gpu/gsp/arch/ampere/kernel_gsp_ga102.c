@@ -28,6 +28,8 @@
 #include "gpu/gsp/kernel_gsp.h"
 
 #include "gpu/bus/kern_bus.h"
+#include "gpu/conf_compute/conf_compute.h"
+#include "nverror.h"
 #include "rmgspseq.h"
 #include "vgpu/rpc.h"
 
@@ -60,6 +62,21 @@ kgspConfigureFalcon_GA102
     falconConfig.pmcEnableMask      = 0;
     falconConfig.bIsPmcDeviceEngine = NV_FALSE;
     falconConfig.physEngDesc        = ENG_GSP;
+
+
+    ConfidentialCompute *pCC = GPU_GET_CONF_COMPUTE(pGpu);
+
+    //
+    // No CrashCat queue when CC is enabled, as it's not encrypted.
+    // Don't bother enabling the host-side decoding either.
+    //
+    if (pCC == NULL || !pCC->getProperty(pCC, PDB_PROP_CONFCOMPUTE_CC_FEATURE_ENABLED))
+    {
+        // Enable CrashCat monitoring
+        falconConfig.crashcatEngConfig.bEnable = NV_TRUE;
+        falconConfig.crashcatEngConfig.pName = MAKE_NV_PRINTF_STR("GSP");
+        falconConfig.crashcatEngConfig.errorId = GSP_ERROR;
+    }
 
     kflcnConfigureEngine(pGpu, staticCast(pKernelGsp, KernelFalcon), &falconConfig);
 }
@@ -310,32 +327,6 @@ kgspExecuteSequencerCommand_GA102
 
     switch (opCode)
     {
-        case GSP_SEQ_BUF_OPCODE_CORE_RESET:
-        {
-            NV_ASSERT_OR_RETURN(payloadSize == 0, NV_ERR_INVALID_ARGUMENT);
-
-            // Reset falcon
-            kflcnEnable_HAL(pGpu, pKernelFalcon, NV_FALSE);
-            kflcnEnable_HAL(pGpu, pKernelFalcon, NV_TRUE);
-
-            kflcnDisableCtxReq_HAL(pGpu, pKernelFalcon);
-            break;
-        }
-        case GSP_SEQ_BUF_OPCODE_CORE_START:
-        {
-            NV_ASSERT_OR_RETURN(payloadSize == 0, NV_ERR_INVALID_ARGUMENT);
-
-            kflcnStartCpu_HAL(pGpu, pKernelFalcon);
-            break;
-        }
-        case GSP_SEQ_BUF_OPCODE_CORE_WAIT_FOR_HALT:
-        {
-            NV_ASSERT_OR_RETURN(payloadSize == 0, NV_ERR_INVALID_ARGUMENT);
-
-            // Wait for the bootloader to complete execution.
-            status = kflcnWaitForHalt_HAL(pGpu, pKernelFalcon, GPU_TIMEOUT_DEFAULT, 0);
-            break;
-        }
         case GSP_SEQ_BUF_OPCODE_CORE_RESUME:
         {
             RM_RISCV_UCODE_DESC *pRiscvDesc = pKernelGsp->pGspRmBootUcodeDesc;
@@ -357,7 +348,7 @@ kgspExecuteSequencerCommand_GA102
                 // Wait for reload to be completed.
                 status = gpuTimeoutCondWait(pGpu, _kgspIsReloadCompleted, NULL, NULL);
 
-                // Check SEC mailbox. 
+                // Check SEC mailbox.
                 secMailbox0 = kflcnRegRead_HAL(pGpu, pKernelSec2Falcon, NV_PFALCON_FALCON_MAILBOX0);
 
                 if ((status != NV_OK) || (secMailbox0 != NV_OK))

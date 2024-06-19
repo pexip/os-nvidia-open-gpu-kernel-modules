@@ -32,7 +32,6 @@
 #include "nverror.h"
 
 #include "published/hopper/gh100/dev_fb.h"
-#include "published/hopper/gh100/dev_ltc.h"
 #include "published/hopper/gh100/dev_fbpa.h"
 #include "published/hopper/gh100/dev_vm.h"
 #include "published/hopper/gh100/pri_nv_xal_ep.h"
@@ -409,6 +408,131 @@ kmemsysAssertSysmemFlushBufferValid_GH100
               (GPU_REG_RD_DRF(pGpu, _PFB, _FBHUB_PCIE_FLUSH_SYSMEM_ADDR_HI, _ADR) != 0));
 }
 
+/*!
+ * @brief Add GPU memory as a NUMA node.
+ *
+ * Add GPU memory as a NUMA node to the OS kernel in platforms where
+ * GPU is coherently connected to the CPU.
+ *
+ * @param[in]  pGPU                OBJGPU pointer
+ * @param[in]  pKernelMemorySystem KernelMemorySystem pointer
+ * @param[in]  swizzId             swizzId of the MIG GPU instance, 0 for full GPU instance/non-MIG.
+ * @param[in]  offset              start offset of the GPU instance within FB
+ * @param[in]  size                size of the GPU instance
+ * @param[out] numaNodeId          NUMA node id corresponding to the added @swizzId partition memory
+ *                                 when NV_OK is returned.
+ *
+ * @returns NV_OK if all is okay.  Otherwise an error-specific value.
+ *
+ */
+NV_STATUS
+kmemsysNumaAddMemory_GH100
+(
+    OBJGPU             *pGpu,
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU32               swizzId,
+    NvU64               offset,
+    NvU64               size,
+    NvS32              *numaNodeId
+)
+{
+    NV_STATUS status;
+    NvU64     memblockSize   = 0;
+    NvU32     lNumaNodeId;
+
+    NV_ASSERT_OK_OR_RETURN(osNumaMemblockSize(&memblockSize));
+    NV_ASSERT_OR_RETURN(NV_IS_ALIGNED(size, memblockSize), NV_ERR_INVALID_STATE);
+
+    if (pKernelMemorySystem->memPartitionNumaInfo[swizzId].bInUse)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Memory partition: %u is already in use!\n", swizzId);
+        return NV_ERR_IN_USE;
+    }
+
+    status = osNumaAddGpuMemory(pGpu->pOsGpuInfo, offset, size, &lNumaNodeId);
+    if (status == NV_OK)
+    {
+        pKernelMemorySystem->memPartitionNumaInfo[swizzId].bInUse = NV_TRUE;
+        pKernelMemorySystem->memPartitionNumaInfo[swizzId].offset = offset;
+        pKernelMemorySystem->memPartitionNumaInfo[swizzId].size = size;
+        pKernelMemorySystem->memPartitionNumaInfo[swizzId].numaNodeId = lNumaNodeId;
+        *numaNodeId = lNumaNodeId;
+
+        pKernelMemorySystem->bNumaNodesAdded = NV_TRUE;
+
+        NV_PRINTF(LEVEL_INFO, "Memory partition: %u added successfully!"
+                  " numa id: %u offset: 0x%llx size: 0x%llx\n",
+                  swizzId, lNumaNodeId, offset, size);
+    }
+
+    return status;
+}
+
+/*!
+ * @brief Remove a particular MIG GPU instance GPU memory from OS kernel.
+ *
+ * Remove GPU memory from the OS kernel that is earlier added as a NUMA node
+ * to the kernel in platforms where GPU is coherently connected to the CPU.
+ *
+ * @param[in]  pGPU                OBJGPU pointer
+ * @param[in]  pKernelMemorySystem KernelMemorySystem pointer
+ * @param[in]  swizzId             swizzId of the MIG GPU instance, 0 for full partition/non-MIG.
+ */
+void
+kmemsysNumaRemoveMemory_GH100
+(
+    OBJGPU             *pGpu,
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU32               swizzId
+)
+{
+    if (pKernelMemorySystem->memPartitionNumaInfo[swizzId].bInUse == NV_FALSE)
+    {
+        return;
+    }
+
+    osNumaRemoveGpuMemory(pGpu->pOsGpuInfo,
+                          pKernelMemorySystem->memPartitionNumaInfo[swizzId].offset,
+                          pKernelMemorySystem->memPartitionNumaInfo[swizzId].size,
+                          pKernelMemorySystem->memPartitionNumaInfo[swizzId].numaNodeId);
+    pKernelMemorySystem->memPartitionNumaInfo[swizzId].bInUse = NV_FALSE;
+    pKernelMemorySystem->memPartitionNumaInfo[swizzId].offset = 0;
+    pKernelMemorySystem->memPartitionNumaInfo[swizzId].size = 0;
+    pKernelMemorySystem->memPartitionNumaInfo[swizzId].numaNodeId = NV_U32_MAX;
+
+    NV_PRINTF(LEVEL_INFO, "NVRM: memory partition: %u removed successfully!\n",
+              swizzId);
+    return;
+}
+
+/*!
+ * @brief Remove all GPU memory from OS kernel.
+ *
+ * Remove all MIG GPU instances GPU memory from the OS kernel that is earlier added
+ * as a NUMA node  to the kernel in platforms where GPU is coherently
+ * connected to the CPU.
+ *
+ * @param[in]  pGPU                OBJGPU pointer
+ * @param[in]  pKernelMemorySystem KernelMemorySystem pointer
+ *
+ */
+void
+kmemsysNumaRemoveAllMemory_GH100
+(
+    OBJGPU             *pGpu,
+    KernelMemorySystem *pKernelMemorySystem
+)
+{
+    NvU32 swizzId;
+
+    for (swizzId = 0; swizzId < KMIGMGR_MAX_GPU_SWIZZID; swizzId++)
+    {
+        kmemsysNumaRemoveMemory_HAL(pGpu, pKernelMemorySystem, swizzId);
+    }
+
+    return;
+}
+
 /*
  * @brief   Function to map swizzId to VMMU Segments
  */
@@ -432,177 +556,42 @@ kmemsysSwizzIdToVmmuSegmentsRange_GH100
     NV_ASSERT_OR_RETURN(pStaticInfo->pSwizzIdFbMemPageRanges != NULL, NV_ERR_INVALID_STATE);
 
     startingVmmuSegment = pStaticInfo->pSwizzIdFbMemPageRanges->fbMemPageRanges[swizzId].lo;
-    memSizeInVmmuSegment = pStaticInfo->pSwizzIdFbMemPageRanges->fbMemPageRanges[swizzId].hi -
-                           pStaticInfo->pSwizzIdFbMemPageRanges->fbMemPageRanges[swizzId].lo;
-    NV_ASSERT_OR_RETURN((memSizeInVmmuSegment <= totalVmmuSegments), NV_ERR_INVALID_STATE);
+    memSizeInVmmuSegment = (pStaticInfo->pSwizzIdFbMemPageRanges->fbMemPageRanges[swizzId].hi -
+                            pStaticInfo->pSwizzIdFbMemPageRanges->fbMemPageRanges[swizzId].lo + 1);
+
+    if (memSizeInVmmuSegment > totalVmmuSegments)
+    {
+        //
+        // SwizzID-0 should cover only partitionable range, however for AMAP,
+        // there is no difference between swizzID-0 and no MIG which can result in
+        // AMAP returning an additional vmmuSegment for swizzID-0
+        //
+        NV_ASSERT_OR_RETURN((swizzId == 0), NV_ERR_INVALID_STATE);
+    }
 
     NV_ASSERT_OK_OR_RETURN(
         kmemsysInitMIGGPUInstanceMemConfigForSwizzId(pGpu, pKernelMemorySystem, swizzId, startingVmmuSegment, memSizeInVmmuSegment));
 
     return NV_OK;
 }
-/*!
- * Utility function used to read registers and ignore PRI errors
- */
-static NvU32
-_kmemsysReadRegAndMaskPriError
+NvU32
+kmemsysGetEccDedCountSize_GH100
 (
-    OBJGPU *pGpu,
-    NvU32 regAddr
-)
-{
-    NvU32 regVal;
-
-    regVal = osGpuReadReg032(pGpu, regAddr);
-    if ((regVal & GPU_READ_PRI_ERROR_MASK) == GPU_READ_PRI_ERROR_CODE)
-    {
-        return 0;
-    }
-
-    return regVal;
-}
-/*
- * @brief Function that checks if ECC error occurred by reading various count
- * registers/interrupt registers. This function is not floorsweeping-aware so
- * PRI errors are ignored
- */
-void
-kmemsysCheckEccCounts_GH100
-(
-    OBJGPU *pGpu,
+    OBJGPU             *pGpu,
     KernelMemorySystem *pKernelMemorySystem
 )
 {
-    NvU32 dramCount = 0;
-    NvU32 mmuCount = 0;
-    NvU32 ltcCount = 0;
-    NvU32 pcieCount = 0;
-    NvU32 regVal;
-    for (NvU32 i = 0; i < NV_SCAL_LITTER_NUM_FBPAS; i++)
-    {
-        for (NvU32 j = 0; j < NV_PFB_FBPA_0_ECC_DED_COUNT__SIZE_1; j++)
-        {
-            // DRAM count read
-            dramCount += _kmemsysReadRegAndMaskPriError(pGpu, NV_PFB_FBPA_0_ECC_DED_COUNT(j) + (i * NV_FBPA_PRI_STRIDE));
-
-            // LTC count read
-            regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_PLTCG_LTC0_LTS0_L2_CACHE_ECC_UNCORRECTED_ERR_COUNT +
-                    (i * NV_LTC_PRI_STRIDE) + (j * NV_LTS_PRI_STRIDE));
-            ltcCount += DRF_VAL(_PLTCG_LTC0_LTS0, _L2_CACHE_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-        }
-    }
-
-    // L2TLB
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_PFB_PRI_MMU_L2TLB_ECC_UNCORRECTED_ERR_COUNT);
-    mmuCount += DRF_VAL(_PFB_PRI_MMU, _L2TLB_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-
-    // HUBTLB
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_PFB_PRI_MMU_HUBTLB_ECC_UNCORRECTED_ERR_COUNT);
-    mmuCount += DRF_VAL(_PFB_PRI_MMU, _HUBTLB_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-
-    // FILLUNIT
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_PFB_PRI_MMU_FILLUNIT_ECC_UNCORRECTED_ERR_COUNT);
-    mmuCount += DRF_VAL(_PFB_PRI_MMU, _FILLUNIT_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-
-    // PCIE RBUF
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_COUNT_RBUF);
-    pcieCount += DRF_VAL(_XPL_DL, _ERR_COUNT_RBUF, _UNCORR_ERR, regVal);
-
-    // PCIE SEQ_LUT
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_COUNT_SEQ_LUT);
-    pcieCount += DRF_VAL(_XPL_DL, _ERR_COUNT_SEQ_LUT, _UNCORR_ERR, regVal);
-
-    // PCIE RE ORDER
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XAL_EP_REORDER_ECC_UNCORRECTED_ERR_COUNT);
-    pcieCount += DRF_VAL(_XAL_EP, _REORDER_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-
-    // PCIE P2PREQ
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XAL_EP_P2PREQ_ECC_UNCORRECTED_ERR_COUNT);
-    pcieCount += DRF_VAL(_XAL_EP, _P2PREQ_ECC, _UNCORRECTED_ERR_COUNT_UNIQUE, regVal);
-
-    // PCIE XTL
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_DED_ERROR_STATUS);
-    if (regVal != 0)
-    {
-        pcieCount += 1;
-    }
-
-    // PCIE XTL
-    regVal = _kmemsysReadRegAndMaskPriError(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_RAM_ERROR_INTR_STATUS);
-    if (regVal != 0)
-    {
-        pcieCount += 1;
-    }
-
-    // If counts > 0 or if poison interrupt pending, ECC error has occurred.
-    if (((dramCount + ltcCount + mmuCount + pcieCount) != 0) ||
-        intrIsVectorPending_HAL(pGpu, GPU_GET_INTR(pGpu), NV_PFB_FBHUB_POISON_INTR_VECTOR_HW_INIT, NULL))
-    {
-        nvErrorLog_va((void *)pGpu, UNRECOVERABLE_ECC_ERROR_ESCAPE,
-                      "An uncorrectable ECC error detected "
-                      "(possible firmware handling failure) "
-                      "DRAM:%d, LTC:%d, MMU:%d, PCIE:%d", dramCount, ltcCount, mmuCount, pcieCount);
-    }
+    return NV_PFB_FBPA_0_ECC_DED_COUNT__SIZE_1;
 }
 
-/*
- * @brief  Function that clears ECC error count registers.
- */
-NV_STATUS
-kmemsysClearEccCounts_GH100
+NvU32
+kmemsysGetEccDedCountRegAddr_GH100
 (
-    OBJGPU *pGpu,
-    KernelMemorySystem *pKernelMemorySystem
+    OBJGPU             *pGpu,
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU32               fbpa,
+    NvU32               subp
 )
 {
-    NvU32 regVal = 0;
-    RMTIMEOUT timeout;
-    NV_STATUS status = NV_OK;
-
-    gpuClearFbhubPoisonIntrForBug2924523_HAL(pGpu);
-
-    for (NvU32 i = 0; i < NV_SCAL_LITTER_NUM_FBPAS; i++)
-    {
-        for (NvU32 j = 0; j < NV_PFB_FBPA_0_ECC_DED_COUNT__SIZE_1; j++)
-        {
-            osGpuWriteReg032(pGpu, NV_PFB_FBPA_0_ECC_DED_COUNT(j) + (i * NV_FBPA_PRI_STRIDE), 0);
-            osGpuWriteReg032(pGpu, NV_PLTCG_LTC0_LTS0_L2_CACHE_ECC_UNCORRECTED_ERR_COUNT + (i * NV_LTC_PRI_STRIDE) + (j * NV_LTS_PRI_STRIDE), 0);
-        }
-    }
-
-    // Reset MMU counts
-    osGpuWriteReg032(pGpu, NV_PFB_PRI_MMU_L2TLB_ECC_UNCORRECTED_ERR_COUNT, 0);
-    osGpuWriteReg032(pGpu, NV_PFB_PRI_MMU_HUBTLB_ECC_UNCORRECTED_ERR_COUNT, 0);
-    osGpuWriteReg032(pGpu, NV_PFB_PRI_MMU_FILLUNIT_ECC_UNCORRECTED_ERR_COUNT, 0);
-
-    // Reset XAL-EP counts
-    osGpuWriteReg032(pGpu, NV_XAL_EP_REORDER_ECC_UNCORRECTED_ERR_COUNT, 0);
-    osGpuWriteReg032(pGpu, NV_XAL_EP_P2PREQ_ECC_UNCORRECTED_ERR_COUNT, 0);
-
-    // Reset XTL-EP status registers
-    osGpuWriteReg032(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_DED_ERROR_STATUS, ~0);
-    osGpuWriteReg032(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_RAM_ERROR_INTR_STATUS, ~0);
-
-    // Reset XPL-EP error counters
-    regVal = DRF_DEF(_XPL, _DL_ERR_RESET, _RBUF_UNCORR_ERR_COUNT, _PENDING) |
-             DRF_DEF(_XPL, _DL_ERR_RESET, _SEQ_LUT_UNCORR_ERR_COUNT, _PENDING);
-    osGpuWriteReg032(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_RESET, regVal);
-
-    // Wait for the error counter reset to complete
-    gpuSetTimeout(pGpu, GPU_TIMEOUT_DEFAULT, &timeout, 0);
-    for (;;)
-    {
-        status = gpuCheckTimeout(pGpu, &timeout);
-
-        regVal = osGpuReadReg032(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_RESET);
-
-        if (FLD_TEST_DRF(_XPL, _DL_ERR_RESET, _RBUF_UNCORR_ERR_COUNT, _DONE, regVal) &&
-            FLD_TEST_DRF(_XPL, _DL_ERR_RESET, _SEQ_LUT_UNCORR_ERR_COUNT, _DONE, regVal))
-            break;
-
-        if (status != NV_OK)
-            return status;
-    }
-
-    return NV_OK;
+    return NV_PFB_FBPA_0_ECC_DED_COUNT(fbpa) + (subp * NV_FBPA_PRI_STRIDE);
 }

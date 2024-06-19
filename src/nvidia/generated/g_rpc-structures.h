@@ -104,7 +104,7 @@ typedef rpc_idle_channels_v03_00 rpc_idle_channels_v;
 
 typedef struct rpc_unloading_guest_driver_v1F_07
 {
-    NvBool     bSuspend;
+    NvBool     bInPMTransition;
     NvBool     bGc6Entering;
     NvU32      newLevel;
 } rpc_unloading_guest_driver_v1F_07;
@@ -233,6 +233,8 @@ typedef struct rpc_gsp_rm_alloc_v03_00
     NvU32      hClass;
     NvU32      status;
     NvU32      paramsSize;
+    NvU32      flags;
+    NvU8       reserved[4];
     NvU8       params[];
 } rpc_gsp_rm_alloc_v03_00;
 
@@ -245,9 +247,7 @@ typedef struct rpc_gsp_rm_control_v03_00
     NvU32      cmd;
     NvU32      status;
     NvU32      paramsSize;
-    NvBool     serialized;
-    NvBool     copyOutOnError;
-    NvU8       reserved[2];
+    NvU32      flags;
     NvU8       params[];
 } rpc_gsp_rm_control_v03_00;
 
@@ -282,6 +282,7 @@ typedef struct rpc_post_event_v17_00
     NvHandle   hEvent;
     NvU32      notifyIndex;
     NvU32      data;
+    NvU16      info16;
     NvU32      status;
     NvU32      eventDataSize;
     NvBool     bNotifyList;
@@ -297,6 +298,8 @@ typedef struct rpc_rc_triggered_v17_02
     NvU32      exceptType;
     NvU32      scope;
     NvU16      partitionAttributionId;
+    NvU32      rcJournalBufferSize;
+    NvU8       rcJournalBuffer[];
 } rpc_rc_triggered_v17_02;
 
 typedef rpc_rc_triggered_v17_02 rpc_rc_triggered_v;
@@ -480,6 +483,13 @@ typedef struct rpc_nvlink_is_gpu_degraded_v17_00
 
 typedef rpc_nvlink_is_gpu_degraded_v17_00 rpc_nvlink_is_gpu_degraded_v;
 
+typedef struct rpc_gsp_send_user_shared_data_v17_00
+{
+    NvU32      data;
+} rpc_gsp_send_user_shared_data_v17_00;
+
+typedef rpc_gsp_send_user_shared_data_v17_00 rpc_gsp_send_user_shared_data_v;
+
 typedef struct rpc_set_sysmem_dirty_page_tracking_buffer_v20_00
 {
     NvU32      sysmemPfnBitmapRing;
@@ -505,6 +515,16 @@ typedef struct rpc_pfm_req_hndlr_state_sync_callback_v21_04
 } rpc_pfm_req_hndlr_state_sync_callback_v21_04;
 
 typedef rpc_pfm_req_hndlr_state_sync_callback_v21_04 rpc_pfm_req_hndlr_state_sync_callback_v;
+
+typedef struct rpc_vgpu_gsp_mig_ci_config_v21_03
+{
+    NvU32      execPartCount;
+    NvU32      execPartId[NVC637_CTRL_MAX_EXEC_PARTITIONS];
+    NvU32      gfid;
+    NvBool     bDelete;
+} rpc_vgpu_gsp_mig_ci_config_v21_03;
+
+typedef rpc_vgpu_gsp_mig_ci_config_v21_03 rpc_vgpu_gsp_mig_ci_config_v;
 
 typedef struct rpc_gsp_lockdown_notice_v17_00
 {
@@ -614,7 +634,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_set_guest_system_info_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_set_guest_system_info",
     #endif
-    .header_length = NV_SIZEOF32(rpc_set_guest_system_info_v03_00),
+    .header_length = sizeof(rpc_set_guest_system_info_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_set_guest_system_info_v03_00
 };
 #endif
@@ -700,7 +720,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_alloc_memory_v13_01 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_alloc_memory",
     #endif
-    .header_length = NV_SIZEOF32(rpc_alloc_memory_v13_01),
+    .header_length = sizeof(rpc_alloc_memory_v13_01),
     .fdesc = vmiopd_fdesc_t_rpc_alloc_memory_v13_01
 };
 #endif
@@ -723,7 +743,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_free_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_free",
     #endif
-    .header_length = NV_SIZEOF32(rpc_free_v03_00),
+    .header_length = sizeof(rpc_free_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_free_v03_00
 };
 #endif
@@ -746,7 +766,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_map_memory_dma_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_map_memory_dma",
     #endif
-    .header_length = NV_SIZEOF32(rpc_map_memory_dma_v03_00),
+    .header_length = sizeof(rpc_map_memory_dma_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_map_memory_dma_v03_00
 };
 #endif
@@ -769,7 +789,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_unmap_memory_dma_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_unmap_memory_dma",
     #endif
-    .header_length = NV_SIZEOF32(rpc_unmap_memory_dma_v03_00),
+    .header_length = sizeof(rpc_unmap_memory_dma_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_unmap_memory_dma_v03_00
 };
 #endif
@@ -792,7 +812,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_dup_object_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_dup_object",
     #endif
-    .header_length = NV_SIZEOF32(rpc_dup_object_v03_00),
+    .header_length = sizeof(rpc_dup_object_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_dup_object_v03_00
 };
 #endif
@@ -838,7 +858,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_idle_channels_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_idle_channels",
     #endif
-    .header_length = NV_SIZEOF32(rpc_idle_channels_v03_00),
+    .header_length = sizeof(rpc_idle_channels_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_idle_channels_v03_00
 };
 #endif
@@ -862,9 +882,9 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_unloading_guest_driver_v03_00 = {
 static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_unloading_guest_driver_v1F_07[] = {
     {
         .vtype                = vtype_NvBool,
-        .offset               = NV_OFFSETOF(rpc_unloading_guest_driver_v1F_07, bSuspend),
+        .offset               = NV_OFFSETOF(rpc_unloading_guest_driver_v1F_07, bInPMTransition),
         #if (defined(DEBUG) || defined(DEVELOP))
-        .name                 = "bSuspend"
+        .name                 = "bInPMTransition"
         #endif
     },
     {
@@ -890,7 +910,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_unloading_guest_driver_v1F_07 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_unloading_guest_driver",
     #endif
-    .header_length = NV_SIZEOF32(rpc_unloading_guest_driver_v1F_07),
+    .header_length = sizeof(rpc_unloading_guest_driver_v1F_07),
     .fdesc = vmiopd_fdesc_t_rpc_unloading_guest_driver_v1F_07
 };
 #endif
@@ -927,7 +947,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gpu_exec_reg_ops_v12_01 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gpu_exec_reg_ops",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gpu_exec_reg_ops_v12_01),
+    .header_length = sizeof(rpc_gpu_exec_reg_ops_v12_01),
     .fdesc = vmiopd_fdesc_t_rpc_gpu_exec_reg_ops_v12_01
 };
 #endif
@@ -971,7 +991,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_set_page_directory_v1E_05 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_set_page_directory",
     #endif
-    .header_length = NV_SIZEOF32(rpc_set_page_directory_v1E_05),
+    .header_length = sizeof(rpc_set_page_directory_v1E_05),
     .fdesc = vmiopd_fdesc_t_rpc_set_page_directory_v1E_05
 };
 #endif
@@ -1008,7 +1028,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_set_page_directory_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_set_page_directory",
     #endif
-    .header_length = NV_SIZEOF32(rpc_set_page_directory_v03_00),
+    .header_length = sizeof(rpc_set_page_directory_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_set_page_directory_v03_00
 };
 #endif
@@ -1045,7 +1065,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_unset_page_directory_v1E_05 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_unset_page_directory",
     #endif
-    .header_length = NV_SIZEOF32(rpc_unset_page_directory_v1E_05),
+    .header_length = sizeof(rpc_unset_page_directory_v1E_05),
     .fdesc = vmiopd_fdesc_t_rpc_unset_page_directory_v1E_05
 };
 #endif
@@ -1082,7 +1102,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_unset_page_directory_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_unset_page_directory",
     #endif
-    .header_length = NV_SIZEOF32(rpc_unset_page_directory_v03_00),
+    .header_length = sizeof(rpc_unset_page_directory_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_unset_page_directory_v03_00
 };
 #endif
@@ -1105,7 +1125,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_get_gsp_static_info_v14_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_get_gsp_static_info",
     #endif
-    .header_length = NV_SIZEOF32(rpc_get_gsp_static_info_v14_00),
+    .header_length = sizeof(rpc_get_gsp_static_info_v14_00),
     .fdesc = vmiopd_fdesc_t_rpc_get_gsp_static_info_v14_00
 };
 #endif
@@ -1128,7 +1148,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_update_bar_pde_v15_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_update_bar_pde",
     #endif
-    .header_length = NV_SIZEOF32(rpc_update_bar_pde_v15_00),
+    .header_length = sizeof(rpc_update_bar_pde_v15_00),
     .fdesc = vmiopd_fdesc_t_rpc_update_bar_pde_v15_00
 };
 #endif
@@ -1165,7 +1185,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_vgpu_pf_reg_read32_v15_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_vgpu_pf_reg_read32",
     #endif
-    .header_length = NV_SIZEOF32(rpc_vgpu_pf_reg_read32_v15_00),
+    .header_length = sizeof(rpc_vgpu_pf_reg_read32_v15_00),
     .fdesc = vmiopd_fdesc_t_rpc_vgpu_pf_reg_read32_v15_00
 };
 #endif
@@ -1188,7 +1208,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_ctrl_subdevice_get_p2p_caps_v21_02 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_ctrl_subdevice_get_p2p_caps",
     #endif
-    .header_length = NV_SIZEOF32(rpc_ctrl_subdevice_get_p2p_caps_v21_02),
+    .header_length = sizeof(rpc_ctrl_subdevice_get_p2p_caps_v21_02),
     .fdesc = vmiopd_fdesc_t_rpc_ctrl_subdevice_get_p2p_caps_v21_02
 };
 #endif
@@ -1225,7 +1245,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_ctrl_bus_set_p2p_mapping_v21_03 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_ctrl_bus_set_p2p_mapping",
     #endif
-    .header_length = NV_SIZEOF32(rpc_ctrl_bus_set_p2p_mapping_v21_03),
+    .header_length = sizeof(rpc_ctrl_bus_set_p2p_mapping_v21_03),
     .fdesc = vmiopd_fdesc_t_rpc_ctrl_bus_set_p2p_mapping_v21_03
 };
 #endif
@@ -1262,7 +1282,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_ctrl_bus_unset_p2p_mapping_v21_03 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_ctrl_bus_unset_p2p_mapping",
     #endif
-    .header_length = NV_SIZEOF32(rpc_ctrl_bus_unset_p2p_mapping_v21_03),
+    .header_length = sizeof(rpc_ctrl_bus_unset_p2p_mapping_v21_03),
     .fdesc = vmiopd_fdesc_t_rpc_ctrl_bus_unset_p2p_mapping_v21_03
 };
 #endif
@@ -1285,7 +1305,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_rmfs_init_v15_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_rmfs_init",
     #endif
-    .header_length = NV_SIZEOF32(rpc_rmfs_init_v15_00),
+    .header_length = sizeof(rpc_rmfs_init_v15_00),
     .fdesc = vmiopd_fdesc_t_rpc_rmfs_init_v15_00
 };
 #endif
@@ -1359,8 +1379,23 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_rmfs_test_v15_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_rmfs_test",
     #endif
-    .header_length = NV_SIZEOF32(rpc_rmfs_test_v15_00),
+    .header_length = sizeof(rpc_rmfs_test_v15_00),
     .fdesc = vmiopd_fdesc_t_rpc_rmfs_test_v15_00
+};
+#endif
+
+#ifndef SKIP_PRINT_rpc_ecc_notifier_write_ack_v23_05
+static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_ecc_notifier_write_ack_v23_05[] = {
+    {
+        .vtype        = vt_end
+    }
+};
+
+static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_ecc_notifier_write_ack_v23_05 = {
+    #if (defined(DEBUG) || defined(DEVELOP))
+    .name = "rpc_ecc_notifier_write_ack",
+    #endif
+    .fdesc = vmiopd_fdesc_t_rpc_ecc_notifier_write_ack_v23_05
 };
 #endif
 
@@ -1382,7 +1417,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gsp_set_system_info_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gsp_set_system_info",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gsp_set_system_info_v17_00),
+    .header_length = sizeof(rpc_gsp_set_system_info_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_gsp_set_system_info_v17_00
 };
 #endif
@@ -1447,6 +1482,21 @@ static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_gsp_rm_alloc_v03_00[] = {
         #endif
     },
     {
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_gsp_rm_alloc_v03_00, flags),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "flags"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvU8_array,
+        .offset               = NV_OFFSETOF(rpc_gsp_rm_alloc_v03_00, reserved),
+        .array_length         = 4,
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "reserved"
+        #endif
+    },
+    {
         .vtype                = vtype_NvU8_array,
         .offset               = NV_OFFSETOF(rpc_gsp_rm_alloc_v03_00, params),
         .array_length         = 0,
@@ -1463,7 +1513,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gsp_rm_alloc_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gsp_rm_alloc",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gsp_rm_alloc_v03_00),
+    .header_length = sizeof(rpc_gsp_rm_alloc_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_gsp_rm_alloc_v03_00
 };
 #endif
@@ -1506,25 +1556,10 @@ static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_gsp_rm_control_v03_00[] = {
         #endif
     },
     {
-        .vtype                = vtype_NvBool,
-        .offset               = NV_OFFSETOF(rpc_gsp_rm_control_v03_00, serialized),
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_gsp_rm_control_v03_00, flags),
         #if (defined(DEBUG) || defined(DEVELOP))
-        .name                 = "serialized"
-        #endif
-    },
-    {
-        .vtype                = vtype_NvBool,
-        .offset               = NV_OFFSETOF(rpc_gsp_rm_control_v03_00, copyOutOnError),
-        #if (defined(DEBUG) || defined(DEVELOP))
-        .name                 = "copyOutOnError"
-        #endif
-    },
-    {
-        .vtype                = vtype_NvU8_array,
-        .offset               = NV_OFFSETOF(rpc_gsp_rm_control_v03_00, reserved),
-        .array_length         = 2,
-        #if (defined(DEBUG) || defined(DEVELOP))
-        .name                 = "reserved"
+        .name                 = "flags"
         #endif
     },
     {
@@ -1544,7 +1579,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gsp_rm_control_v03_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gsp_rm_control",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gsp_rm_control_v03_00),
+    .header_length = sizeof(rpc_gsp_rm_control_v03_00),
     .fdesc = vmiopd_fdesc_t_rpc_gsp_rm_control_v03_00
 };
 #endif
@@ -1610,7 +1645,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_dump_protobuf_component_v18_12 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_dump_protobuf_component",
     #endif
-    .header_length = NV_SIZEOF32(rpc_dump_protobuf_component_v18_12),
+    .header_length = sizeof(rpc_dump_protobuf_component_v18_12),
     .fdesc = vmiopd_fdesc_t_rpc_dump_protobuf_component_v18_12
 };
 #endif
@@ -1656,7 +1691,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_run_cpu_sequencer_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_run_cpu_sequencer",
     #endif
-    .header_length = NV_SIZEOF32(rpc_run_cpu_sequencer_v17_00),
+    .header_length = sizeof(rpc_run_cpu_sequencer_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_run_cpu_sequencer_v17_00
 };
 #endif
@@ -1689,6 +1724,13 @@ static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_post_event_v17_00[] = {
         .offset               = NV_OFFSETOF(rpc_post_event_v17_00, data),
         #if (defined(DEBUG) || defined(DEVELOP))
         .name                 = "data"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvU16,
+        .offset               = NV_OFFSETOF(rpc_post_event_v17_00, info16),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "info16"
         #endif
     },
     {
@@ -1729,7 +1771,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_post_event_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_post_event",
     #endif
-    .header_length = NV_SIZEOF32(rpc_post_event_v17_00),
+    .header_length = sizeof(rpc_post_event_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_post_event_v17_00
 };
 #endif
@@ -1772,6 +1814,21 @@ static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_rc_triggered_v17_02[] = {
         #endif
     },
     {
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_rc_triggered_v17_02, rcJournalBufferSize),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "rcJournalBufferSize"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvU8_array,
+        .offset               = NV_OFFSETOF(rpc_rc_triggered_v17_02, rcJournalBuffer),
+        .array_length         = 0,
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "rcJournalBuffer"
+        #endif
+    },
+    {
         .vtype        = vt_end
     }
 };
@@ -1780,7 +1837,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_rc_triggered_v17_02 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_rc_triggered",
     #endif
-    .header_length = NV_SIZEOF32(rpc_rc_triggered_v17_02),
+    .header_length = sizeof(rpc_rc_triggered_v17_02),
     .fdesc = vmiopd_fdesc_t_rpc_rc_triggered_v17_02
 };
 #endif
@@ -1825,7 +1882,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_os_error_log_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_os_error_log",
     #endif
-    .header_length = NV_SIZEOF32(rpc_os_error_log_v17_00),
+    .header_length = sizeof(rpc_os_error_log_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_os_error_log_v17_00
 };
 #endif
@@ -1855,7 +1912,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_rg_line_intr_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_rg_line_intr",
     #endif
-    .header_length = NV_SIZEOF32(rpc_rg_line_intr_v17_00),
+    .header_length = sizeof(rpc_rg_line_intr_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_rg_line_intr_v17_00
 };
 #endif
@@ -1892,7 +1949,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_display_modeset_v01_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_display_modeset",
     #endif
-    .header_length = NV_SIZEOF32(rpc_display_modeset_v01_00),
+    .header_length = sizeof(rpc_display_modeset_v01_00),
     .fdesc = vmiopd_fdesc_t_rpc_display_modeset_v01_00
 };
 #endif
@@ -1915,7 +1972,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gpuacct_perfmon_util_samples_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gpuacct_perfmon_util_samples",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gpuacct_perfmon_util_samples_v17_00),
+    .header_length = sizeof(rpc_gpuacct_perfmon_util_samples_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_gpuacct_perfmon_util_samples_v17_00
 };
 #endif
@@ -1945,7 +2002,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_vgpu_gsp_plugin_triggered_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_vgpu_gsp_plugin_triggered",
     #endif
-    .header_length = NV_SIZEOF32(rpc_vgpu_gsp_plugin_triggered_v17_00),
+    .header_length = sizeof(rpc_vgpu_gsp_plugin_triggered_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_vgpu_gsp_plugin_triggered_v17_00
 };
 #endif
@@ -1968,7 +2025,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_vgpu_config_event_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_vgpu_config_event",
     #endif
-    .header_length = NV_SIZEOF32(rpc_vgpu_config_event_v17_00),
+    .header_length = sizeof(rpc_vgpu_config_event_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_vgpu_config_event_v17_00
 };
 #endif
@@ -1991,7 +2048,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_dce_rm_init_v01_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_dce_rm_init",
     #endif
-    .header_length = NV_SIZEOF32(rpc_dce_rm_init_v01_00),
+    .header_length = sizeof(rpc_dce_rm_init_v01_00),
     .fdesc = vmiopd_fdesc_t_rpc_dce_rm_init_v01_00
 };
 #endif
@@ -2029,7 +2086,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_sim_read_v1E_01 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_sim_read",
     #endif
-    .header_length = NV_SIZEOF32(rpc_sim_read_v1E_01),
+    .header_length = sizeof(rpc_sim_read_v1E_01),
     .fdesc = vmiopd_fdesc_t_rpc_sim_read_v1E_01
 };
 #endif
@@ -2074,7 +2131,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_sim_write_v1E_01 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_sim_write",
     #endif
-    .header_length = NV_SIZEOF32(rpc_sim_write_v1E_01),
+    .header_length = sizeof(rpc_sim_write_v1E_01),
     .fdesc = vmiopd_fdesc_t_rpc_sim_write_v1E_01
 };
 #endif
@@ -2112,7 +2169,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_ucode_libos_print_v1E_08 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_ucode_libos_print",
     #endif
-    .header_length = NV_SIZEOF32(rpc_ucode_libos_print_v1E_08),
+    .header_length = sizeof(rpc_ucode_libos_print_v1E_08),
     .fdesc = vmiopd_fdesc_t_rpc_ucode_libos_print_v1E_08
 };
 #endif
@@ -2135,7 +2192,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_init_done_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_init_done",
     #endif
-    .header_length = NV_SIZEOF32(rpc_init_done_v17_00),
+    .header_length = sizeof(rpc_init_done_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_init_done_v17_00
 };
 #endif
@@ -2200,7 +2257,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_semaphore_schedule_callback_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_semaphore_schedule_callback",
     #endif
-    .header_length = NV_SIZEOF32(rpc_semaphore_schedule_callback_v17_00),
+    .header_length = sizeof(rpc_semaphore_schedule_callback_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_semaphore_schedule_callback_v17_00
 };
 #endif
@@ -2258,7 +2315,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_timed_semaphore_release_v01_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_timed_semaphore_release",
     #endif
-    .header_length = NV_SIZEOF32(rpc_timed_semaphore_release_v01_00),
+    .header_length = sizeof(rpc_timed_semaphore_release_v01_00),
     .fdesc = vmiopd_fdesc_t_rpc_timed_semaphore_release_v01_00
 };
 #endif
@@ -2281,7 +2338,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_perf_gpu_boost_sync_limits_callback_v17
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_perf_gpu_boost_sync_limits_callback",
     #endif
-    .header_length = NV_SIZEOF32(rpc_perf_gpu_boost_sync_limits_callback_v17_00),
+    .header_length = sizeof(rpc_perf_gpu_boost_sync_limits_callback_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_perf_gpu_boost_sync_limits_callback_v17_00
 };
 #endif
@@ -2304,7 +2361,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_perf_bridgeless_info_update_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_perf_bridgeless_info_update",
     #endif
-    .header_length = NV_SIZEOF32(rpc_perf_bridgeless_info_update_v17_00),
+    .header_length = sizeof(rpc_perf_bridgeless_info_update_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_perf_bridgeless_info_update_v17_00
 };
 #endif
@@ -2327,7 +2384,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_fault_up_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_fault_up",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_fault_up_v17_00),
+    .header_length = sizeof(rpc_nvlink_fault_up_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_fault_up_v17_00
 };
 #endif
@@ -2350,7 +2407,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_inband_received_data_256_v17_00 
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_inband_received_data_256",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_inband_received_data_256_v17_00),
+    .header_length = sizeof(rpc_nvlink_inband_received_data_256_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_inband_received_data_256_v17_00
 };
 #endif
@@ -2373,7 +2430,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_inband_received_data_512_v17_00 
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_inband_received_data_512",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_inband_received_data_512_v17_00),
+    .header_length = sizeof(rpc_nvlink_inband_received_data_512_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_inband_received_data_512_v17_00
 };
 #endif
@@ -2396,7 +2453,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_inband_received_data_1024_v17_00
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_inband_received_data_1024",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_inband_received_data_1024_v17_00),
+    .header_length = sizeof(rpc_nvlink_inband_received_data_1024_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_inband_received_data_1024_v17_00
 };
 #endif
@@ -2419,7 +2476,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_inband_received_data_2048_v17_00
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_inband_received_data_2048",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_inband_received_data_2048_v17_00),
+    .header_length = sizeof(rpc_nvlink_inband_received_data_2048_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_inband_received_data_2048_v17_00
 };
 #endif
@@ -2442,7 +2499,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_inband_received_data_4096_v17_00
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_inband_received_data_4096",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_inband_received_data_4096_v17_00),
+    .header_length = sizeof(rpc_nvlink_inband_received_data_4096_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_inband_received_data_4096_v17_00
 };
 #endif
@@ -2465,8 +2522,31 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_nvlink_is_gpu_degraded_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_nvlink_is_gpu_degraded",
     #endif
-    .header_length = NV_SIZEOF32(rpc_nvlink_is_gpu_degraded_v17_00),
+    .header_length = sizeof(rpc_nvlink_is_gpu_degraded_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_nvlink_is_gpu_degraded_v17_00
+};
+#endif
+
+#ifndef SKIP_PRINT_rpc_gsp_send_user_shared_data_v17_00
+static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_gsp_send_user_shared_data_v17_00[] = {
+    {
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_gsp_send_user_shared_data_v17_00, data),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "data"
+        #endif
+    },
+    {
+        .vtype        = vt_end
+    }
+};
+
+static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gsp_send_user_shared_data_v17_00 = {
+    #if (defined(DEBUG) || defined(DEVELOP))
+    .name = "rpc_gsp_send_user_shared_data",
+    #endif
+    .header_length = sizeof(rpc_gsp_send_user_shared_data_v17_00),
+    .fdesc = vmiopd_fdesc_t_rpc_gsp_send_user_shared_data_v17_00
 };
 #endif
 
@@ -2502,7 +2582,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_set_sysmem_dirty_page_tracking_buffer_v
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_set_sysmem_dirty_page_tracking_buffer",
     #endif
-    .header_length = NV_SIZEOF32(rpc_set_sysmem_dirty_page_tracking_buffer_v20_00),
+    .header_length = sizeof(rpc_set_sysmem_dirty_page_tracking_buffer_v20_00),
     .fdesc = vmiopd_fdesc_t_rpc_set_sysmem_dirty_page_tracking_buffer_v20_00
 };
 #endif
@@ -2546,7 +2626,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_extdev_intr_service_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_extdev_intr_service",
     #endif
-    .header_length = NV_SIZEOF32(rpc_extdev_intr_service_v17_00),
+    .header_length = sizeof(rpc_extdev_intr_service_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_extdev_intr_service_v17_00
 };
 #endif
@@ -2569,8 +2649,53 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_pfm_req_hndlr_state_sync_callback_v21_0
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_pfm_req_hndlr_state_sync_callback",
     #endif
-    .header_length = NV_SIZEOF32(rpc_pfm_req_hndlr_state_sync_callback_v21_04),
+    .header_length = sizeof(rpc_pfm_req_hndlr_state_sync_callback_v21_04),
     .fdesc = vmiopd_fdesc_t_rpc_pfm_req_hndlr_state_sync_callback_v21_04
+};
+#endif
+
+#ifndef SKIP_PRINT_rpc_vgpu_gsp_mig_ci_config_v21_03
+static vmiopd_fdesc_t vmiopd_fdesc_t_rpc_vgpu_gsp_mig_ci_config_v21_03[] = {
+    {
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_vgpu_gsp_mig_ci_config_v21_03, execPartCount),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "execPartCount"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvU32_array,
+        .offset               = NV_OFFSETOF(rpc_vgpu_gsp_mig_ci_config_v21_03, execPartId),
+        .array_length         = NVC637_CTRL_MAX_EXEC_PARTITIONS,
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "execPartId"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvU32,
+        .offset               = NV_OFFSETOF(rpc_vgpu_gsp_mig_ci_config_v21_03, gfid),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "gfid"
+        #endif
+    },
+    {
+        .vtype                = vtype_NvBool,
+        .offset               = NV_OFFSETOF(rpc_vgpu_gsp_mig_ci_config_v21_03, bDelete),
+        #if (defined(DEBUG) || defined(DEVELOP))
+        .name                 = "bDelete"
+        #endif
+    },
+    {
+        .vtype        = vt_end
+    }
+};
+
+static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_vgpu_gsp_mig_ci_config_v21_03 = {
+    #if (defined(DEBUG) || defined(DEVELOP))
+    .name = "rpc_vgpu_gsp_mig_ci_config",
+    #endif
+    .header_length = sizeof(rpc_vgpu_gsp_mig_ci_config_v21_03),
+    .fdesc = vmiopd_fdesc_t_rpc_vgpu_gsp_mig_ci_config_v21_03
 };
 #endif
 
@@ -2592,7 +2717,7 @@ static vmiopd_mdesc_t vmiopd_mdesc_t_rpc_gsp_lockdown_notice_v17_00 = {
     #if (defined(DEBUG) || defined(DEVELOP))
     .name = "rpc_gsp_lockdown_notice",
     #endif
-    .header_length = NV_SIZEOF32(rpc_gsp_lockdown_notice_v17_00),
+    .header_length = sizeof(rpc_gsp_lockdown_notice_v17_00),
     .fdesc = vmiopd_fdesc_t_rpc_gsp_lockdown_notice_v17_00
 };
 #endif
@@ -2776,6 +2901,13 @@ vmiopd_mdesc_t *rpcdebugRmfsCleanup_v15_00(void)
 vmiopd_mdesc_t *rpcdebugRmfsTest_v15_00(void)
 {
     return &vmiopd_mdesc_t_rpc_rmfs_test_v15_00;
+}
+#endif
+
+#ifndef SKIP_PRINT_rpc_ecc_notifier_write_ack_v23_05
+vmiopd_mdesc_t *rpcdebugEccNotifierWriteAck_v23_05(void)
+{
+    return &vmiopd_mdesc_t_rpc_ecc_notifier_write_ack_v23_05;
 }
 #endif
 
@@ -2989,6 +3121,13 @@ vmiopd_mdesc_t *rpcdebugNvlinkIsGpuDegraded_v17_00(void)
 }
 #endif
 
+#ifndef SKIP_PRINT_rpc_gsp_send_user_shared_data_v17_00
+vmiopd_mdesc_t *rpcdebugGspSendUserSharedData_v17_00(void)
+{
+    return &vmiopd_mdesc_t_rpc_gsp_send_user_shared_data_v17_00;
+}
+#endif
+
 #ifndef SKIP_PRINT_rpc_set_sysmem_dirty_page_tracking_buffer_v20_00
 vmiopd_mdesc_t *rpcdebugSetSysmemDirtyPageTrackingBuffer_v20_00(void)
 {
@@ -3007,6 +3146,13 @@ vmiopd_mdesc_t *rpcdebugExtdevIntrService_v17_00(void)
 vmiopd_mdesc_t *rpcdebugPfmReqHndlrStateSyncCallback_v21_04(void)
 {
     return &vmiopd_mdesc_t_rpc_pfm_req_hndlr_state_sync_callback_v21_04;
+}
+#endif
+
+#ifndef SKIP_PRINT_rpc_vgpu_gsp_mig_ci_config_v21_03
+vmiopd_mdesc_t *rpcdebugVgpuGspMigCiConfig_v21_03(void)
+{
+    return &vmiopd_mdesc_t_rpc_vgpu_gsp_mig_ci_config_v21_03;
 }
 #endif
 
@@ -3121,12 +3267,16 @@ typedef union rpc_generic_union {
     rpc_nvlink_inband_received_data_4096_v nvlink_inband_received_data_4096_v;
     rpc_nvlink_is_gpu_degraded_v17_00 nvlink_is_gpu_degraded_v17_00;
     rpc_nvlink_is_gpu_degraded_v nvlink_is_gpu_degraded_v;
+    rpc_gsp_send_user_shared_data_v17_00 gsp_send_user_shared_data_v17_00;
+    rpc_gsp_send_user_shared_data_v gsp_send_user_shared_data_v;
     rpc_set_sysmem_dirty_page_tracking_buffer_v20_00 set_sysmem_dirty_page_tracking_buffer_v20_00;
     rpc_set_sysmem_dirty_page_tracking_buffer_v set_sysmem_dirty_page_tracking_buffer_v;
     rpc_extdev_intr_service_v17_00 extdev_intr_service_v17_00;
     rpc_extdev_intr_service_v extdev_intr_service_v;
     rpc_pfm_req_hndlr_state_sync_callback_v21_04 pfm_req_hndlr_state_sync_callback_v21_04;
     rpc_pfm_req_hndlr_state_sync_callback_v pfm_req_hndlr_state_sync_callback_v;
+    rpc_vgpu_gsp_mig_ci_config_v21_03 vgpu_gsp_mig_ci_config_v21_03;
+    rpc_vgpu_gsp_mig_ci_config_v vgpu_gsp_mig_ci_config_v;
     rpc_gsp_lockdown_notice_v17_00 gsp_lockdown_notice_v17_00;
     rpc_gsp_lockdown_notice_v gsp_lockdown_notice_v;
 } rpc_generic_union;

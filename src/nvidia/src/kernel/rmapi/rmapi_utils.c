@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2020 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -57,7 +57,8 @@ rmapiutilAllocClientAndDeviceHandles
                                 NV01_NULL_OBJECT,
                                 NV01_NULL_OBJECT,
                                 NV01_ROOT,
-                                &hClient),
+                                &hClient,
+                                sizeof(hClient)),
         cleanup);
 
     // Allocate a device
@@ -75,7 +76,8 @@ rmapiutilAllocClientAndDeviceHandles
                                 hClient,
                                 hDevice,
                                 NV01_DEVICE_0,
-                                &nv0080AllocParams),
+                                &nv0080AllocParams,
+                                sizeof(nv0080AllocParams)),
         cleanup);
 
     // Allocate a subDevice
@@ -92,7 +94,8 @@ rmapiutilAllocClientAndDeviceHandles
                                 hDevice,
                                 hSubDevice,
                                 NV20_SUBDEVICE_0,
-                                &nv2080AllocParams),
+                                &nv2080AllocParams,
+                                sizeof(nv2080AllocParams)),
         cleanup);
 
     *phClient = hClient;
@@ -152,7 +155,8 @@ rmapiutilGetControlInfo
 (
     NvU32 cmd,
     NvU32 *pFlags,
-    NvU32 *pAccessRight
+    NvU32 *pAccessRight,
+    NvU32 *pParamsSize
 )
 {
     RS_RESOURCE_DESC *pResourceDesc = RsResInfoByExternalClassId(DRF_VAL(XXXX, _CTRL_CMD, _CLASS, cmd));
@@ -172,6 +176,9 @@ rmapiutilGetControlInfo
 
                 if (pAccessRight != NULL)
                     *pAccessRight = pMethodDef->accessRight;
+
+                if (pParamsSize != NULL)
+                    *pParamsSize = pMethodDef->paramSize;
 
                 return NV_OK;
             }

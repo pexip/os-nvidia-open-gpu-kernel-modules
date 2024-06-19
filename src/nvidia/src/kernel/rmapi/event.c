@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -188,7 +188,7 @@ eventConstruct_IMPL
 
         if (rmStatus == NV_OK)
             rmStatus = registerEventNotification(ppEventNotification,
-                                                 pRsClient->hClient,
+                                                 pRsClient,
                                                  pEvent->hNotifierResource,
                                                  pResourceRef->hResource,
                                                  pNv0050AllocParams->notifyIndex,
@@ -285,9 +285,11 @@ NV_STATUS notifyUnregisterEvent_IMPL
                 // host, if we are in guest OS (where IS_VIRTUAL(pGpu) is true),
                 // do an RPC to the host to do the hardware update.
                 //
-                if (IS_VIRTUAL_WITHOUT_SRIOV(pGpu) ||
+                if (
+                    !(IS_GSP_CLIENT(pGpu) && (pNotifierRef->internalClassId == classId(KernelHostVgpuDeviceApi))) &&
+                    (IS_VIRTUAL_WITHOUT_SRIOV(pGpu) ||
                     (IS_GSP_CLIENT(pGpu) && pNotifierRef->internalClassId != classId(ContextDma)) ||
-                    (IS_VIRTUAL_WITH_SRIOV(pGpu) && !((*ppEventNotification)->bNonStallIntrEvent)))
+                    (IS_VIRTUAL_WITH_SRIOV(pGpu) && !((*ppEventNotification)->bNonStallIntrEvent))))
                 {
                     //
                     // In SR-IOV enabled systems, nonstall events are registered
@@ -494,11 +496,11 @@ CliGetEventInfo
     Event          **ppEvent
 )
 {
-    RmClient       *pClient;
     RsClient       *pRsClient;
     RsResourceRef  *pResourceRef;
+    RmClient       *pClient = serverutilGetClientUnderLock(hClient);
 
-    if (NV_OK != serverutilGetClientUnderLock(hClient, &pClient))
+    if (pClient == NULL)
         return NV_FALSE;
 
     pRsClient = staticCast(pClient, RsClient);

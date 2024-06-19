@@ -895,7 +895,6 @@ nvswitch_os_vsnprintf
 void
 nvswitch_os_assert_log
 (
-    int cond,
     const char *pFormat,
     ...
 );
@@ -934,6 +933,12 @@ nvswitch_os_get_os_version
     NvU32 *pMajorVer,
     NvU32 *pMinorVer,
     NvU32 *pBuildNum
+);
+
+NvlStatus
+nvswitch_os_get_pid
+(
+    NvU32 *pPid
 );
 
 void

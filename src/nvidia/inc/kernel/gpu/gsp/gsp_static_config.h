@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -88,7 +88,7 @@ typedef struct GspStaticConfigInfo_t
     GspSMInfo SM_info;
 
     NvBool poisonFuseEnabled;
-  
+
     NvU64 fb_length;
     NvU32 fbio_mask;
     NvU32 fb_bus_width;
@@ -111,6 +111,9 @@ typedef struct GspStaticConfigInfo_t
     NvBool bIsTitan;
     NvBool bIsTesla;
     NvBool bIsMobile;
+    NvBool bIsGc6Rtd3Allowed;
+    NvBool bIsGcOffRtd3Allowed;
+    NvBool bIsGcoffLegacyAllowed;
 
     NvU64 bar1PdeBase;
     NvU64 bar2PdeBase;
@@ -138,7 +141,10 @@ typedef struct GspStaticConfigInfo_t
     // Subdevice handle for internal RMAPI control.
     NvHandle hInternalSubdevice;
 
+    NvBool bSelfHostedMode;
     NvBool bAtsSupported;
+
+    NvBool bIsGpuUefi;
 } GspStaticConfigInfo;
 
 // Pushed from CPU-RM to GSP-RM
@@ -158,6 +164,7 @@ typedef struct GspSystemInfo
     NvU64 clPdbProperties;
     NvU32 Chipset;
     NvBool bGpuBehindBridge;
+    NvBool bMnocAvailable;
     NvBool bUpstreamL0sUnsupported;
     NvBool bUpstreamL1Unsupported;
     NvBool bUpstreamL1PorSupported;
@@ -166,8 +173,11 @@ typedef struct GspSystemInfo
     BUSINFO FHBBusInfo;
     BUSINFO chipsetIDInfo;
     ACPI_METHOD_DATA acpiMethodData;
+    NvU32 hypervisorType;
+    NvBool bIsPassthru;
     NvU64 sysTimerOffsetNs;
     GSP_VF_INFO gspVFInfo;
+    NvBool bTdrEventSupported;
 } GspSystemInfo;
 
 

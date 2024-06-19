@@ -49,12 +49,23 @@ void uvm_hal_hopper_arch_init_properties(uvm_parent_gpu_t *parent_gpu)
     // A single top level PDE on Hopper covers 64 PB and that's the minimum
     // size that can be used.
     parent_gpu->rm_va_base = 0;
-    parent_gpu->rm_va_size = 64ull * 1024 * 1024 * 1024 * 1024 * 1024;
+    parent_gpu->rm_va_size = 64 * UVM_SIZE_1PB;
 
-    parent_gpu->uvm_mem_va_base = parent_gpu->rm_va_size + 384ull * 1024 * 1024 * 1024 * 1024;
+    parent_gpu->uvm_mem_va_base = parent_gpu->rm_va_size + 384 * UVM_SIZE_1TB;
     parent_gpu->uvm_mem_va_size = UVM_MEM_VA_SIZE;
 
-    parent_gpu->peer_copy_mode = g_uvm_global.peer_copy_mode;
+    // See uvm_mmu.h for mapping placement
+    parent_gpu->flat_vidmem_va_base = (64 * UVM_SIZE_1PB) + (8 * UVM_SIZE_1TB);
+
+    // Physical CE writes to vidmem are non-coherent with respect to the CPU on
+    // GH180.
+    parent_gpu->ce_phys_vidmem_write_supported = !uvm_gpu_is_coherent(parent_gpu);
+
+    // TODO: Bug 4174553: [HGX-SkinnyJoe][GH180] channel errors discussion/debug
+    //                    portion for the uvm tests became nonresponsive after
+    //                    some time and then failed even after reboot
+    parent_gpu->peer_copy_mode = uvm_gpu_is_coherent(parent_gpu) ?
+                                                           UVM_GPU_PEER_COPY_MODE_VIRTUAL : g_uvm_global.peer_copy_mode;
 
     // All GR context buffers may be mapped to 57b wide VAs. All "compute" units
     // accessing GR context buffers support the 57-bit VA range.
@@ -92,5 +103,7 @@ void uvm_hal_hopper_arch_init_properties(uvm_parent_gpu_t *parent_gpu)
     parent_gpu->map_remap_larger_page_promotion = false;
 
     parent_gpu->plc_supported = true;
+
+    parent_gpu->no_ats_range_required = true;
 }
 

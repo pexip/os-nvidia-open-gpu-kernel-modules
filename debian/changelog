@@ -1,3 +1,125 @@
+nvidia-open-gpu-kernel-modules (535.183.01-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 18:17:12 +0200
+
+nvidia-open-gpu-kernel-modules (535.183.01-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.183.01 (2024-06-04).
+    * Fixed CVE-2024-0090, CVE-2024-0092.  (Closes: #1072800)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5551
+  * New upstream long term support branch release 535.179 (2024-05-09).
+  * New upstream long term support branch release 535.171.04 (2024-03-21).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 04:56:43 +0200
+
+nvidia-open-gpu-kernel-modules (535.161.08-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 28 Mar 2024 17:15:50 +0100
+
+nvidia-open-gpu-kernel-modules (535.161.08-1) unstable; urgency=medium
+
+  * New upstream Tesla branch release 535.161.08 (2024-03-18).
+  * Upload to unstable.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 28 Mar 2024 07:52:45 +0100
+
+nvidia-open-gpu-kernel-modules (535.161.07-1) experimental; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.161.07 (2024-02-22).
+    * Fixed CVE-2024-0074, CVE-2024-0075, CVE-2024-0078.  (Closes: #1064991)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5520
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+  * Upload to experimental.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 27 Mar 2024 07:58:43 +0100
+
+nvidia-open-gpu-kernel-modules (535.154.05-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.154.05 (2024-01-16).
+  * New upstream long term support branch release 535.146.02 (2023-12-07).
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 27 Mar 2024 18:28:57 +0100
+
+nvidia-open-gpu-kernel-modules (535.129.03-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.129.03 (2023-10-31).
+    * Fixed CVE-2023-31022.  (Closes: #1055144)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5491
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 27 Mar 2024 11:14:40 +0100
+
+nvidia-open-gpu-kernel-modules (535.113.01-1) unstable; urgency=medium
+
+  * New upstream long term support branch release 535.113.01 (2023-09-21).
+  * New upstream Tesla branch release 535.104.12 (2023-09-25).
+  * New upstream LTS and Tesla branch release 535.104.05 (2023-08-22).
+  * New upstream long term support branch release 535.98 (2023-08-08).
+  * New upstream Tesla branch release 535.86.10 (2023-07-31).
+  * New upstream long term support branch release 535.86.05 (2023-07-18).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 25 Mar 2024 20:55:03 +0100
+
+nvidia-open-gpu-kernel-modules (535.54.03-1) UNRELEASED; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.54.03 (2023-06-14).
+    * Fixed CVE-2023-25515, CVE-2023-25516.  (Closes: #1039686)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5468
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 22 Mar 2024 10:37:58 +0100
+
+nvidia-open-gpu-kernel-modules (535.43.02-1) UNRELEASED; urgency=medium
+
+  * New upstream beta 535.43.02 (2023-05-30).
+  * Refresh patches.
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 21 Mar 2024 14:03:08 +0100
+
+nvidia-open-gpu-kernel-modules (530.41.03-1) unstable; urgency=medium
+
+  * New upstream new feature branch release 530.41.03 (2023-03-23).
+    * Fixed CVE-2023-0184, CVE-2023-0189, CVE-2023-0180, CVE-2023-0183,
+      CVE-2023-0185, CVE-2023-0187, CVE-2023-0198, CVE-2023-0199,
+      CVE-2023-0188, CVE-2023-0190, CVE-2023-0194, CVE-2023-0195,
+      CVE-2023-0191.  (Closes: #1033783)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5452
+  * Sync with src:nvidia-graphics-drivers.
+  * Fix package build reproducibility.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 20 Mar 2024 12:01:32 +0100
+
+nvidia-open-gpu-kernel-modules (530.30.02-1) UNRELEASED; urgency=medium
+
+  * New upstream beta 530.30.02 (2023-02-28).
+  * Refresh patches.
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 20 Mar 2024 09:50:41 +0100
+
+nvidia-open-gpu-kernel-modules (525.147.05-3) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 08 Mar 2024 11:29:08 +0100
+
+nvidia-open-gpu-kernel-modules (525.147.05-2) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 29 Jan 2024 01:36:28 +0100
+
 nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1) bookworm; urgency=medium
 
   * Rebuild for bookworm.
@@ -6,7 +128,7 @@ nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1) bookworm; urgency=medium
 
 nvidia-open-gpu-kernel-modules (525.147.05-1) unstable; urgency=medium
 
-  * New upstream production branch release 525.147.05 (2023-10-31).
+  * New upstream production and Tesla branch release 525.147.05 (2023-10-31).
     * Fixed CVE-2023-31022.  (Closes: #1055144)
       https://nvidia.custhelp.com/app/answers/detail/a_id/5491
   * Refresh patches.
@@ -29,7 +151,7 @@ nvidia-open-gpu-kernel-modules (525.125.06-1~deb12u1) bookworm; urgency=medium
 
 nvidia-open-gpu-kernel-modules (525.125.06-1) unstable; urgency=medium
 
-  * New upstream production branch release 525.125.06 (2023-06-26).
+  * New upstream production and Tesla branch release 525.125.06 (2023-06-26).
     * Fixed CVE-2023-25515, CVE-2023-25516.  (Closes: #1039686)
       https://nvidia.custhelp.com/app/answers/detail/a_id/5468
 
@@ -52,7 +174,7 @@ nvidia-open-gpu-kernel-modules (525.105.17-2) unstable; urgency=medium
 
 nvidia-open-gpu-kernel-modules (525.105.17-1) unstable; urgency=medium
 
-  * New upstream production branch release 525.105.17 (2023-03-30).
+  * New upstream production and Tesla branch release 525.105.17 (2023-03-30).
     * Fixed CVE-2023-0184, CVE-2023-0189, CVE-2023-0180, CVE-2023-0183,
       CVE-2023-0185, CVE-2023-0187, CVE-2023-0198, CVE-2023-0199,
       CVE-2023-0188, CVE-2023-0190, CVE-2023-0194, CVE-2023-0195,
@@ -70,10 +192,10 @@ nvidia-open-gpu-kernel-modules (525.89.02-1) unstable; urgency=medium
 
 nvidia-open-gpu-kernel-modules (525.85.12-1) unstable; urgency=medium
 
-  * New upstream production branch release 525.85.12 (2023-01-30).
+  * New upstream Tesla branch release 525.85.12 (2023-01-30).
   * New upstream production branch release 525.85.05 (2023-01-19).
   * New upstream production branch release 525.78.01 (2023-01-05).
-  * New upstream production branch release 525.60.13 (2022-12-05).
+  * New upstream production and Tesla branch release 525.60.13 (2022-12-05).
   * New upstream production branch release 525.60.11 (2022-11-28).
     * Fixed CVE-2022-34670, CVE-2022-34673, CVE-2022-34674, CVE-2022-34675,
       CVE-2022-34677, CVE-2022-34679, CVE-2022-34680, CVE-2022-34682,
@@ -97,7 +219,7 @@ nvidia-open-gpu-kernel-modules (520.56.06-1) unstable; urgency=medium
 
 nvidia-open-gpu-kernel-modules (515.86.01-1) unstable; urgency=medium
 
-  * New upstream production branch release 515.86.01 (2022-11-22).
+  * New upstream production and Tesla branch release 515.86.01 (2022-11-22).
     * Fixed CVE-2022-34670, CVE-2022-34673, CVE-2022-34674, CVE-2022-34675,
       CVE-2022-34677, CVE-2022-34679, CVE-2022-34680, CVE-2022-34682,
       CVE-2022-34684, CVE-2022-42254, CVE-2022-42255, CVE-2022-42256,
@@ -112,13 +234,14 @@ nvidia-open-gpu-kernel-modules (515.86.01-1) unstable; urgency=medium
 nvidia-open-gpu-kernel-modules (515.76-1) experimental; urgency=medium
 
   * New upstream production branch release 515.76 (2022-09-20).
+  * New upstream Tesla branch release (amd64 only) 515.65.07 (2022-10-19).
   * Refresh patches.
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 26 Jan 2023 02:31:53 +0100
 
 nvidia-open-gpu-kernel-modules (515.65.01-1) experimental; urgency=medium
 
-  * New upstream production branch release 515.65.01 (2022-08-02).
+  * New upstream production and Tesla branch release 515.65.01 (2022-08-02).
   * New upstream production branch release 515.57 (2022-06-28).
   * Add versioned Provides: nvidia-open-kernel-dkms-any.
 
@@ -126,7 +249,7 @@ nvidia-open-gpu-kernel-modules (515.65.01-1) experimental; urgency=medium
 
 nvidia-open-gpu-kernel-modules (515.48.07-1) experimental; urgency=medium
 
-  * New upstream production branch release 515.48.07 (2022-05-31).
+  * New upstream production and Tesla branch release 515.48.07 (2022-05-31).
   * Refresh patches.
   * Add salsa-ci.yml.
 

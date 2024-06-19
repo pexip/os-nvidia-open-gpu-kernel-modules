@@ -11,7 +11,7 @@ Disclaimer:
 Files:
  *
 Copyright:
- (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 License: Expat
 Comment:
  Except where noted otherwise, the individual files within this package are
@@ -48,7 +48,7 @@ License: Zlib
 Files:
  debian/*
 Copyright:
- © 2022-2023 Andreas Beckmann <anbe@debian.org>
+ © 2022-2024 Andreas Beckmann <anbe@debian.org>
 License: Expat
 
 License: Expat

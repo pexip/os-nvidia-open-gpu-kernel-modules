@@ -28,7 +28,7 @@
 
 //
 // This file was generated with FINN, an NVIDIA coding tool.
-// Source file: alloc/alloc_channel.finn
+// Source file:      alloc/alloc_channel.finn
 //
 
 #include "nvlimits.h"
@@ -40,7 +40,6 @@ typedef struct NV_MEMORY_DESC_PARAMS {
     NvU32 addressSpace;
     NvU32 cacheAttrib;
 } NV_MEMORY_DESC_PARAMS;
-
 
 /*
  * NV_CHANNEL_ALLOC_PARAMS.flags values.
@@ -82,6 +81,25 @@ typedef struct NV_MEMORY_DESC_PARAMS {
 #define NVOS04_FLAGS_VPR                                           2:2
 #define NVOS04_FLAGS_VPR_FALSE                                     0x00000000
 #define NVOS04_FLAGS_VPR_TRUE                                      0x00000001
+
+/*
+ *    NVOS04_FLAGS_CC_SECURE:
+ *     This flag specifies if channel is intended to be used for
+ *     encryption/decryption of data between SYSMEM <-> VIDMEM. Only CE
+ *     & SEC2 Channels are capable of handling encrypted content and this
+ *     flag will be ignored when CC is disabled or for chips that are not CC
+ *     Capable.
+ *     Reusing VPR index since VPR & CC are mutually exclusive.
+ *
+ *       NVOS04_FLAGS_CC_SECURE_TRUE:
+ *         The channel will support CC Encryption/Decryption
+ *
+ *       NVOS04_FLAGS_CC_SECURE_FALSE:
+ *         The channel will not support CC Encryption/Decryption
+ */
+#define NVOS04_FLAGS_CC_SECURE                                     2:2
+#define NVOS04_FLAGS_CC_SECURE_FALSE                               0x00000000
+#define NVOS04_FLAGS_CC_SECURE_TRUE                                0x00000001
 
 
 
@@ -270,6 +288,8 @@ typedef struct NV_MEMORY_DESC_PARAMS {
 
 
 
+#define CC_CHAN_ALLOC_IV_SIZE_DWORD    3U
+#define CC_CHAN_ALLOC_NONCE_SIZE_DWORD 8U
 
 #define NV_CHANNEL_ALLOC_PARAMS_MESSAGE_ID (0x906fU)
 
@@ -300,8 +320,6 @@ typedef struct NV_CHANNEL_ALLOC_PARAMS {
     NvU32    subDeviceId;
     NvHandle hObjectEccError; // ECC error context DMA
 
-
-
     NV_DECLARE_ALIGNED(NV_MEMORY_DESC_PARAMS instanceMem, 8);
     NV_DECLARE_ALIGNED(NV_MEMORY_DESC_PARAMS userdMem, 8);
     NV_DECLARE_ALIGNED(NV_MEMORY_DESC_PARAMS ramfcMem, 8);
@@ -313,6 +331,13 @@ typedef struct NV_CHANNEL_ALLOC_PARAMS {
     NV_DECLARE_ALIGNED(NV_MEMORY_DESC_PARAMS eccErrorNotifierMem, 8); // reserved
     NvU32    ProcessID;                 // reserved
     NvU32    SubProcessID;                 // reserved
+
+    // IV used for CPU-side encryption / GPU-side decryption.
+    NvU32    encryptIv[CC_CHAN_ALLOC_IV_SIZE_DWORD];          // reserved
+    // IV used for CPU-side decryption / GPU-side encryption.
+    NvU32    decryptIv[CC_CHAN_ALLOC_IV_SIZE_DWORD];          // reserved
+    // Nonce used CPU-side signing / GPU-side signature verification.
+    NvU32    hmacNonce[CC_CHAN_ALLOC_NONCE_SIZE_DWORD];       // reserved
 } NV_CHANNEL_ALLOC_PARAMS;
 
 typedef NV_CHANNEL_ALLOC_PARAMS NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS;
