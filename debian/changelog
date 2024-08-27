@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u5) pexip; urgency=medium
+
+  * Bump headers version to 6.6.15-2+pexip24u7
+
+ -- John-Mark Bell <jmb@pexip.com>  Tue, 27 Aug 2024 10:54:59 +0100
+
 nvidia-open-gpu-kernel-modules (525.147.05-1~deb12u1+pexip24u4) pexip; urgency=medium
 
   * Rebuild for move to gpu
