@@ -3,12 +3,13 @@ Description: dump the generated conftest headers
 
 --- a/Kbuild
 +++ b/Kbuild
-@@ -166,6 +166,16 @@ NV_CONFTEST_HEADERS += $(obj)/conftest/h
+@@ -166,6 +166,17 @@ NV_CONFTEST_HEADERS += $(obj)/conftest/h
  NV_CONFTEST_HEADERS += $(NV_CONFTEST_COMPILE_TEST_HEADERS)
  
  
 +.PHONY: conftest-verbose
 +conftest-verbose:
++	uname -a
 +	@echo 'NV_CONFTEST_CMD=$(NV_CONFTEST_CMD)'
 +	@echo 'NV_CONFTEST_CFLAGS=$(NV_CONFTEST_CFLAGS)'
 +	@echo 'KBUILD_CFLAGS=$(KBUILD_CFLAGS)'

@@ -6,14 +6,13 @@ Uploaders:
  Andreas Beckmann <anbe@debian.org>,
 Build-Depends:
  debhelper-compat (= 13),
+ quilt,
 Build-Depends-Arch:
  dh-sequence-dkms,
- quilt,
  linux-headers-amd64 [amd64] <!nocheck>,
  linux-headers-arm64 [arm64] <!nocheck>,
- linux-headers-powerpc64le [ppc64el] <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.6.2
+Standards-Version: 4.7.0
 Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules
 Vcs-Browser: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules
 Vcs-Git: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules.git

@@ -1208,6 +1208,23 @@ compile_test() {
             compile_check_conftest "$CODE" "NV_VFIO_DEVICE_OPS_HAS_BIND_IOMMUFD" "" "types"
         ;;
 
+        vfio_device_ops_has_detach_ioas)
+            #
+            # Determine if 'vfio_device_ops' struct has 'detach_ioas' field.
+            #
+            # Added by commit 9048c7341c4df9cae04c154a8b0f556dbe913358 ("vfio-iommufd: Add detach_ioas
+            # support for physical VFIO devices
+            #
+            CODE="
+            #include <linux/pci.h>
+            #include <linux/vfio.h>
+            int conftest_vfio_device_ops_has_detach_ioas(void) {
+                return offsetof(struct vfio_device_ops, detach_ioas);
+            }"
+
+            compile_check_conftest "$CODE" "NV_VFIO_DEVICE_OPS_HAS_DETACH_IOAS" "" "types"
+        ;;
+
         pci_irq_vector_helpers)
             #
             # Determine if pci_alloc_irq_vectors(), pci_free_irq_vectors()
@@ -5181,22 +5198,23 @@ compile_test() {
             compile_check_conftest "$CODE" "NV_PCI_CLASS_MULTIMEDIA_HD_AUDIO_PRESENT" "" "generic"
         ;;
 
-        unsafe_follow_pfn)
+        follow_pfn)
             #
-            # Determine if unsafe_follow_pfn() is present.
+            # Determine if follow_pfn() is present.
             #
-            # unsafe_follow_pfn() was added by commit 69bacee7f9ad
-            # ("mm: Add unsafe_follow_pfn") in v5.13-rc1.
+            # follow_pfn() was added by commit 3b6748e2dd69
+            # ("mm: introduce follow_pfn()") in v2.6.31-rc1, and removed
+            # by commit 233eb0bf3b94 ("mm: remove follow_pfn")
+            # from linux-next 233eb0bf3b94.
             #
             CODE="
             #include <linux/mm.h>
-            void conftest_unsafe_follow_pfn(void) {
-                unsafe_follow_pfn();
+            void conftest_follow_pfn(void) {
+                follow_pfn();
             }"
 
-            compile_check_conftest "$CODE" "NV_UNSAFE_FOLLOW_PFN_PRESENT" "" "functions"
+            compile_check_conftest "$CODE" "NV_FOLLOW_PFN_PRESENT" "" "functions"
         ;;
-
         drm_plane_atomic_check_has_atomic_state_arg)
             #
             # Determine if drm_plane_helper_funcs::atomic_check takes 'state'
@@ -6344,6 +6362,29 @@ compile_test() {
             compile_check_conftest "$CODE" "NV_MEMORY_FAILURE_MF_SW_SIMULATED_DEFINED" "" "types"
         ;;
 
+        drm_output_poll_changed)
+            #
+            # Determine whether drm_mode_config_funcs.output_poll_changed
+            # callback is present
+            #
+            # Removed by commit 446d0f4849b1 ("drm: Remove struct
+            # drm_mode_config_funcs.output_poll_changed") in v6.12. Hotplug
+            # event support is handled through the fbdev emulation interface
+            # going forward.
+            #
+            CODE="
+            #if defined(NV_DRM_DRM_MODE_CONFIG_H_PRESENT)
+            #include <drm/drm_mode_config.h>
+            #else
+            #include <drm/drm_crtc.h>
+            #endif
+            int conftest_drm_output_poll_changed_available(void) {
+                return offsetof(struct drm_mode_config_funcs, output_poll_changed);
+            }"
+
+            compile_check_conftest "$CODE" "NV_DRM_OUTPUT_POLL_CHANGED_PRESENT" "" "types"
+        ;;
+
         crypto_tfm_ctx_aligned)
             # Determine if 'crypto_tfm_ctx_aligned' is defined.
             #
@@ -6772,10 +6813,12 @@ case "$5" in
         #
         VERBOSE=$6
         iommu=CONFIG_VFIO_IOMMU_TYPE1
+        iommufd_vfio_container=CONFIG_IOMMUFD_VFIO_CONTAINER
         mdev=CONFIG_VFIO_MDEV
         kvm=CONFIG_KVM_VFIO
         vfio_pci_core=CONFIG_VFIO_PCI_CORE
         VFIO_IOMMU_PRESENT=0
+        VFIO_IOMMUFD_VFIO_CONTAINER_PRESENT=0
         VFIO_MDEV_PRESENT=0
         KVM_PRESENT=0
         VFIO_PCI_CORE_PRESENT=0
@@ -6783,6 +6826,10 @@ case "$5" in
         if [ -n "$VGX_KVM_BUILD" ]; then
             if (test_configuration_option ${iommu} || test_configuration_option ${iommu}_MODULE); then
                 VFIO_IOMMU_PRESENT=1
+            fi
+
+            if (test_configuration_option ${iommufd_vfio_container} || test_configuration_option ${iommufd_vfio_container}_MODULE); then
+                VFIO_IOMMUFD_VFIO_CONTAINER_PRESENT=1
             fi
 
             if (test_configuration_option ${mdev} || test_configuration_option ${mdev}_MODULE); then
@@ -6797,7 +6844,7 @@ case "$5" in
                 VFIO_PCI_CORE_PRESENT=1
             fi
 
-            if [ "$VFIO_IOMMU_PRESENT" != "0" ] && [ "$KVM_PRESENT" != "0" ] ; then
+            if ([ "$VFIO_IOMMU_PRESENT" != "0" ] || [ "$VFIO_IOMMUFD_VFIO_CONTAINER_PRESENT" != "0" ])&& [ "$KVM_PRESENT" != "0" ] ; then
                 # vGPU requires either MDEV or vfio-pci-core framework to be present.
                 if [ "$VFIO_MDEV_PRESENT" != "0" ] || [ "$VFIO_PCI_CORE_PRESENT" != "0" ]; then
                     exit 0
@@ -6806,8 +6853,8 @@ case "$5" in
 
             echo "Below CONFIG options are missing on the kernel for installing";
             echo "NVIDIA vGPU driver on KVM host";
-            if [ "$VFIO_IOMMU_PRESENT" = "0" ]; then
-                echo "CONFIG_VFIO_IOMMU_TYPE1";
+            if [ "$VFIO_IOMMU_PRESENT" = "0" ] && [ "$VFIO_IOMMUFD_VFIO_CONTAINER_PRESENT" = "0" ]; then
+                echo "either CONFIG_VFIO_IOMMU_TYPE1 or CONFIG_IOMMUFD_VFIO_CONTAINER";
             fi
 
             if [ "$VFIO_MDEV_PRESENT" = "0" ] && [ "$VFIO_PCI_CORE_PRESENT" = "0" ]; then
