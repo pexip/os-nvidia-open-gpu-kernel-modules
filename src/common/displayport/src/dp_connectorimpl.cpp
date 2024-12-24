@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -49,22 +49,6 @@
 #include "dp_tracing.h"
 
 using namespace DisplayPort;
-
-// These wrappers are specifically for DSC PPS library malloc and free callbacks
-// Pointer to these functions are populated to dscMalloc/dscFree in DSC_InitializeCallBack and it is initialized from both DPLib and HDMiPacketLib.
-// In HDMI case, callback function for malloc/free needs client handle so to match function prototype, in DP case, adding these wrappers.
-extern "C" void * dpMallocCb(const void *clientHandle, NvLength size);
-extern "C" void dpFreeCb(const void *clientHandle, void *pMemPtr);
-
-extern "C" void * dpMallocCb(const void *clientHandle, NvLength size)
-{
-    return dpMalloc(size);
-}
-
-extern "C" void dpFreeCb(const void *clientHandle, void *pMemPtr)
-{
-    dpFree(pMemPtr);
-}
 
 ConnectorImpl::ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Connector::EventSink * sink)
     : main(main),
@@ -116,6 +100,7 @@ ConnectorImpl::ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Co
       bKeepOptLinkAlive(false),
       bNoFallbackInPostLQA(false),
       LT2FecLatencyMs(0),
+      bFECEnable(false),
       bDscCapBasedOnParent(false),
       ResStatus(this)
 {
@@ -126,7 +111,6 @@ ConnectorImpl::ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Co
         constructorFailed = true;
         return;
     }
-    highestAssessedLC = getMaxLinkConfig();
     firmwareGroup = createFirmwareGroup();
 
     if (firmwareGroup == NULL)
@@ -134,6 +118,9 @@ ConnectorImpl::ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Co
         constructorFailed = true;
         return;
     }
+
+    main->queryGPUCapability();
+    main->queryAndUpdateDfpParams();
 
     hal->setPC2Disabled(main->isPC2Disabled());
 
@@ -149,17 +136,12 @@ ConnectorImpl::ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Co
     // Set if LTTPR training is supported per regKey
     hal->setLttprSupported(main->isLttprSupported());
 
+
     const DP_REGKEY_DATABASE& dpRegkeyDatabase = main->getRegkeyDatabase();
     this->applyRegkeyOverrides(dpRegkeyDatabase);
     hal->applyRegkeyOverrides(dpRegkeyDatabase);
 
-    // Initialize DSC callbacks
-    DSC_CALLBACK callback;
-    callback.clientHandle   = NULL;
-    callback.dscPrint       = NULL;
-    callback.dscMalloc      = dpMallocCb;
-    callback.dscFree        = dpFreeCb;
-    DSC_InitializeCallback(callback);
+    highestAssessedLC = getMaxLinkConfig();
 }
 
 void ConnectorImpl::applyRegkeyOverrides(const DP_REGKEY_DATABASE& dpRegkeyDatabase)
@@ -188,9 +170,9 @@ void ConnectorImpl::applyRegkeyOverrides(const DP_REGKEY_DATABASE& dpRegkeyDatab
     this->bDisableSSC                   = dpRegkeyDatabase.bSscDisabled;
     this->bEnableFastLT                 = dpRegkeyDatabase.bFastLinkTrainingEnabled;
     this->bDscMstCapBug3143315          = dpRegkeyDatabase.bDscMstCapBug3143315;
-    this->bEnableOuiRestoring           = dpRegkeyDatabase.bEnableOuiRestoring;
     this->bPowerDownPhyBeforeD3         = dpRegkeyDatabase.bPowerDownPhyBeforeD3;
     this->bReassessMaxLink              = dpRegkeyDatabase.bReassessMaxLink;
+    this->bFlushTimeslotWhenDirty       = dpRegkeyDatabase.bFlushTimeslotWhenDirty;
 }
 
 void ConnectorImpl::setPolicyModesetOrderMitigation(bool enabled)
@@ -687,6 +669,28 @@ create:
         }
     }
 
+    if (newDev->peerDevice == Dongle)
+    {
+        // For Dongle, we need to read detailed port caps if DPCD access is available on DP 1.4+.
+        if (newDev->isAtLeastVersion(1,4))
+        {
+            newDev->getPCONCaps(&(newDev->pconCaps));
+        }
+
+        //
+        // If dongle does not have DPCD access but it is native PCON with Virtual peer support,
+        // we can get dongle port capabilities from parent VP DPCD detailed port descriptors.
+        //
+        else if (newDev->parent && (newDev->parent)->isVirtualPeerDevice())
+        {
+            if (!main->isMSTPCONCapsReadDisabled())
+            {
+                newDev->parent->getPCONCaps(&(newDev->pconCaps));
+                newDev->connectorType = newDev->parent->getConnectorType();
+            }
+        }
+    }
+
     // Read panel replay capabilities
     newDev->getPanelReplayCaps();
 
@@ -707,7 +711,7 @@ create:
 
     newDev->applyOUIOverrides();
 
-    if (main->isEDP() && this->bEnableOuiRestoring)
+    if (main->isEDP())
     {
         // Save Source OUI information for eDP.
         hal->getOuiSource(cachedSourceOUI, &cachedSourceModelName[0],
@@ -1103,6 +1107,7 @@ bool ConnectorImpl::compoundQueryAttach(Group * target,
 {
     DP_ASSERT( compoundQueryActive );
     ModesetInfo localModesetInfo = modesetParams.modesetInfo;
+    NVT_STATUS result;
 
     compoundQueryCount++;
 
@@ -1198,6 +1203,7 @@ bool ConnectorImpl::compoundQueryAttach(Group * target,
                 NvU64 availableBandwidthBitsPerSecond = 0;
                 unsigned PPS[DSC_MAX_PPS_SIZE_DWORD];
                 unsigned bitsPerPixelX16 = 0;
+                bool bDscBppForced = false;
 
                 if (!pDscParams->bitsPerPixelX16)
                 {
@@ -1206,6 +1212,10 @@ bool ConnectorImpl::compoundQueryAttach(Group * target,
                     // bitsPerPixelX16 = 160
                     //
                     pDscParams->bitsPerPixelX16 = PREDEFINED_DSC_MST_BPPX16;
+                }
+                else
+                {
+                    bDscBppForced = true;
                 }
 
                 bitsPerPixelX16 = pDscParams->bitsPerPixelX16;
@@ -1279,10 +1289,34 @@ bool ConnectorImpl::compoundQueryAttach(Group * target,
                 warData.dpData.hBlank = modesetParams.modesetInfo.rasterWidth - modesetParams.modesetInfo.surfaceWidth;
                 warData.connectorType = DSC_DP;
 
-                if ((DSC_GeneratePPS(&dscInfo, &modesetInfoDSC,
-                                     &warData, availableBandwidthBitsPerSecond,
-                                     (NvU32*)(PPS),
-                                     (NvU32*)(&bitsPerPixelX16))) != NVT_STATUS_SUCCESS)
+                DSC_GENERATE_PPS_OPAQUE_WORKAREA *pScratchBuffer = nullptr;
+                pScratchBuffer = (DSC_GENERATE_PPS_OPAQUE_WORKAREA*) dpMalloc(sizeof(DSC_GENERATE_PPS_OPAQUE_WORKAREA));
+
+                result = DSC_GeneratePPS(&dscInfo, &modesetInfoDSC,
+                                         &warData, availableBandwidthBitsPerSecond,
+                                         (NvU32*)(PPS),
+                                         (NvU32*)(&bitsPerPixelX16), pScratchBuffer);
+
+                // Try max dsc compression bpp = 8 once to check if that can support that mode.
+                if (result != NVT_STATUS_SUCCESS && !bDscBppForced)
+                {
+                    pDscParams->bitsPerPixelX16 = MAX_DSC_COMPRESSION_BPPX16;
+
+                    bitsPerPixelX16 = pDscParams->bitsPerPixelX16;
+
+                    result = DSC_GeneratePPS(&dscInfo, &modesetInfoDSC,
+                                             &warData, availableBandwidthBitsPerSecond,
+                                             (NvU32*)(PPS),
+                                             (NvU32*)(&bitsPerPixelX16), pScratchBuffer);
+                }
+
+                if (pScratchBuffer)
+                {
+                    dpFree(pScratchBuffer);
+                    pScratchBuffer = nullptr;
+                }
+
+                if (result != NVT_STATUS_SUCCESS)
                 {
                     //
                     // If generating PPS failed
@@ -1321,7 +1355,50 @@ bool ConnectorImpl::compoundQueryAttach(Group * target,
                     localModesetInfo.bEnableDsc = true;
                     localModesetInfo.depth = bitsPerPixelX16;
 
-                    if (dev->devDoingDscDecompression != dev)
+                    if (dev->peerDevice == Dongle && dev->connectorType == connectorHDMI)
+                    {
+                        //
+                        // For DP2HDMI PCON, if FRL BW is available in detailed caps,
+                        // we need to check if we have enough BW for the stream on FRL link.
+                        //
+                        if (dev->pconCaps.maxHdmiLinkBandwidthGbps != 0)
+                        {
+                            NvU64 requiredBW = (NvU64)(modesetParams.modesetInfo.pixelClockHz * modesetParams.modesetInfo.depth);
+                            NvU64 availableBw = (NvU64)(dev->pconCaps.maxHdmiLinkBandwidthGbps * (NvU64)1000000000);
+                            if (requiredBW > availableBw)
+                            {
+                                compoundQueryResult = false;
+                                pDscParams->bEnableDsc = false;
+                                return false;
+                            }
+                        }
+                        //
+                        // If DP2HDMI PCON does not support FRL, but advertises TMDS
+                        // Character clock rate on detailed caps, we need to honor that.
+                        //
+                        else if (dev->pconCaps.maxTmdsClkRate != 0)
+                        {
+                            NvU64 maxTmdsClkRateU64 = (NvU64)(dev->pconCaps.maxTmdsClkRate);
+                            NvU64 requiredBw =  (NvU64)(modesetParams.modesetInfo.pixelClockHz * modesetParams.modesetInfo.depth);
+                            if (modesetParams.colorFormat == dpColorFormat_YCbCr420)
+                            {
+                                if (maxTmdsClkRateU64 < ((requiredBw/24)/2))
+                                {
+                                    compoundQueryResult = false;
+                                    return false;
+                                }
+                            }
+                            else
+                            {
+                                if (maxTmdsClkRateU64 < (requiredBw/24))
+                                {
+                                    compoundQueryResult = false;
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    else if (dev->devDoingDscDecompression != dev)
                     {
                         //
                         // Device's parent is doing DSC decompression so we need to check
@@ -1526,10 +1603,21 @@ nonDscDpIMP:
                     warData.dpData.dpMode = DSC_DP_SST;
                     warData.connectorType = DSC_DP;
 
-                    if ((DSC_GeneratePPS(&dscInfo, &modesetInfoDSC,
-                                         &warData, availableBandwidthBitsPerSecond,
-                                         (NvU32*)(PPS),
-                                         (NvU32*)(&bitsPerPixelX16))) != NVT_STATUS_SUCCESS)
+                    DSC_GENERATE_PPS_OPAQUE_WORKAREA *pScratchBuffer = nullptr;
+                    pScratchBuffer = (DSC_GENERATE_PPS_OPAQUE_WORKAREA*)dpMalloc(sizeof(DSC_GENERATE_PPS_OPAQUE_WORKAREA));
+
+                    bool bPpsFailure = ((DSC_GeneratePPS(&dscInfo, &modesetInfoDSC,
+                                                         &warData, availableBandwidthBitsPerSecond,
+                                                         (NvU32*)(PPS),
+                                                         (NvU32*)(&bitsPerPixelX16),
+                                                         pScratchBuffer)) != NVT_STATUS_SUCCESS);
+                    if (pScratchBuffer)
+                    {
+                        dpFree(pScratchBuffer);
+                        pScratchBuffer = nullptr;
+                    }
+
+                    if (bPpsFailure)
                     {
                         compoundQueryResult = false;
                         pDscParams->bEnableDsc = false;
@@ -1862,7 +1950,7 @@ void ConnectorImpl::populateDscCaps(DSC_INFO* dscInfo, DeviceImpl * dev, DSC_INF
 
 bool ConnectorImpl::endCompoundQuery()
 {
-    DP_ASSERT( compoundQueryActive && "Spurious compoundQuery end.");
+    DP_ASSERT(compoundQueryActive && "Spurious compoundQuery end.");
     compoundQueryActive = false;
     return compoundQueryResult;
 }
@@ -1891,7 +1979,7 @@ void ConnectorImpl::releaseLinkHandsOff()
 {
     if (!isLinkQuiesced)
     {
-        DP_ASSERT(0 && "Link is already in use.");
+        DP_LOG(("DPCONN> Link is already in use."));
         return;
     }
 
@@ -2703,7 +2791,7 @@ bool ConnectorImpl::notifyAttachBegin(Group *                target,       // Gr
 
     highestAssessedLC.enableFEC(this->bFECEnable);
 
-    if (main->isEDP() && this->bEnableOuiRestoring)
+    if (main->isEDP())
     {
       main->configurePowerState(true);
       hal->setOuiSource(cachedSourceOUI, &cachedSourceModelName[0], 6 /* string length of ieeeOuiDevId */,
@@ -3138,8 +3226,6 @@ bool ConnectorImpl::trainPCONFrlLink(PCONLinkControl *pconControl)
 
 bool ConnectorImpl::assessPCONLinkCapability(PCONLinkControl *pConControl)
 {
-    NvU32 status;
-
     if (pConControl == NULL || !this->previousPlugged)
         return false;
 
@@ -3152,8 +3238,7 @@ bool ConnectorImpl::assessPCONLinkCapability(PCONLinkControl *pConControl)
 
     if (pConControl->flags.bSourceControlMode)
     {
-        status = trainPCONFrlLink(pConControl);
-        if (status == false)
+        if (trainPCONFrlLink(pConControl) == false)
         {
             // restore Autonomous mode and treat this as an active DP dongle.
             hal->resetProtocolConverter();
@@ -3164,11 +3249,16 @@ bool ConnectorImpl::assessPCONLinkCapability(PCONLinkControl *pConControl)
                 bSkipAssessLinkForPCon = false;
                 assessLink();
             }
-            return status;
+            return false;
         }
         activePConLinkControl.flags = pConControl->flags;
         activePConLinkControl.frlHdmiBwMask = pConControl->frlHdmiBwMask;
         activePConLinkControl.result = pConControl->result;
+    }
+    else
+    {
+        // restore Autonomous mode and treat this as an active DP dongle.
+        hal->resetProtocolConverter();
     }
 
     // Step 3: Assess DP Link capability.
@@ -3195,7 +3285,7 @@ bool ConnectorImpl::assessPCONLinkCapability(PCONLinkControl *pConControl)
     disableFlush();
 
     this->bKeepLinkAliveForPCON = pConControl->flags.bKeepPCONLinkAlive;
-    return status;
+    return true;
 }
 
 bool ConnectorImpl::getOuiSink(unsigned &ouiId, char * modelName, size_t modelNameBufferSize, NvU8 & chipRevision)
@@ -4654,7 +4744,7 @@ bool ConnectorImpl::train(const LinkConfiguration & lConfig, bool force,
 {
     LinkTrainingType preferredTrainingType = trainType;
     bool result;
-    bool bEnableFecOnSor;
+
     //
     //  Validate link config against caps
     //
@@ -4746,17 +4836,7 @@ bool ConnectorImpl::train(const LinkConfiguration & lConfig, bool force,
         result = postLTAdjustment(activeLinkConfig, force);
     }
 
-    bEnableFecOnSor = lConfig.bEnableFEC;
-
-    if (main->isEDP())
-    {
-        DeviceImpl * nativeDev = findDeviceInList(Address());
-
-        if (nativeDev && nativeDev->bIsPreviouslyFakedMuxDevice)
-            bEnableFecOnSor = activeLinkConfig.bEnableFEC;
-    }
-
-    if((lConfig.lanes != 0) && result && bEnableFecOnSor)
+    if((lConfig.lanes != 0) && result && activeLinkConfig.bEnableFEC)
     {
         //
         // Extended latency from link-train end to FEC enable pattern
@@ -5155,7 +5235,8 @@ void ConnectorImpl::beforeDeleteStream(GroupImpl * group, bool forFlushMode)
         }
     }
 
-    if (linkUseMultistream() && group && group->isHeadAttached() && group->timeslot.count)
+    if (linkUseMultistream() && group && group->isHeadAttached() &&
+        (group->timeslot.count || (this->bFlushTimeslotWhenDirty && group->timeslot.hardwareDirty)))
     {
         // Detach all the panels from payload
         for (Device * d = group->enumDevices(0); d; d = group->enumDevices(d))
@@ -5676,7 +5757,7 @@ void ConnectorImpl::notifyLongPulseInternal(bool statusConnected)
         // Reset all settings for previous downstream device
         configInit();
 
-        if (! hal->isAtLeastVersion(1, 0 ) )
+        if (!hal->isAtLeastVersion(1, 0))
             goto completed;
 
         DP_LOG(("DP> HPD v%d.%d", hal->getRevisionMajor(), hal->getRevisionMinor()));
@@ -5972,7 +6053,7 @@ void ConnectorImpl::notifyLongPulseInternal(bool statusConnected)
                 if (this->bReassessMaxLink)
                 {
                     //
-                    // If the highest assessed LC is not equal to 
+                    // If the highest assessed LC is not equal to
                     // max possible link config, re-assess link
                     //
                     NvU8 retries = 0U;
@@ -6958,7 +7039,6 @@ void ConnectorImpl::notifyGPUCapabilityChange()
 {
     // Query current GPU capabilities.
     main->queryGPUCapability();
-
 }
 
 void ConnectorImpl::notifyHBR2WAREngage()

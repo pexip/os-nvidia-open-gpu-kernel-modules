@@ -27,6 +27,7 @@
 #include "regkey_nvswitch.h"
 #include "haldef_nvswitch.h"
 #include "nvlink_inband_msg.h"
+#include "rmsoecmdif.h"
 
 #include "ls10/ls10.h"
 #include "lr10/lr10.h"
@@ -64,6 +65,8 @@
 #include "nvswitch/ls10/dev_multicasttstate_ip.h"
 #include "nvswitch/ls10/dev_reductiontstate_ip.h"
 #include "ls10/minion_nvlink_defines_public_ls10.h"
+#include "nvswitch/ls10/dev_pmgr.h"
+#include "nvswitch/ls10/dev_timer_ip.h"
 
 #define NVSWITCH_IFR_MIN_BIOS_VER_LS10      0x9610170000ull
 #define NVSWITCH_SMBPBI_MIN_BIOS_VER_LS10   0x9610220000ull
@@ -1422,6 +1425,7 @@ nvswitch_reset_and_drain_links_ls10
     NvBool bIsLinkInEmergencyShutdown;
     NvBool bAreDlClocksOn;
     NVSWITCH_TIMEOUT timeout;
+
 
     if (link_mask == 0)
     {
@@ -2784,6 +2788,7 @@ nvswitch_get_num_links_per_nvlipt_ls10
     return NVSWITCH_LINKS_PER_NVLIPT_LS10;
 }
 
+
 NvlStatus
 nvswitch_ctrl_get_fom_values_ls10
 (
@@ -3013,6 +3018,41 @@ nvswitch_is_spi_supported_ls10
         "SPI is not supported on LS10\n");
 
     return NV_FALSE;
+}
+
+NvBool
+nvswitch_is_bios_supported_ls10
+(
+    nvswitch_device *device
+)
+{
+    if (IS_RTLSIM(device) || IS_EMULATION(device) || IS_FMODEL(device))
+    {
+        NVSWITCH_PRINT(device, INFO,
+            "BIOS is not supported on non-silicon platforms\n");
+        return NV_FALSE;
+    }
+
+    if (!nvswitch_is_soe_supported(device))
+    {
+        NVSWITCH_PRINT(device, INFO,
+            "BIOS is not supported since SOE is not supported\n");
+        return NV_FALSE;
+    }
+
+    return NV_TRUE;
+}
+
+NvlStatus
+nvswitch_get_bios_size_ls10
+(
+    nvswitch_device *device,
+    NvU32 *pSize
+)
+{
+    *pSize = SOE_CORE_BIOS_SIZE_LS10;
+
+    return NVL_SUCCESS;
 }
 
 /*
@@ -5753,7 +5793,7 @@ nvswitch_ctrl_set_nvlink_error_threshold_ls10
 
             // Configure the interrupt
             nvswitch_configure_error_rate_threshold_interrupt_ls10(link,
-                                                                   link->errorThreshold.bInterruptEn);
+                                            pParams->errorThreshold[link->linkNumber].bInterruptEn);
         }
     }
     FOR_EACH_INDEX_IN_MASK_END;
@@ -5778,6 +5818,9 @@ nvswitch_ctrl_get_nvlink_error_threshold_ls10
         {
             continue;
         }
+
+        // Get the Error threshold
+        nvswitch_get_error_rate_threshold_ls10(link);
 
         pParams->errorThreshold[link->linkNumber].thresholdMan =
             link->errorThreshold.thresholdMan;

@@ -27,7 +27,7 @@
 
 //
 // This file was generated with FINN, an NVIDIA coding tool.
-// Source file: ctrl/ctrl2080/ctrl2080event.finn
+// Source file:      ctrl/ctrl2080/ctrl2080event.finn
 //
 
 #include "ctrl/ctrl2080/ctrl2080base.h"
@@ -265,6 +265,7 @@ typedef struct NV2080_CTRL_EVENT_SET_SEMA_MEM_VALIDATION_PARAMS {
     NvHandle hSemMemory;
     NvBool   isSemaMemValidationEnabled;
 } NV2080_CTRL_EVENT_SET_SEMA_MEM_VALIDATION_PARAMS;
+
 
 /*
  * NV2080_CTRL_CMD_EVENT_SET_TRIGGER_FIFO

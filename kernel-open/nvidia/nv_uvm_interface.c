@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2013-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2013-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -126,6 +126,19 @@ static void nvUvmFreeSafeStack(nvidia_stack_t *sp)
         nv_kmem_cache_free_stack(sp);
 }
 
+static NV_STATUS nvUvmDestroyFaultInfoAndStacks(nvidia_stack_t *sp,
+                                                uvmGpuDeviceHandle device,
+                                                UvmGpuFaultInfo *pFaultInfo)
+{
+    nv_kmem_cache_free_stack(pFaultInfo->replayable.cslCtx.nvidia_stack);
+    nv_kmem_cache_free_stack(pFaultInfo->nonReplayable.isr_bh_sp);
+    nv_kmem_cache_free_stack(pFaultInfo->nonReplayable.isr_sp);
+
+    return rm_gpu_ops_destroy_fault_info(sp,
+                                         (gpuDeviceHandle)device,
+                                         pFaultInfo);
+}
+
 NV_STATUS nvUvmInterfaceRegisterGpu(const NvProcessorUuid *gpuUuid, UvmGpuPlatformInfo *gpuInfo)
 {
     nvidia_stack_t *sp = NULL;
@@ -196,7 +209,7 @@ NV_STATUS nvUvmInterfaceSessionCreate(uvmGpuSessionHandle *session,
     memset(platformInfo, 0, sizeof(*platformInfo));
     platformInfo->atsSupported = nv_ats_supported;
 
-    platformInfo->sevEnabled = os_sev_enabled;
+    platformInfo->confComputingEnabled = os_cc_enabled;
 
     status = rm_gpu_ops_create_session(sp, (gpuSessionHandle *)session);
 
@@ -435,7 +448,7 @@ EXPORT_SYMBOL(nvUvmInterfacePmaUnregisterEvictionCallbacks);
 
 NV_STATUS nvUvmInterfacePmaAllocPages(void *pPma,
                                       NvLength pageCount,
-                                      NvU32 pageSize,
+                                      NvU64 pageSize,
                                       UvmPmaAllocationOptions *pPmaAllocOptions,
                                       NvU64 *pPages)
 {
@@ -462,7 +475,7 @@ EXPORT_SYMBOL(nvUvmInterfacePmaAllocPages);
 NV_STATUS nvUvmInterfacePmaPinPages(void *pPma,
                                     NvU64 *pPages,
                                     NvLength pageCount,
-                                    NvU32 pageSize,
+                                    NvU64 pageSize,
                                     NvU32 flags)
 {
     nvidia_stack_t *sp = NULL;
@@ -483,7 +496,7 @@ EXPORT_SYMBOL(nvUvmInterfacePmaPinPages);
 NV_STATUS nvUvmInterfacePmaUnpinPages(void *pPma,
                                       NvU64 *pPages,
                                       NvLength pageCount,
-                                      NvU32 pageSize)
+                                      NvU64 pageSize)
 {
     nvidia_stack_t *sp = NULL;
     NV_STATUS status;
@@ -516,7 +529,7 @@ EXPORT_SYMBOL(nvUvmInterfaceMemoryFree);
 void nvUvmInterfacePmaFreePages(void *pPma,
                                 NvU64 *pPages,
                                 NvLength pageCount,
-                                NvU32 pageSize,
+                                NvU64 pageSize,
                                 NvU32 flags)
 {
     nvidia_stack_t *sp = nvUvmGetSafeStack();
@@ -529,7 +542,7 @@ EXPORT_SYMBOL(nvUvmInterfacePmaFreePages);
 
 NV_STATUS nvUvmInterfaceMemoryCpuMap(uvmGpuAddressSpaceHandle vaSpace,
            UvmGpuPointer gpuPointer, NvLength length, void **cpuPtr,
-           NvU32 pageSize)
+           NvU64 pageSize)
 {
     nvidia_stack_t *sp = NULL;
     NV_STATUS status;
@@ -557,7 +570,39 @@ void nvUvmInterfaceMemoryCpuUnMap(uvmGpuAddressSpaceHandle vaSpace,
 }
 EXPORT_SYMBOL(nvUvmInterfaceMemoryCpuUnMap);
 
-NV_STATUS nvUvmInterfaceChannelAllocate(uvmGpuAddressSpaceHandle  vaSpace,
+NV_STATUS nvUvmInterfaceTsgAllocate(uvmGpuAddressSpaceHandle vaSpace,
+                                    const UvmGpuTsgAllocParams *allocParams,
+                                    uvmGpuTsgHandle *tsg)
+{
+    nvidia_stack_t *sp = NULL;
+    NV_STATUS status;
+
+    if (nv_kmem_cache_alloc_stack(&sp) != 0)
+    {
+        return NV_ERR_NO_MEMORY;
+    }
+
+    status = rm_gpu_ops_tsg_allocate(sp,
+                                     (gpuAddressSpaceHandle)vaSpace,
+                                     allocParams,
+                                     (gpuTsgHandle *)tsg);
+
+    nv_kmem_cache_free_stack(sp);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceTsgAllocate);
+
+void nvUvmInterfaceTsgDestroy(uvmGpuTsgHandle tsg)
+{
+    nvidia_stack_t *sp = nvUvmGetSafeStack();
+    rm_gpu_ops_tsg_destroy(sp, (gpuTsgHandle)tsg);
+    nvUvmFreeSafeStack(sp);
+}
+EXPORT_SYMBOL(nvUvmInterfaceTsgDestroy);
+
+
+NV_STATUS nvUvmInterfaceChannelAllocate(const uvmGpuTsgHandle tsg,
                                         const UvmGpuChannelAllocParams *allocParams,
                                         uvmGpuChannelHandle *channel,
                                         UvmGpuChannelInfo *channelInfo)
@@ -571,7 +616,7 @@ NV_STATUS nvUvmInterfaceChannelAllocate(uvmGpuAddressSpaceHandle  vaSpace,
     }
 
     status = rm_gpu_ops_channel_allocate(sp,
-                                         (gpuAddressSpaceHandle)vaSpace,
+                                         (gpuTsgHandle)tsg,
                                          allocParams,
                                          (gpuChannelHandle *)channel,
                                          channelInfo);
@@ -823,6 +868,7 @@ NV_STATUS nvUvmInterfaceInitFaultInfo(uvmGpuDeviceHandle device,
 {
     nvidia_stack_t *sp = NULL;
     NV_STATUS status;
+    int err;
 
     if (nv_kmem_cache_alloc_stack(&sp) != 0)
     {
@@ -832,43 +878,56 @@ NV_STATUS nvUvmInterfaceInitFaultInfo(uvmGpuDeviceHandle device,
     status = rm_gpu_ops_init_fault_info(sp,
                                        (gpuDeviceHandle)device,
                                        pFaultInfo);
+    if (status != NV_OK)
+    {
+        goto done;
+    }
 
     // Preallocate a stack for functions called from ISR top half
     pFaultInfo->nonReplayable.isr_sp = NULL;
     pFaultInfo->nonReplayable.isr_bh_sp = NULL;
-    if (status == NV_OK)
+    pFaultInfo->replayable.cslCtx.nvidia_stack = NULL;
+
+    // NOTE: nv_kmem_cache_alloc_stack does not allocate a stack on PPC.
+    // Therefore, the pointer can be NULL on success. Always use the
+    // returned error code to determine if the operation was successful.
+    err = nv_kmem_cache_alloc_stack((nvidia_stack_t **)&pFaultInfo->nonReplayable.isr_sp);
+    if (err)
     {
-        // NOTE: nv_kmem_cache_alloc_stack does not allocate a stack on PPC.
-        // Therefore, the pointer can be NULL on success. Always use the
-        // returned error code to determine if the operation was successful.
-        int err = nv_kmem_cache_alloc_stack((nvidia_stack_t **)&pFaultInfo->nonReplayable.isr_sp);
-        if (!err)
-        {
-            err = nv_kmem_cache_alloc_stack((nvidia_stack_t **)&pFaultInfo->nonReplayable.isr_bh_sp);
-            if (err)
-            {
-                nv_kmem_cache_free_stack(pFaultInfo->nonReplayable.isr_sp);
-                pFaultInfo->nonReplayable.isr_sp = NULL;
-            }
-        }
-
-        if (err)
-        {
-            rm_gpu_ops_destroy_fault_info(sp,
-                                          (gpuDeviceHandle)device,
-                                          pFaultInfo);
-
-            status = NV_ERR_NO_MEMORY;
-        }
+        goto error;
     }
 
+    err = nv_kmem_cache_alloc_stack((nvidia_stack_t **)&pFaultInfo->nonReplayable.isr_bh_sp);
+    if (err)
+    {
+        goto error;
+    }
+
+    // The cslCtx.ctx pointer is not NULL only when ConfidentialComputing is enabled.
+    if (pFaultInfo->replayable.cslCtx.ctx != NULL)
+    {
+        err = nv_kmem_cache_alloc_stack((nvidia_stack_t **)&pFaultInfo->replayable.cslCtx.nvidia_stack);
+        if (err)
+        {
+            goto error;
+        }
+    }
+    goto done;
+
+error:
+    nvUvmDestroyFaultInfoAndStacks(sp,
+                                   device,
+                                   pFaultInfo);
+    status = NV_ERR_NO_MEMORY;
+done:
     nv_kmem_cache_free_stack(sp);
     return status;
 }
 EXPORT_SYMBOL(nvUvmInterfaceInitFaultInfo);
 
 NV_STATUS nvUvmInterfaceInitAccessCntrInfo(uvmGpuDeviceHandle device,
-                                           UvmGpuAccessCntrInfo *pAccessCntrInfo)
+                                           UvmGpuAccessCntrInfo *pAccessCntrInfo,
+                                           NvU32 accessCntrIndex)
 {
     nvidia_stack_t *sp = NULL;
     NV_STATUS status;
@@ -880,7 +939,8 @@ NV_STATUS nvUvmInterfaceInitAccessCntrInfo(uvmGpuDeviceHandle device,
 
     status = rm_gpu_ops_init_access_cntr_info(sp,
                                               (gpuDeviceHandle)device,
-                                              pAccessCntrInfo);
+                                              pAccessCntrInfo,
+                                              accessCntrIndex);
 
     nv_kmem_cache_free_stack(sp);
     return status;
@@ -915,23 +975,9 @@ NV_STATUS nvUvmInterfaceDestroyFaultInfo(uvmGpuDeviceHandle device,
     nvidia_stack_t *sp = nvUvmGetSafeStack();
     NV_STATUS status;
 
-    // Free the preallocated stack for functions called from ISR
-    if (pFaultInfo->nonReplayable.isr_sp != NULL)
-    {
-        nv_kmem_cache_free_stack((nvidia_stack_t *)pFaultInfo->nonReplayable.isr_sp);
-        pFaultInfo->nonReplayable.isr_sp = NULL;
-    }
-
-    if (pFaultInfo->nonReplayable.isr_bh_sp != NULL)
-    {
-        nv_kmem_cache_free_stack((nvidia_stack_t *)pFaultInfo->nonReplayable.isr_bh_sp);
-        pFaultInfo->nonReplayable.isr_bh_sp = NULL;
-    }
-
-    status = rm_gpu_ops_destroy_fault_info(sp,
-                                          (gpuDeviceHandle)device,
-                                          pFaultInfo);
-
+    status = nvUvmDestroyFaultInfoAndStacks(sp,
+                                            device,
+                                            pFaultInfo);
     nvUvmFreeSafeStack(sp);
     return status;
 }
@@ -956,6 +1002,18 @@ NV_STATUS nvUvmInterfaceGetNonReplayableFaults(UvmGpuFaultInfo *pFaultInfo,
                                                 numFaults);
 }
 EXPORT_SYMBOL(nvUvmInterfaceGetNonReplayableFaults);
+
+NV_STATUS nvUvmInterfaceFlushReplayableFaultBuffer(uvmGpuDeviceHandle device)
+{
+    nvidia_stack_t *sp = nvUvmGetSafeStack();
+    NV_STATUS status;
+
+    status = rm_gpu_ops_flush_replayable_fault_buffer(sp, (gpuDeviceHandle)device);
+
+    nvUvmFreeSafeStack(sp);
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceFlushReplayableFaultBuffer);
 
 NV_STATUS nvUvmInterfaceDestroyAccessCntrInfo(uvmGpuDeviceHandle device,
                                               UvmGpuAccessCntrInfo *pAccessCntrInfo)
@@ -1419,6 +1477,142 @@ NV_STATUS nvUvmInterfacePagingChannelPushStream(UvmGpuPagingChannelHandle channe
                                                  methodStreamSize);
 }
 EXPORT_SYMBOL(nvUvmInterfacePagingChannelPushStream);
+
+NV_STATUS nvUvmInterfaceCslInitContext(UvmCslContext *uvmCslContext,
+                                       uvmGpuChannelHandle channel)
+{
+    nvidia_stack_t *sp = NULL;
+    NV_STATUS status;
+
+    if (nv_kmem_cache_alloc_stack(&sp) != 0)
+    {
+        return NV_ERR_NO_MEMORY;
+    }
+
+    status = rm_gpu_ops_ccsl_context_init(sp, &uvmCslContext->ctx, (gpuChannelHandle)channel);
+
+    // Saving the stack in the context allows UVM to safely use the CSL layer
+    // in interrupt context without making new allocations. UVM serializes CSL
+    // API usage for a given context so the stack pointer does not need
+    // additional protection.
+    if (status != NV_OK)
+    {
+        nv_kmem_cache_free_stack(sp);
+    }
+    else
+    {
+        uvmCslContext->nvidia_stack = sp;
+    }
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslInitContext);
+
+void nvUvmInterfaceDeinitCslContext(UvmCslContext *uvmCslContext)
+{
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+    rm_gpu_ops_ccsl_context_clear(sp, uvmCslContext->ctx);
+    nvUvmFreeSafeStack(sp);
+}
+EXPORT_SYMBOL(nvUvmInterfaceDeinitCslContext);
+
+NV_STATUS nvUvmInterfaceCslRotateIv(UvmCslContext *uvmCslContext,
+                                    UvmCslOperation operation)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    status = rm_gpu_ops_ccsl_rotate_iv(sp, uvmCslContext->ctx, operation);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslRotateIv);
+
+NV_STATUS nvUvmInterfaceCslEncrypt(UvmCslContext *uvmCslContext,
+                                   NvU32 bufferSize,
+                                   NvU8 const *inputBuffer,
+                                   UvmCslIv *encryptIv,
+                                   NvU8 *outputBuffer,
+                                   NvU8 *authTagBuffer)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    if (encryptIv != NULL)
+        status = rm_gpu_ops_ccsl_encrypt_with_iv(sp, uvmCslContext->ctx, bufferSize, inputBuffer, (NvU8*)encryptIv, outputBuffer, authTagBuffer);
+    else
+        status = rm_gpu_ops_ccsl_encrypt(sp, uvmCslContext->ctx, bufferSize, inputBuffer, outputBuffer, authTagBuffer);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslEncrypt);
+
+NV_STATUS nvUvmInterfaceCslDecrypt(UvmCslContext *uvmCslContext,
+                                   NvU32 bufferSize,
+                                   NvU8 const *inputBuffer,
+                                   UvmCslIv const *decryptIv,
+                                   NvU8 *outputBuffer,
+                                   NvU8 const *addAuthData,
+                                   NvU32 addAuthDataSize,
+                                   NvU8 const *authTagBuffer)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    status = rm_gpu_ops_ccsl_decrypt(sp,
+                                     uvmCslContext->ctx,
+                                     bufferSize,
+                                     inputBuffer,
+                                     (NvU8 *)decryptIv,
+                                     outputBuffer,
+                                     addAuthData,
+                                     addAuthDataSize,
+                                     authTagBuffer);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslDecrypt);
+
+NV_STATUS nvUvmInterfaceCslSign(UvmCslContext *uvmCslContext,
+                                NvU32 bufferSize,
+                                NvU8 const *inputBuffer,
+                                NvU8 *authTagBuffer)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    status = rm_gpu_ops_ccsl_sign(sp, uvmCslContext->ctx, bufferSize, inputBuffer, authTagBuffer);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslSign);
+
+NV_STATUS nvUvmInterfaceCslQueryMessagePool(UvmCslContext *uvmCslContext,
+                                            UvmCslOperation operation,
+                                            NvU64 *messageNum)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    status = rm_gpu_ops_ccsl_query_message_pool(sp, uvmCslContext->ctx, operation, messageNum);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslQueryMessagePool);
+
+NV_STATUS nvUvmInterfaceCslIncrementIv(UvmCslContext *uvmCslContext,
+                                       UvmCslOperation operation,
+                                       NvU64 increment,
+                                       UvmCslIv *iv)
+{
+    NV_STATUS status;
+    nvidia_stack_t *sp = uvmCslContext->nvidia_stack;
+
+    status = rm_gpu_ops_ccsl_increment_iv(sp, uvmCslContext->ctx, operation, increment, (NvU8 *)iv);
+
+    return status;
+}
+EXPORT_SYMBOL(nvUvmInterfaceCslIncrementIv);
 
 #else // NV_UVM_ENABLE
 

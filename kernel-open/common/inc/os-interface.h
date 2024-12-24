@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1999-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1999-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -162,10 +162,9 @@ NvBool      NV_API_CALL  os_is_vgx_hyper             (void);
 NV_STATUS   NV_API_CALL  os_inject_vgx_msi           (NvU16, NvU64, NvU32);
 NvBool      NV_API_CALL  os_is_grid_supported        (void);
 NvU32       NV_API_CALL  os_get_grid_csp_support     (void);
-void        NV_API_CALL  os_get_screen_info          (NvU64 *, NvU16 *, NvU16 *, NvU16 *, NvU16 *, NvU64, NvU64);
 void        NV_API_CALL  os_bug_check                (NvU32, const char *);
 NV_STATUS   NV_API_CALL  os_lock_user_pages          (void *, NvU64, void **, NvU32);
-NV_STATUS   NV_API_CALL  os_lookup_user_io_memory    (void *, NvU64, NvU64 **, void**);
+NV_STATUS   NV_API_CALL  os_lookup_user_io_memory    (void *, NvU64, NvU64 **);
 NV_STATUS   NV_API_CALL  os_unlock_user_pages        (NvU64, void *);
 NV_STATUS   NV_API_CALL  os_match_mmap_offset        (void *, NvU64, NvU64 *);
 NV_STATUS   NV_API_CALL  os_get_euid                 (NvU32 *);
@@ -181,7 +180,6 @@ NV_STATUS   NV_API_CALL  os_put_page                 (NvU64 address);
 NvU32       NV_API_CALL  os_get_page_refcount        (NvU64 address);
 NvU32       NV_API_CALL  os_count_tail_pages         (NvU64 address);
 void        NV_API_CALL  os_free_pages_phys          (NvU64, NvU32);
-NV_STATUS   NV_API_CALL  os_call_nv_vmbus            (NvU32, void *);
 NV_STATUS   NV_API_CALL  os_open_temporary_file      (void **);
 void        NV_API_CALL  os_close_file               (void *);
 NV_STATUS   NV_API_CALL  os_write_file               (void *, NvU8 *, NvU64, NvU64);
@@ -189,7 +187,7 @@ NV_STATUS   NV_API_CALL  os_read_file                (void *, NvU8 *, NvU64, NvU
 NV_STATUS   NV_API_CALL  os_open_readonly_file       (const char *, void **);
 NV_STATUS   NV_API_CALL  os_open_and_read_file       (const char *, NvU8 *, NvU64);
 NvBool      NV_API_CALL  os_is_nvswitch_present      (void);
-void        NV_API_CALL  os_get_random_bytes         (NvU8 *, NvU16);
+NV_STATUS   NV_API_CALL  os_get_random_bytes         (NvU8 *, NvU16);
 NV_STATUS   NV_API_CALL  os_alloc_wait_queue         (os_wait_queue **);
 void        NV_API_CALL  os_free_wait_queue          (os_wait_queue *);
 void        NV_API_CALL  os_wait_uninterruptible     (os_wait_queue *);
@@ -208,12 +206,19 @@ enum os_pci_req_atomics_type {
     OS_INTF_PCIE_REQ_ATOMICS_128BIT
 };
 NV_STATUS   NV_API_CALL  os_enable_pci_req_atomics   (void *, enum os_pci_req_atomics_type);
+NV_STATUS   NV_API_CALL  os_get_numa_node_memory_usage (NvS32, NvU64 *, NvU64 *);
+NV_STATUS   NV_API_CALL  os_numa_add_gpu_memory      (void *, NvU64, NvU64, NvU32 *);
+NV_STATUS   NV_API_CALL  os_numa_remove_gpu_memory   (void *, NvU64, NvU64, NvU32); 
+NV_STATUS   NV_API_CALL  os_offline_page_at_address(NvU64 address);
+void*       NV_API_CALL  os_get_pid_info(void);
+void        NV_API_CALL  os_put_pid_info(void *pid_info);
+NV_STATUS   NV_API_CALL  os_find_ns_pid(void *pid_info, NvU32 *ns_pid);
 
 extern NvU32 os_page_size;
 extern NvU64 os_page_mask;
 extern NvU8  os_page_shift;
-extern NvU32 os_sev_status;
-extern NvBool os_sev_enabled;
+extern NvBool os_cc_enabled;
+extern NvBool os_cc_tdx_enabled;
 extern NvBool os_dma_buf_enabled;
 
 /*

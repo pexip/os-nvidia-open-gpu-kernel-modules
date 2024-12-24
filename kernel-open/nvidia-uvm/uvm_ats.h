@@ -28,8 +28,11 @@
 #include "uvm_forward_decl.h"
 #include "uvm_ats_ibm.h"
 #include "nv_uvm_types.h"
+#include "uvm_lock.h"
 
-    #define UVM_ATS_SUPPORTED() (UVM_ATS_IBM_SUPPORTED())
+    #include "uvm_ats_sva.h"
+
+    #define UVM_ATS_SUPPORTED() (UVM_ATS_IBM_SUPPORTED() || UVM_ATS_SVA_SUPPORTED())
 
 typedef struct
 {
@@ -37,10 +40,15 @@ typedef struct
     // indexed by gpu->id. This mask is protected by the VA space lock.
     uvm_processor_mask_t registered_gpu_va_spaces;
 
+    // Protects racing invalidates in the VA space while hmm_range_fault() is
+    // being called in ats_compute_residency_mask().
+    uvm_rw_semaphore_t lock;
+
     union
     {
         uvm_ibm_va_space_t ibm;
 
+        uvm_sva_va_space_t sva;
     };
 } uvm_ats_va_space_t;
 
@@ -58,6 +66,7 @@ typedef struct
     {
         uvm_ibm_gpu_va_space_t ibm;
 
+        uvm_sva_gpu_va_space_t sva;
     };
 } uvm_ats_gpu_va_space_t;
 
@@ -90,6 +99,8 @@ void uvm_ats_remove_gpu(uvm_parent_gpu_t *parent_gpu);
 // LOCKING: mmap_lock must be lockable.
 //          VA space lock must be lockable.
 //          gpu_va_space->gpu must be retained.
+//          mm must be retained with uvm_va_space_mm_retain() iff
+//          UVM_ATS_SVA_SUPPORTED() is 1
 NV_STATUS uvm_ats_bind_gpu(uvm_gpu_va_space_t *gpu_va_space);
 
 // Decrements the refcount on the {gpu, mm} pair. Removes the binding from the

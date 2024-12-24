@@ -54,7 +54,11 @@
 #include "nv-time.h"
 #include "nv-lock.h"
 
-#if !defined(CONFIG_RETPOLINE)
+/*
+ * Commit aefb2f2e619b ("x86/bugs: Rename CONFIG_RETPOLINE =>
+ * CONFIG_MITIGATION_RETPOLINE) in v6.8 renamed CONFIG_RETPOLINE.
+ */
+#if !defined(CONFIG_RETPOLINE) && !defined(CONFIG_MITIGATION_RETPOLINE)
 #include "nv-retpoline.h"
 #endif
 
@@ -68,6 +72,9 @@ module_param_named(output_rounding_fix, output_rounding_fix, bool, 0400);
 static bool disable_vrr_memclk_switch = false;
 module_param_named(disable_vrr_memclk_switch, disable_vrr_memclk_switch, bool, 0400);
 
+static bool opportunistic_display_sync = true;
+module_param_named(opportunistic_display_sync, opportunistic_display_sync, bool, 0400);
+
 /* These parameters are used for fault injection tests.  Normally the defaults
  * should be used. */
 MODULE_PARM_DESC(fail_malloc, "Fail the Nth call to nvkms_alloc");
@@ -77,6 +84,15 @@ module_param_named(fail_malloc, fail_malloc_num, int, 0400);
 MODULE_PARM_DESC(malloc_verbose, "Report information about malloc calls on module unload");
 static bool malloc_verbose = false;
 module_param_named(malloc_verbose, malloc_verbose, bool, 0400);
+
+/* This parameter is used to find the dpy override conf file */
+#define NVKMS_CONF_FILE_SPECIFIED (nvkms_conf != NULL)
+
+MODULE_PARM_DESC(config_file,
+                 "Path to the nvidia-modeset configuration file "
+                 "(default: disabled)");
+static char *nvkms_conf = NULL;
+module_param_named(config_file, nvkms_conf, charp, 0400);
 
 static atomic_t nvkms_alloc_called_count;
 
@@ -88,6 +104,11 @@ NvBool nvkms_output_rounding_fix(void)
 NvBool nvkms_disable_vrr_memclk_switch(void)
 {
     return disable_vrr_memclk_switch;
+}
+
+NvBool nvkms_opportunistic_display_sync(void)
+{
+    return opportunistic_display_sync;
 }
 
 #define NVKMS_SYNCPT_STUBS_NEEDED
@@ -191,9 +212,23 @@ static inline int nvkms_read_trylock_pm_lock(void)
 
 static inline void nvkms_read_lock_pm_lock(void)
 {
-    while (!down_read_trylock(&nvkms_pm_lock)) {
-        try_to_freeze();
-        cond_resched();
+    if ((current->flags & PF_NOFREEZE)) {
+        /*
+         * Non-freezable tasks (i.e. kthreads in this case) don't have to worry
+         * about being frozen during system suspend, but do need to block so
+         * that the CPU can go idle during s2idle. Do a normal uninterruptible
+         * blocking wait for the PM lock.
+         */
+        down_read(&nvkms_pm_lock);
+    } else {
+        /*
+         * For freezable tasks, make sure we give the kernel an opportunity to
+         * freeze if taking the PM lock fails.
+         */
+        while (!down_read_trylock(&nvkms_pm_lock)) {
+            try_to_freeze();
+            cond_resched();
+        }
     }
 }
 
@@ -1371,6 +1406,117 @@ static void nvkms_proc_exit(void)
 }
 
 /*************************************************************************
+ * NVKMS Config File Read
+ ************************************************************************/
+static NvBool nvkms_fs_mounted(void)
+{
+    return current->fs != NULL;
+}
+
+static size_t nvkms_config_file_open
+(
+    char *fname,
+    char ** const buff
+)
+{
+    int i = 0;
+    struct file *file;
+    struct inode *file_inode;
+    size_t file_size = 0;
+    size_t read_size = 0;
+#if defined(NV_KERNEL_READ_HAS_POINTER_POS_ARG)
+    loff_t pos = 0;
+#endif
+
+    if (!nvkms_fs_mounted()) {
+        printk(KERN_ERR NVKMS_LOG_PREFIX "ERROR: Filesystems not mounted\n");
+        return 0;
+    }
+
+    file = filp_open(fname, O_RDONLY, 0);
+    if (file == NULL || IS_ERR(file)) {
+        printk(KERN_WARNING NVKMS_LOG_PREFIX "WARNING: Failed to open %s\n",
+               fname);
+        return 0;
+    }
+
+    file_inode = file->f_inode;
+    if (file_inode == NULL || IS_ERR(file_inode)) {
+        printk(KERN_WARNING NVKMS_LOG_PREFIX "WARNING: Inode is invalid\n");
+        goto done;
+    }
+    file_size = file_inode->i_size;
+    if (file_size > NVKMS_READ_FILE_MAX_SIZE) {
+        printk(KERN_WARNING NVKMS_LOG_PREFIX "WARNING: File exceeds maximum size\n");
+        goto done;
+    }
+
+    *buff = nvkms_alloc(file_size, NV_FALSE);
+    if (*buff == NULL) {
+        printk(KERN_WARNING NVKMS_LOG_PREFIX "WARNING: Out of memory\n");
+        goto done;
+    }
+
+    /*
+     * TODO: Once we have access to GPL symbols, this can be replaced with
+     * kernel_read_file for kernels >= 4.6
+     */
+    while ((read_size < file_size) && (i++ < NVKMS_READ_FILE_MAX_LOOPS)) {
+#if defined(NV_KERNEL_READ_HAS_POINTER_POS_ARG)
+        ssize_t ret = kernel_read(file, *buff + read_size,
+                                  file_size - read_size, &pos);
+#else
+        ssize_t ret = kernel_read(file, read_size,
+                                  *buff + read_size,
+                                  file_size - read_size);
+#endif
+        if (ret <= 0) {
+            break;
+        }
+        read_size += ret;
+    }
+
+    if (read_size != file_size) {
+        printk(KERN_WARNING NVKMS_LOG_PREFIX "WARNING: Failed to read %s\n",
+               fname);
+        goto done;
+    }
+
+    filp_close(file, current->files);
+    return file_size;
+
+done:
+    nvkms_free(*buff, file_size);
+    filp_close(file, current->files);
+    return 0;
+}
+
+/* must be called with nvkms_lock locked */
+static void nvkms_read_config_file_locked(void)
+{
+    char *buffer = NULL;
+    size_t buf_size = 0;
+
+    /* only read the config file if the kernel parameter is set */
+    if (!NVKMS_CONF_FILE_SPECIFIED) {
+        return;
+    }
+
+    buf_size = nvkms_config_file_open(nvkms_conf, &buffer);
+
+    if (buf_size == 0) {
+        return;
+    }
+
+    if (nvKmsReadConf(buffer, buf_size, nvkms_config_file_open)) {
+        printk(KERN_INFO NVKMS_LOG_PREFIX "Successfully read %s\n",
+               nvkms_conf);
+    }
+
+    nvkms_free(buffer, buf_size);
+}
+
+/*************************************************************************
  * NVKMS KAPI functions
  ************************************************************************/
 
@@ -1541,10 +1687,12 @@ static int __init nvkms_init(void)
     if (!nvKmsModuleLoad()) {
         ret = -ENOMEM;
     }
-    up(&nvkms_lock);
     if (ret != 0) {
+        up(&nvkms_lock);
         goto fail_module_load;
     }
+    nvkms_read_config_file_locked();
+    up(&nvkms_lock);
 
     nvkms_proc_init();
 

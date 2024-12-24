@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -82,6 +82,8 @@ rmclientConstruct_IMPL
     pClient->pSecurityToken  = NULL;
     pClient->pOSInfo         = pSecInfo->clientOSInfo;
 
+    pClient->cachedPrivilege = pSecInfo->privLevel;
+
     // TODO: Revisit in M2, see GPUSWSEC-1176
     if (RMCFG_FEATURE_PLATFORM_GSP && IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu))
     {
@@ -96,9 +98,9 @@ rmclientConstruct_IMPL
     else
     {
         pClient->ProcID = osGetCurrentProcess();
+        if (pClient->cachedPrivilege <= RS_PRIV_LEVEL_USER_ROOT)
+            pClient->pOsPidInfo = osGetPidInfo();
     }
-
-    pClient->cachedPrivilege = pSecInfo->privLevel;
 
     // Set user-friendly client name from current process
     osGetCurrentProcessName(pClient->name, NV_PROC_NAME_MAX_LENGTH);
@@ -128,7 +130,7 @@ rmclientConstruct_IMPL
         {
             NV_PRINTF(LEVEL_WARNING,
                       "NVRM_RPC: Failed to set host client resource handle range %x\n", status);
-            return status;
+            goto out;
         }
     }
 
@@ -139,7 +141,7 @@ rmclientConstruct_IMPL
     {
         NV_PRINTF(LEVEL_WARNING,
                   "Failed to set host client restricted resource handle range. Status=%x\n", status);
-        return status;
+        goto out;
     }
 
     if (!rmGpuLockIsOwner())
@@ -148,7 +150,7 @@ rmclientConstruct_IMPL
         if ((status = rmGpuLocksAcquire(GPUS_LOCK_FLAGS_NONE, RM_LOCK_MODULES_CLIENT)) != NV_OK)
         {
             NV_ASSERT(0);
-            return status;
+            goto out;
         }
         bReleaseLock = NV_TRUE;
     }
@@ -169,7 +171,7 @@ rmclientConstruct_IMPL
         PUID_TOKEN pUidToken = osGetCurrentUidToken();
         UserInfo *pUserInfo = NULL;
 
-        if (RMCFG_FEATURE_PLATFORM_GSP && IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu))
+        if (RMCFG_FEATURE_PLATFORM_GSP)
         {
             pClient->pSecurityToken = pSecurityToken;
         }
@@ -206,6 +208,13 @@ rmclientConstruct_IMPL
     if (status == NV_OK && pParams->pAllocParams != NULL)
         *(NvHandle*)(pParams->pAllocParams) = pParams->hClient;
 
+out:
+    if (status != NV_OK)
+    {
+        osPutPidInfo(pClient->pOsPidInfo);
+        pClient->pOsPidInfo = NULL;
+    }
+
     return status;
 }
 
@@ -229,6 +238,8 @@ rmclientDestruct_IMPL
 
     // Free any association of the client with existing third-party p2p object
     CliUnregisterFromThirdPartyP2P(pClient);
+
+    osPutPidInfo(pClient->pOsPidInfo);
 
     //
     // Free all of the devices of the client (do it in reverse order to
@@ -554,27 +565,21 @@ rmclientPostProcessPendingFreeList_IMPL
     return NV_OK;
 }
 
-static RmClient *handleToObject(NvHandle hClient)
-{
-    RmClient *pClient;
-    return (NV_OK == serverutilGetClientUnderLock(hClient, &pClient)) ? pClient : NULL;
-}
-
 RS_PRIV_LEVEL rmclientGetCachedPrivilegeByHandle(NvHandle hClient)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     return pClient ? rmclientGetCachedPrivilege(pClient) : RS_PRIV_LEVEL_USER;
 }
 
 NvBool rmclientIsAdminByHandle(NvHandle hClient, RS_PRIV_LEVEL privLevel)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     return pClient ? rmclientIsAdmin(pClient, privLevel) : NV_FALSE;
 }
 
 NvBool rmclientSetClientFlagsByHandle(NvHandle hClient, NvU32 clientFlags)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     if (pClient)
         rmclientSetClientFlags(pClient, clientFlags);
     return !!pClient;
@@ -582,20 +587,20 @@ NvBool rmclientSetClientFlagsByHandle(NvHandle hClient, NvU32 clientFlags)
 
 void rmclientPromoteDebuggerStateByHandle(NvHandle hClient, NvU32 newMinimumState)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     if (pClient)
         _rmclientPromoteDebuggerState(pClient, newMinimumState);
 }
 
 void *rmclientGetSecurityTokenByHandle(NvHandle hClient)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     return pClient ? rmclientGetSecurityToken(pClient) : NULL;
 }
 
 NV_STATUS rmclientUserClientSecurityCheckByHandle(NvHandle hClient, const API_SECURITY_INFO *pSecInfo)
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
 
     //
     // Return early if it's a null object. This is probably the allocation of
@@ -857,7 +862,7 @@ NvBool rmclientIsCapableOrAdminByHandle
     RS_PRIV_LEVEL privLevel
 )
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     if (pClient == NULL)
     {
         return NV_FALSE;
@@ -888,7 +893,7 @@ NvBool rmclientIsCapableByHandle
     NvU32 capability
 )
 {
-    RmClient *pClient = handleToObject(hClient);
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
     if (pClient == NULL)
     {
         return NV_FALSE;
@@ -959,7 +964,7 @@ _unregisterOSInfo
      NvU64 key2 = (NvU64)(staticCast(pClient, RsClient))->hClient;
      OsInfoMapSubmap *pSubmap = NULL;
      RmClient **pFind = NULL;
- 
+
      pFind = multimapFindItem(&g_osInfoList, key1, key2);
      if (pFind != NULL)
          multimapRemoveItem(&g_osInfoList, pFind);
@@ -967,8 +972,8 @@ _unregisterOSInfo
      pSubmap = multimapFindSubmap(&g_osInfoList, key1);
      if (pSubmap == NULL || multimapCountSubmapItems(&g_osInfoList, pSubmap) > 0)
          return NV_OK;
- 
+
      multimapRemoveSubmap(&g_osInfoList, pSubmap);
- 
+
      return NV_OK;
 }

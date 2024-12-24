@@ -1135,7 +1135,7 @@ void threadStateLogTimeout(OBJGPU *pGpu, NvU64 funcAddr, NvU32 lineNum)
         // Log the Timeout in the RM Journal
         RmRC2GpuTimeout3_RECORD* pRec = NULL;
 
-        rcdbAddAssertJournalRecWithLine(pGpu, lineNum, (void**)&pRec, 
+        rcdbAddAssertJournalRecWithLine(pGpu, lineNum, (void**)&pRec,
                                 RmGroup, RmRC2GpuTimeout_V3,
                                 sizeof(RmRC2GpuTimeout3_RECORD),
                                 DRF_DEF(_RM, _ASSERT, _TYPE, _INFO),

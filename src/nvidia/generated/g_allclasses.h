@@ -47,6 +47,7 @@
 #include <class/cl003e.h>               // NV01_MEMORY_SYSTEM
 #include <class/cl003f.h>               // NV01_MEMORY_LOCAL_PRIVILEGED
 #include <class/cl0040.h>               // NV01_MEMORY_LOCAL_USER
+#include <class/cl0042.h>               // NV_MEMORY_EXTENDED_USER
 #include <class/cl0070.h>               // NV01_MEMORY_VIRTUAL
 #include <class/cl00fe.h>               // NV_MEMORY_MAPPER
 #include <class/cl00c2.h>               // NV01_MEMORY_LOCAL_PHYSICAL
@@ -58,6 +59,7 @@
 #include <class/cl84a0.h>               // NV01_MEMORY_LIST_FBMEM
 #include <class/cl84a0.h>               // NV01_MEMORY_LIST_OBJECT
 #include <class/cl00f3.h>               // NV01_MEMORY_FLA
+#include <class/cl0050.h>               // NV_CE_UTILS
 #include <class/cl00f8.h>               // NV_MEMORY_FABRIC
 #include <class/cl00fc.h>               // FABRIC_VASPACE_A
 #include <class/cl00fd.h>               // NV_MEMORY_MULTICAST_FABRIC
@@ -114,6 +116,7 @@
 #include <class/clb0cc.h>               // MAXWELL_PROFILER
 #include <class/clb2cc.h>               // MAXWELL_PROFILER_DEVICE
 #include <class/cl90e6.h>               // GF100_SUBDEVICE_MASTER
+#include <class/cl90e7.h>               // GF100_SUBDEVICE_INFOROM
 #include <class/cl9096.h>               // GF100_ZBC_CLEAR
 #include <class/cl9072.h>               // GF100_DISP_SW
 #include <class/cl9074.h>               // GF100_TIMED_SEMAPHORE_SW
@@ -123,6 +126,7 @@
 #include <class/cl503c.h>               // NV50_THIRD_PARTY_P2P
 #include <class/cl902d.h>               // FERMI_TWOD_A
 #include <class/cl90f1.h>               // FERMI_VASPACE_A
+#include <class/clcba2.h>               // HOPPER_SEC2_WORK_LAUNCH_A
 #include <class/cl90ec.h>               // GF100_HDACODEC
 #include <class/clb8b0.h>               // NVB8B0_VIDEO_DECODER
 #include <class/clc4b0.h>               // NVC4B0_VIDEO_DECODER
@@ -151,6 +155,7 @@
 #include <class/clb0b5.h>               // MAXWELL_DMA_COPY_A
 #include <class/clc365.h>               // ACCESS_COUNTER_NOTIFY_BUFFER
 #include <class/clc369.h>               // MMU_FAULT_BUFFER
+#include <class/clc763.h>               // MMU_VIDMEM_ACCESS_BIT_BUFFER
 #include <class/clc597.h>               // TURING_A
 #include <class/clc5c0.h>               // TURING_COMPUTE_A
 #include <class/clc697.h>               // AMPERE_A
@@ -175,7 +180,9 @@
 #include <class/cl0060.h>               // NV0060_SYNC_GPU_BOOST
 #include <class/clc076.h>               // GP100_UVM_SW
 #include <class/cl90cd.h>               // NV_EVENT_BUFFER
+#include <class/clcb33.h>               // NV_CONFIDENTIAL_COMPUTE
 #include <class/clcbca.h>               // NV_COUNTER_COLLECTION_UNIT
+#include <class/cl00da.h>               // NV_SEMAPHORE_SURFACE
 
 
 #else // defined(SDK_ALL_CLASSES_INCLUDE_FULL_HEADER)
@@ -270,6 +277,10 @@
 #define NV1_MEMORY_USER                          (0x00000040) // alias
 #endif
 
+#ifndef NV_MEMORY_EXTENDED_USER
+#define NV_MEMORY_EXTENDED_USER                  (0x00000042)
+#endif
+
 #ifndef NV01_MEMORY_VIRTUAL
 #define NV01_MEMORY_VIRTUAL                      (0x00000070)
 #endif
@@ -318,6 +329,10 @@
 
 #ifndef NV01_MEMORY_FLA
 #define NV01_MEMORY_FLA                          (0x000000f3)
+#endif
+
+#ifndef NV_CE_UTILS
+#define NV_CE_UTILS                              (0x00000050)
 #endif
 
 #ifndef NV_MEMORY_FABRIC
@@ -571,6 +586,10 @@
 #define GF100_SUBDEVICE_MASTER                   (0x000090e6)
 #endif
 
+#ifndef GF100_SUBDEVICE_INFOROM
+#define GF100_SUBDEVICE_INFOROM                  (0x000090e7)
+#endif
+
 #ifndef GF100_ZBC_CLEAR
 #define GF100_ZBC_CLEAR                          (0x00009096)
 #endif
@@ -605,6 +624,10 @@
 
 #ifndef FERMI_VASPACE_A
 #define FERMI_VASPACE_A                          (0x000090f1)
+#endif
+
+#ifndef HOPPER_SEC2_WORK_LAUNCH_A
+#define HOPPER_SEC2_WORK_LAUNCH_A                (0x0000cba2)
 #endif
 
 #ifndef GF100_HDACODEC
@@ -719,6 +742,10 @@
 #define MMU_FAULT_BUFFER                         (0x0000c369)
 #endif
 
+#ifndef MMU_VIDMEM_ACCESS_BIT_BUFFER
+#define MMU_VIDMEM_ACCESS_BIT_BUFFER             (0x0000c763)
+#endif
+
 #ifndef TURING_A
 #define TURING_A                                 (0x0000c597)
 #endif
@@ -815,8 +842,16 @@
 #define NV_EVENT_BUFFER                          (0x000090cd)
 #endif
 
+#ifndef NV_CONFIDENTIAL_COMPUTE
+#define NV_CONFIDENTIAL_COMPUTE                  (0x0000cb33)
+#endif
+
 #ifndef NV_COUNTER_COLLECTION_UNIT
 #define NV_COUNTER_COLLECTION_UNIT               (0x0000cbca)
+#endif
+
+#ifndef NV_SEMAPHORE_SURFACE
+#define NV_SEMAPHORE_SURFACE                     (0x000000da)
 #endif
 
 

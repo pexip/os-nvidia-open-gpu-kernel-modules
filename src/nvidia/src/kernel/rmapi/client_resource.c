@@ -61,6 +61,7 @@
 #include "jt.h"
 #include "nvop.h"
 #include "diagnostics/gpu_acct.h"
+#include "platform/platform_request_handler.h"
 #include "gpu/external_device/gsync.h"
 #include "mem_mgr/virt_mem_mgr.h"
 #include "diagnostics/journal.h"
@@ -210,6 +211,31 @@ cliresShareCallback_IMPL
     return resShareCallback_IMPL(staticCast(pRmCliRes, RsResource), pInvokingClient, pParentRef, pSharePolicy);
 }
 
+NV_STATUS
+cliresControl_Prologue_IMPL
+(
+    RmClientResource *pRmCliRes,
+    CALL_CONTEXT *pCallContext,
+    RS_RES_CONTROL_PARAMS_INTERNAL *pParams
+)
+{
+    NV_STATUS status = serverDeserializeCtrlDown(pCallContext, pParams->cmd, &pParams->pParams, &pParams->paramsSize, &pParams->flags);
+
+    return status;
+}
+
+void
+cliresControl_Epilogue_IMPL
+(
+    RmClientResource *pRmCliRes,
+    CALL_CONTEXT *pCallContext,
+    RS_RES_CONTROL_PARAMS_INTERNAL *pParams
+)
+{
+    NV_ASSERT_OK(serverSerializeCtrlUp(pCallContext, pParams->cmd, &pParams->pParams, &pParams->paramsSize, &pParams->flags));
+    serverFreeSerializeStructures(pCallContext, pParams->pParams);
+}
+
 // ****************************************************************************
 //                              Helper functions
 // ****************************************************************************
@@ -232,7 +258,8 @@ CliControlSystemEvent
         return NV_ERR_INVALID_ARGUMENT;
     }
 
-    if (NV_OK != serverutilGetClientUnderLock(hClient, &pClient))
+    pClient = serverutilGetClientUnderLock(hClient);
+    if (pClient == NULL)
         return NV_ERR_INVALID_CLIENT;
 
     CliGetEventNotificationList(hClient, hClient, NULL, &pEventNotification);
@@ -283,9 +310,9 @@ CliGetSystemEventStatus
 )
 {
     NvU32 Head, Tail;
-    RmClient *pClient;
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
 
-    if (NV_OK != serverutilGetClientUnderLock(hClient, &pClient))
+    if (pClient == NULL)
         return NV_ERR_INVALID_CLIENT;
 
     Head = pClient->CliSysEventInfo.systemEventsQueue.Head;
@@ -819,15 +846,12 @@ cliresCtrlCmdSystemExecuteAcpiMethod_IMPL
     NvBool      bDoCopyOut      = NV_FALSE;
     void*       pInOutData      = NULL;
     NV_STATUS   status          = NV_OK;
-    OBJOS      *pOS             = NULL;
 
     pGpu = gpumgrGetSomeGpu();
     if (pGpu == NULL)
     {
         return NV_ERR_INVALID_REQUEST;
     }
-    pOS = GPU_GET_OS(pGpu);
-
     inDataSize      = pAcpiMethodParams->inDataSize;
     outDataSize     = pAcpiMethodParams->outDataSize;
     inOutDataSize   = (NvU32) NV_MAX(inDataSize, outDataSize);
@@ -865,38 +889,38 @@ cliresCtrlCmdSystemExecuteAcpiMethod_IMPL
     {
         case NV0000_CTRL_SYSTEM_EXECUTE_ACPI_METHOD_DSM_NVOP_OPTIMUSCAPS:
         {
-            outStatus = pOS->osCallACPI_DSM(pGpu,
-                                            ACPI_DSM_FUNCTION_NVOP,
-                                            NVOP_FUNC_OPTIMUSCAPS,
-                                            (NvU32*) pInOutData,
-                                            &outDataSize);
+            outStatus = osCallACPI_DSM(pGpu,
+                                       ACPI_DSM_FUNCTION_NVOP,
+                                       NVOP_FUNC_OPTIMUSCAPS,
+                                       (NvU32*) pInOutData,
+                                       &outDataSize);
             break;
         }
         case NV0000_CTRL_SYSTEM_EXECUTE_ACPI_METHOD_DSM_NVOP_OPTIMUSFLAG:
         {
-            outStatus = pOS->osCallACPI_DSM(pGpu,
-                                            ACPI_DSM_FUNCTION_NVOP,
-                                            NVOP_FUNC_OPTIMUSFLAG,
-                                            (NvU32*) pInOutData,
-                                            (NvU16*) &outDataSize);
+            outStatus = osCallACPI_DSM(pGpu,
+                                       ACPI_DSM_FUNCTION_NVOP,
+                                       NVOP_FUNC_OPTIMUSFLAG,
+                                       (NvU32*) pInOutData,
+                                       (NvU16*) &outDataSize);
             break;
         }
         case NV0000_CTRL_SYSTEM_EXECUTE_ACPI_METHOD_DSM_JT_CAPS:
         {
-            outStatus = pOS->osCallACPI_DSM(pGpu,
-                                            ACPI_DSM_FUNCTION_JT,
-                                            JT_FUNC_CAPS,
-                                            (NvU32*) pInOutData,
-                                            (NvU16*) &outDataSize);
+            outStatus = osCallACPI_DSM(pGpu,
+                                       ACPI_DSM_FUNCTION_JT,
+                                       JT_FUNC_CAPS,
+                                       (NvU32*) pInOutData,
+                                       (NvU16*) &outDataSize);
             break;
         }
         case NV0000_CTRL_SYSTEM_EXECUTE_ACPI_METHOD_DSM_JT_PLATPOLICY:
         {
-            outStatus = pOS->osCallACPI_DSM(pGpu,
-                                            ACPI_DSM_FUNCTION_JT,
-                                            JT_FUNC_PLATPOLICY,
-                                            (NvU32*) pInOutData,
-                                            (NvU16*) &outDataSize);
+            outStatus = osCallACPI_DSM(pGpu,
+                                       ACPI_DSM_FUNCTION_JT,
+                                       JT_FUNC_PLATPOLICY,
+                                       (NvU32*) pInOutData,
+                                       (NvU16*) &outDataSize);
             break;
         }
         default:
@@ -987,7 +1011,7 @@ cliresCtrlCmdSystemGetCpuInfo_IMPL
     pCpuInfoParams->family = pSys->cpuInfo.family;
     pCpuInfoParams->model = pSys->cpuInfo.model;
     pCpuInfoParams->stepping = pSys->cpuInfo.stepping;
-    pCpuInfoParams->bSEVEnabled = (sysGetStaticConfig(pSys))->bOsSevEnabled;
+    pCpuInfoParams->bSEVEnabled = (sysGetStaticConfig(pSys))->bOsCCEnabled;
     portMemCopy(pCpuInfoParams->name,
                 sizeof (pCpuInfoParams->name), pSys->cpuInfo.name,
                 sizeof (pCpuInfoParams->name));
@@ -1919,6 +1943,99 @@ cliresCtrlCmdGpuAcctGetAccountingPids_IMPL
 }
 
 
+NV_STATUS
+cliresCtrlCmdSystemPfmreqhndlrControl_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_SYSTEM_PFM_REQ_HNDLR_CONTROL_PARAMS *controlParams
+)
+{
+    OBJSYS    				*pSys  				     = NULL;
+    PlatformRequestHandler  *pPlatformRequestHandler = NULL;
+    NV_STATUS  ret   = NV_OK;
+    NvU32      data  = 0;
+
+    pSys = SYS_GET_INSTANCE();
+    if (!pSys)
+    {
+        return NV_ERR_INVALID_REQUEST;
+    }
+
+    data = controlParams->data;
+
+    pPlatformRequestHandler = SYS_GET_PFM_REQ_HNDLR(pSys);
+    if (!pPlatformRequestHandler)
+    {
+        return NV_ERR_INVALID_REQUEST;
+    }
+
+    ret = pfmreqhndlrControl(pPlatformRequestHandler, controlParams->command, controlParams->locale, &data);
+
+    if (NV_OK == ret)
+    {
+        controlParams->data = data;
+    }
+    else
+    {
+        controlParams->data = NV0000_CTRL_CMD_SYSTEM_PFM_REQ_HNDLR_CMD_DEF_INVALID;
+    }
+
+    return ret;
+}
+
+NV_STATUS
+cliresCtrlCmdSystemPfmreqhndlrBatchControl_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_SYSTEM_PFM_REQ_HNDLR_BATCH_CONTROL_PARAMS *controlParams
+)
+{
+    OBJSYS    *pSys  = NULL;
+    PlatformRequestHandler       *pPlatformRequestHandler  = NULL;
+    NvU32      data  = 0;
+    NvU32      i     = 0;
+    NvU32      cnt   = 0;
+
+    if (controlParams->cmdCount > NV0000_CTRL_CMD_SYSTEM_PFM_REQ_HNDLR_BATCH_COMMAND_MAX)
+    {
+        return NV_ERR_INVALID_REQUEST;
+    }
+
+    pSys = SYS_GET_INSTANCE();
+    if (!pSys)
+    {
+        NV_ASSERT(pSys);
+        return NV_ERR_INVALID_REQUEST;
+    }
+
+    pPlatformRequestHandler = SYS_GET_PFM_REQ_HNDLR(pSys);
+    if (!pPlatformRequestHandler)
+    {
+        NV_ASSERT(pPlatformRequestHandler);
+        return NV_ERR_INVALID_REQUEST;
+    }
+
+    for (i = 0; i < controlParams->cmdCount; i++)
+    {
+        data = controlParams->cmdData[i].data;
+        if (pfmreqhndlrControl(pPlatformRequestHandler,
+                       controlParams->cmdData[i].command,
+                       controlParams->cmdData[i].locale, &data) == NV_OK)
+        {
+            controlParams->cmdData[i].data = data;
+            cnt++;
+        }
+        else
+        {
+            controlParams->cmdData[i].data = NV0000_CTRL_CMD_SYSTEM_PFM_REQ_HNDLR_CMD_DEF_INVALID;
+        }
+    }
+
+    controlParams->succeeded = cnt;
+
+    return NV_OK;
+}
+
 /*!
  * Helper to build config data from unpacked table data,
  * static config v2.0/2.1.
@@ -2500,8 +2617,6 @@ cliresCtrlCmdSystemNVPCFGetPowerModeInfo_IMPL
     NV0000_CTRL_CMD_SYSTEM_NVPCF_GET_POWER_MODE_INFO_PARAMS *pParams
 )
 {
-    OBJSYS   *pSys = NULL;
-    OBJOS    *pOS = NULL;
     NvU32     rc = NV_OK;
     OBJGPU   *pGpu   = NULL;
     NV_STATUS status = NV_OK;
@@ -2511,20 +2626,6 @@ cliresCtrlCmdSystemNVPCFGetPowerModeInfo_IMPL
 
     if (pParams == NULL)
     {
-        return NV_ERR_INVALID_REQUEST;
-    }
-
-    pSys = SYS_GET_INSTANCE();
-    if (pSys == NULL)
-    {
-        NV_ASSERT(pSys);
-        return NV_ERR_INVALID_REQUEST;
-    }
-
-    pOS = SYS_GET_OS(pSys);
-    if (pOS == NULL)
-    {
-        NV_ASSERT(pOS);
         return NV_ERR_INVALID_REQUEST;
     }
 
@@ -2547,11 +2648,11 @@ cliresCtrlCmdSystemNVPCFGetPowerModeInfo_IMPL
             NvU32       supportedFuncs;
             dsmDataSize = sizeof(supportedFuncs);
 
-            if ((rc = pOS->osCallACPI_DSM(pGpu,
-                                   acpiDsmFunction,
-                                   acpiDsmSubFunction,
-                                   &supportedFuncs,
-                                   &dsmDataSize)) != NV_OK)
+            if ((rc = osCallACPI_DSM(pGpu,
+                                     acpiDsmFunction,
+                                     acpiDsmSubFunction,
+                                     &supportedFuncs,
+                                     &dsmDataSize)) != NV_OK)
             {
                 NV_PRINTF(LEVEL_WARNING,
                     "Unable to retrieve NVPCF supported functions. Possibly not supported by SBIOS "
@@ -2587,11 +2688,11 @@ cliresCtrlCmdSystemNVPCFGetPowerModeInfo_IMPL
             dynamicTable_1x.entries[0] = NVPCF0100_CTRL_DYNAMIC_TABLE_1X_INPUT_CMD_GET_TPP;
             dsmDataSize = sizeof(dynamicTable_1x);
 
-            if ((rc = pOS->osCallACPI_DSM(pGpu,
-                                   ACPI_DSM_FUNCTION_NVPCF,
-                                   NVPCF0100_CTRL_CONFIG_DSM_1X_FUNC_GET_DYNAMIC_PARAMS,
-                                   (NvU32*)(&dynamicTable_1x),
-                                   &dsmDataSize)) != NV_OK)
+            if ((rc = osCallACPI_DSM(pGpu,
+                                     ACPI_DSM_FUNCTION_NVPCF,
+                                     NVPCF0100_CTRL_CONFIG_DSM_1X_FUNC_GET_DYNAMIC_PARAMS,
+                                     (NvU32*)(&dynamicTable_1x),
+                                     &dsmDataSize)) != NV_OK)
             {
                 NV_PRINTF(LEVEL_WARNING,
                     "Unable to retrieve NVPCF dynamic data. Possibly not supported by SBIOS "
@@ -2633,7 +2734,7 @@ cliresCtrlCmdSystemNVPCFGetPowerModeInfo_IMPL
             portMemCopy(pData + sizeof(header), sizeof(common), &common, sizeof(common));
             portMemCopy(pData + sizeof(header) + sizeof(common), sizeof(entries), entries, sizeof(entries));
 
-            if ((rc = pOS->osCallACPI_DSM(pGpu,
+            if ((rc = osCallACPI_DSM(pGpu,
                             ACPI_DSM_FUNCTION_NVPCF_2X,
                             NVPCF0100_CTRL_CONFIG_DSM_2X_FUNC_GET_DYNAMIC_PARAMS,
                             (NvU32 *)pData,
@@ -2737,7 +2838,7 @@ nvpcf2xGetDynamicParams_exit:
 
             pData = portMemAllocNonPaged(dataSize);
 
-            if ((rc = pOS->osCallACPI_DSM(pGpu,
+            if ((rc = osCallACPI_DSM(pGpu,
                             ACPI_DSM_FUNCTION_NVPCF_2X,
                             NVPCF0100_CTRL_CONFIG_DSM_2X_FUNC_GET_STATIC_CONFIG_TABLES,
                             (NvU32 *)pData,
@@ -3183,6 +3284,7 @@ cliresCtrlCmdSystemGetP2pCapsV2_IMPL
 )
 {
     OBJGPU *pGpu;
+    NvBool bLoopback = pP2PParams->gpuCount == 2 && pP2PParams->gpuIds[0] == pP2PParams->gpuIds[1];
 
     if (RMCFG_FEATURE_PLATFORM_GSP)
     {
@@ -3203,7 +3305,7 @@ cliresCtrlCmdSystemGetP2pCapsV2_IMPL
     }
 
     return CliGetSystemP2pCaps(pP2PParams->gpuIds,
-                               pP2PParams->gpuCount,
+                               bLoopback ? 1 : pP2PParams->gpuCount,
                               &pP2PParams->p2pCaps,
                               &pP2PParams->p2pOptimalReadCEs,
                               &pP2PParams->p2pOptimalWriteCEs,
@@ -3644,9 +3746,9 @@ cliresCtrlCmdSetSubProcessID_IMPL
 )
 {
     NvHandle  hClient = RES_GET_CLIENT_HANDLE(pRmCliRes);
-    RmClient *pClient;
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
 
-    if (NV_OK != serverutilGetClientUnderLock(hClient, &pClient))
+    if (pClient == NULL)
         return NV_ERR_INVALID_CLIENT;
 
     pClient->SubProcessID = pParams->subProcessID;
@@ -3668,9 +3770,9 @@ cliresCtrlCmdDisableSubProcessUserdIsolation_IMPL
 )
 {
     NvHandle  hClient = RES_GET_CLIENT_HANDLE(pRmCliRes);
-    RmClient *pClient;
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
 
-    if (NV_OK != serverutilGetClientUnderLock(hClient, &pClient))
+    if (pClient == NULL)
         return NV_ERR_INVALID_CLIENT;
 
     pClient->bIsSubProcessDisabled = pParams->bIsSubProcessDisabled;
@@ -3904,6 +4006,7 @@ cliresCtrlCmdClientGetAddrSpaceType_IMPL
     switch (memType)
     {
         case ADDR_SYSMEM:
+        case ADDR_EGM:
             pParams->addrSpaceType = NV0000_CTRL_CMD_CLIENT_GET_ADDR_SPACE_TYPE_SYSMEM;
             break;
         case ADDR_FBMEM:
@@ -4045,9 +4148,10 @@ cliresCtrlCmdClientShareObject_IMPL
     callContext.pResourceRef = pObjectRef;
     callContext.secInfo = pCallContext->secInfo;
 
-    resservSwapTlsCallContext(&pOldCallContext, &callContext);
+    NV_ASSERT_OK_OR_RETURN(resservSwapTlsCallContext(&pOldCallContext, &callContext));
+
     status = clientShareResource(pClient, pObjectRef, pSharePolicy, &callContext);
-    resservRestoreTlsCallContext(pOldCallContext);
+    NV_ASSERT_OK(resservRestoreTlsCallContext(pOldCallContext));
     if (status != NV_OK)
         return status;
 
@@ -4173,6 +4277,27 @@ cliresCtrlCmdGpuDisableNvlinkInit_IMPL
     return gpumgrSetGpuInitDisabledNvlinks(pParams->gpuId, pParams->mask, pParams->bSkipHwNvlinkDisable);
 }
 
+NV_STATUS
+cliresCtrlCmdGpuSetNvlinkBwMode_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_GPU_SET_NVLINK_BW_MODE_PARAMS *pParams
+)
+{
+    return gpumgrSetGpuNvlinkBwMode(pParams->mode);
+}
+
+NV_STATUS
+cliresCtrlCmdGpuGetNvlinkBwMode_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_GPU_GET_NVLINK_BW_MODE_PARAMS *pParams
+)
+{
+    pParams->mode = gpumgrGetGpuNvlinkBwMode();
+    return NV_OK;
+}
+
 /*!
 * @brief Get Rcerr Rpt. Returns an Rc Error report form the circular buffer.
 *
@@ -4190,7 +4315,6 @@ cliresCtrlCmdNvdGetRcerrRpt_IMPL
     NvU32     gpuAttachCount = 0;
     NvU32     gpuIdx         = 0;
     OBJGPU   *pGpu           = NULL;
-    NvU32     processId      = osGetCurrentProcess();
 
     NV_ASSERT_OK_OR_RETURN(gpumgrGetGpuAttachInfo(&gpuAttachCount, &gpuMask));
 
@@ -4205,7 +4329,7 @@ cliresCtrlCmdNvdGetRcerrRpt_IMPL
     pParams->flags     = 0;
     if (!RMCFG_FEATURE_PLATFORM_GSP)
     {
-        pParams->processId = processId;
+        pParams->processId = osGetCurrentProcess();
     }
 
     if ((status = krcCliresCtrlNvdGetRcerrRptCheckPermissions_HAL(
@@ -4216,75 +4340,66 @@ cliresCtrlCmdNvdGetRcerrRpt_IMPL
         return status;
     }
 
-    if (IS_GSP_CLIENT(pGpu))
     {
-        NV0000_CTRL_CMD_NVD_GET_RCERR_RPT_PARAMS *pLocalParams =
-            portMemAllocNonPaged(sizeof *pLocalParams);
+        Journal                  *pRcDB = SYS_GET_RCDB(SYS_GET_INSTANCE());
+        RmRCCommonJournal_RECORD *pCommon;
 
-        NV_CHECK_OR_RETURN(LEVEL_INFO, pLocalParams != NULL, NV_ERR_NO_MEMORY);
-
-        //
-        // Pre-GSP, RcDiagRec from all GPUs were stored in kernel sysmem in a
-        // single RING_BUFFER_LOG.
-        //
-        // With GSP, each GPU its own separate RING_BUFFER_LOG. We need to
-        // search in all of them.
-        //
-        // However, we will always return only the first matching record in all
-        // cases (similar to pre-GSP behavior)
-        //
-        for (; pGpu != NULL ; pGpu = gpumgrGetNextGpu(gpuMask, &gpuIdx))
+        status = rcdbGetRcDiagRecBoundaries(pRcDB,
+                                            &pParams->startIdx,
+                                            &pParams->endIdx,
+                                            pParams->owner,
+                                            pParams->processId);
+        if (status != NV_OK)
         {
-            RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-            portMemSet(pLocalParams, 0, sizeof(*pLocalParams));
-            pLocalParams->reqIdx    = pParams->reqIdx;
-            pLocalParams->owner     = pParams->owner;
-            pLocalParams->processId = pParams->processId;
+            return status;
+        }
 
-            status = pRmApi->Control(pRmApi,
-                                     RES_GET_CLIENT_HANDLE(pRmCliRes),
-                                     RES_GET_HANDLE(pRmCliRes),
-                                     NV0000_CTRL_CMD_NVD_GET_RCERR_RPT,
-                                     pLocalParams,
-                                     sizeof *pLocalParams);
-            if (status == NV_OK &&
-                (pLocalParams->flags &
-                 NV0000_CTRL_CMD_NVD_RCERR_RPT_FLAGS_DATA_VALID))
+        pParams->flags |= NV0000_CTRL_CMD_NVD_RCERR_RPT_FLAGS_RANGE_VALID;
+
+        {
+            NV_STATUS localStatus = rcdbGetRcDiagRec(pRcDB,
+                                                     pParams->reqIdx,
+                                                     &pCommon,
+                                                     pParams->owner,
+                                                     pParams->processId);
+            switch (localStatus)
             {
-                //
-                // Each RING_BUFFER_LOG can contain MAX_RCDB_RCDIAG_WRAP_BUFF
-                // RmRcDiag_RECORD. We will multiply indices returned to the
-                // client by this value so the GPU can be uniquely identified
-                // (in addition to GPUTag) from
-                // NV0000_CTRL_CMD_NVD_GET_RCERR_RPT_PARAMS.rptIdx
-                //
-                // Note that this will result in clients receivinga rptIdx value
-                // larger than MAX_RCDB_RCDIAG_WRAP_BUFF.
-                //
-                NvU16 indexOffset = gpuIdx * MAX_RCDB_RCDIAG_WRAP_BUFF;
-
-                *pParams = *pLocalParams;
-                pParams->startIdx += indexOffset;
-                pParams->endIdx   += indexOffset;
-                pParams->rptIdx   += indexOffset;
-
-                break;
-            }
-
-            if (status == NV_ERR_BUSY_RETRY)
-            {
-                //
-                // To avoid the case where we silently fail to find a record
-                // because we skipped over to the next Gpu on getting a
-                // BUSY_RETRY on one of the Gpus (which might have contained the
-                // record).
-                //
-                break;
+                case NV_OK:
+                    break;
+                case NV_ERR_BUSY_RETRY:
+                    return localStatus;
+                default:
+                    return status;
             }
         }
 
-        portMemFree(pLocalParams);
-        pLocalParams = NULL;
+        if (pCommon != NULL)
+        {
+            NvU32            i       = 0;
+            RmRcDiag_RECORD *pRecord = (RmRcDiag_RECORD *)&pCommon[1];
+
+            pParams->GPUTag   = pCommon->GPUTag;
+            pParams->rptIdx   = pRecord->idx;
+            pParams->rptTime  = pRecord->timeStamp;
+            pParams->rptType  = pRecord->type;
+            pParams->rptCount = pRecord->count;
+            pParams->flags |= pRecord->flags;
+
+            for (i = 0; i < pRecord->count; ++i)
+            {
+                pParams->report[i].tag       = pRecord->data[i].tag;
+                pParams->report[i].value     = pRecord->data[i].value;
+                pParams->report[i].attribute = pRecord->data[i].attribute;
+            }
+            for (; i < NV0000_CTRL_CMD_NVD_RCERR_RPT_MAX_ENTRIES; ++i)
+            {
+                pParams->report[i].tag =
+                    NV0000_CTRL_CMD_NVD_RCERR_RPT_REG_EMPTY;
+                pParams->report[i].value     = 0;
+                pParams->report[i].attribute = 0;
+            }
+            pParams->flags |= NV0000_CTRL_CMD_NVD_RCERR_RPT_FLAGS_DATA_VALID;
+        }
     }
 
     return status;
@@ -4436,7 +4551,7 @@ cliresCtrlCmdSystemPfmreqhndlrGetPerfSensorCounters_IMPL
 )
 {
     NV_STATUS status = NV_OK;
-    portMemSet(pParams, 0, sizeof(*pParams));
+    status = pfmreqhndlrGetPerfSensorCounters(pParams, PFM_REQ_HNDLR_PSR_PUB_TAG);
     return status;
 }
 
@@ -4448,11 +4563,30 @@ cliresCtrlCmdSystemPfmreqhndlrGetExtendedPerfSensorCounters_IMPL
 )
 {
     NV_STATUS status = NV_OK;
-    portMemSet(pParams, 0, sizeof(*pParams));
+    status = pfmreqhndlrGetPerfSensorCounters(pParams, 0);
     return status;
 }
 
 // GPS HOSUNGK DELETE after KMD, NvAPI changes are made
+NV_STATUS
+cliresCtrlCmdSystemGpsControl_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_SYSTEM_GPS_CONTROL_PARAMS *controlParams
+)
+{
+    return NV_OK;
+}
+
+NV_STATUS
+cliresCtrlCmdSystemGpsBatchControl_IMPL
+(
+    RmClientResource *pRmCliRes,
+    NV0000_CTRL_SYSTEM_GPS_BATCH_CONTROL_PARAMS *controlParams
+)
+{
+    return NV_OK;
+}
 
 NV_STATUS
 cliresCtrlCmdSystemGetPerfSensorCounters_IMPL
@@ -4473,3 +4607,4 @@ cliresCtrlCmdSystemGetExtendedPerfSensorCounters_IMPL
 {
     return NV_OK;
 }
+

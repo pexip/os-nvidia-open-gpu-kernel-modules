@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -503,8 +503,18 @@ gpuNotifySubDeviceEvent_IMPL
     for (i = 0; i < pGpu->numSubdeviceBackReferences; i++)
     {
         Subdevice *pSubdevice = pGpu->pSubdeviceBackReferences[i];
+
+        //
+        // We've seen cases where pSubdevice is NULL implying that the
+        // pSubdeviceBackReferences[] array is being modified during this loop.
+        // Adding a NULL pointer check here is only a stopgap. See bug 3892382.
+        //
         NV_ASSERT_OR_RETURN_VOID(pSubdevice != NULL);
+
         INotifier *pNotifier = staticCast(pSubdevice, INotifier);
+
+        if (inotifyGetNotificationShare(pNotifier) == NULL)
+            continue;
 
         GPU_RES_SET_THREAD_BC_STATE(pSubdevice);
 
@@ -637,6 +647,20 @@ _gpuiIsPidSavedAlready
     return NV_FALSE;
 }
 
+static NV_STATUS
+_gpuConvertPid
+(
+    RmClient *pClient,
+    NvU32    *pNsPid
+)
+{
+    if (pClient->pOsPidInfo != NULL)
+        return osFindNsPid(pClient->pOsPidInfo, pNsPid);
+
+    *pNsPid = pClient->ProcID;
+    return NV_OK;
+}
+
 //
 // Searches through clients to find processes with clients that have
 // allocated an ElementType of class, defined by elementID. The return values
@@ -663,6 +687,7 @@ gpuGetProcWithObject_IMPL
     RmClient      *pClient;
     RsClient      *pRsClient;
     RsResourceRef *pResourceRef;
+    NV_STATUS     status;
 
     NV_ASSERT_OR_RETURN((pPidArray != NULL), NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN((pPidArrayCount != NULL), NV_ERR_INVALID_ARGUMENT);
@@ -772,8 +797,15 @@ gpuGetProcWithObject_IMPL
             }
             if (elementInClient)
             {
-                pPidArray[pidcount] = pClient->ProcID;
-                pidcount++;
+                status = _gpuConvertPid(pClient, &pPidArray[pidcount]);
+                if (status == NV_OK)
+                {
+                    pidcount++;
+                }
+                else if (status != NV_ERR_OBJECT_NOT_FOUND)
+                {
+                    return status;
+                }
 
                 if (pidcount == NV2080_CTRL_GPU_GET_PIDS_MAX_COUNT)
                 {
@@ -852,18 +884,39 @@ _gpuCollectMemInfo
              && !(hypervisorIsVgxHyper() && (pResourceRef->externalClassId == NV01_MEMORY_HW_RESOURCES))) ||
              (bIsGuestProcess && (memdescGetFlag(pMemory->pMemDesc, MEMDESC_FLAGS_GUEST_ALLOCATED)) && (pMemory->Type != NVOS32_TYPE_UNUSED))))
         {
+            NvBool bIsMemProtected = NV_FALSE;
+
+            bIsMemProtected = gpuIsCCorApmFeatureEnabled(pMemory->pMemDesc->pGpu) &&
+                              (pMemory->Flags & NVOS32_ALLOC_FLAGS_PROTECTED);
+            if (bIsMemProtected)
+            {
+                NV_ASSERT(!memdescGetFlag(pMemory->pMemDesc,
+                           MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY));
+            }
 
             if (pMemory->pMemDesc->DupCount == 1)
             {
                 pData->memPrivate += pMemory->Length;
+                if (bIsMemProtected)
+                {
+                    pData->protectedMemPrivate += pMemory->Length;
+                }
             }
             else if (pMemory->isMemDescOwner)
             {
                 pData->memSharedOwned += pMemory->Length;
+                if (bIsMemProtected)
+                {
+                    pData->protectedMemSharedOwned += pMemory->Length;
+                }
             }
             else
             {
                 pData->memSharedDuped += pMemory->Length;
+                if (bIsMemProtected)
+                {
+                    pData->protectedMemSharedDuped += pMemory->Length;
+                }
             }
         }
     }

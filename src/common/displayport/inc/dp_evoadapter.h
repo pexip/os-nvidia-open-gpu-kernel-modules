@@ -163,6 +163,7 @@ namespace DisplayPort
         bool _enableFecCheckForDDS;
 
         bool _isLTPhyRepeaterSupported;
+        bool _isMSTPCONCapsReadDisabled;
         //
         // LTTPR count reported by RM, it might not be the same with DPLib probe
         // For example, some Intel LTTPR might not be ready to response 0xF0000 probe
@@ -183,8 +184,8 @@ namespace DisplayPort
         }_DSC;
 
     private:
-        virtual void initializeRegkeyDatabase();
-        virtual void applyRegkeyOverrides();
+        void initializeRegkeyDatabase();
+        void applyRegkeyOverrides();
 
     public:
         EvoMainLink(EvoInterface * provider, Timer * timer);
@@ -383,6 +384,7 @@ namespace DisplayPort
         bool isActive();
         bool isEDP();
         bool skipPowerdownEdpPanelWhenHeadDetach();
+        bool isMSTPCONCapsReadDisabled();
         bool supportMSAOverMST();
         bool queryAndUpdateDfpParams();
         bool controlRateGoverning(NvU32 head, bool enable, bool updateNow);

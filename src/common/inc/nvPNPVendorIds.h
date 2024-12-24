@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2009 - 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -158,6 +158,7 @@ static const PNPVendorId PNPVendorIds[] =
     { "CSE",    _VENDOR_NAME_ENTRY("Compu Shack")                       },
     { "CSI",    _VENDOR_NAME_ENTRY("Cabletron")                         },
     { "CSS",    _VENDOR_NAME_ENTRY("CSS Laboratories")                  },
+    { "CSW",    _VENDOR_NAME_ENTRY("China Star Optoelectronics Technology Co., Ltd") },
     { "CTN",    _VENDOR_NAME_ENTRY("Computone")                         },
     { "CTX",    _VENDOR_NAME_ENTRY("Chuntex/CTX")                       },
     { "CUB",    _VENDOR_NAME_ENTRY("Cubix")                             },
@@ -443,11 +444,13 @@ static const PNPVendorId PNPVendorIds[] =
     { "SAN",    _VENDOR_NAME_ENTRY("Sanyo Electric Co.,Ltd.")           },
     { "SCC",    _VENDOR_NAME_ENTRY("SORD")                              },
     { "SCD",    _VENDOR_NAME_ENTRY("Sanyo")                             },
+    { "SDC",    _VENDOR_NAME_ENTRY("Samsung Display Corp.")             },
     { "SDI",    _VENDOR_NAME_ENTRY("Samtron/Sigma Designs")             },
     { "SDT",    _VENDOR_NAME_ENTRY("Siemens AG")                        },
     { "SEA",    _VENDOR_NAME_ENTRY("Segate")                            },
     { "SEC",    _VENDOR_NAME_ENTRY("Seiko/Epson")                       },
     { "SEN",    _VENDOR_NAME_ENTRY("Sencore")                           },
+    { "SFL",    _VENDOR_NAME_ENTRY("Shiftall Inc")                      },
     { "SGT",    _VENDOR_NAME_ENTRY("Stargate Technology/AT&T")          },
     { "SGX",    _VENDOR_NAME_ENTRY("SGI")                               },
     { "SHP",    _VENDOR_NAME_ENTRY("Sharp")                             },
@@ -504,6 +507,7 @@ static const PNPVendorId PNPVendorIds[] =
     { "TEI",    _VENDOR_NAME_ENTRY("TECO")                              },
     { "TGI",    _VENDOR_NAME_ENTRY("TriGem")                            },
     { "TGS",    _VENDOR_NAME_ENTRY("Torus")                             },
+    { "TMA",    _VENDOR_NAME_ENTRY("Tianma Microelectronics")           },
     { "TOS",    _VENDOR_NAME_ENTRY("Toshiba")                           },
     { "TRI",    _VENDOR_NAME_ENTRY("Tricord")                           },
     { "TRM",    _VENDOR_NAME_ENTRY("Tekram")                            },

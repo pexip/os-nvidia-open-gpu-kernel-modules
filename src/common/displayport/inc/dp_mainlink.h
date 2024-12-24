@@ -101,10 +101,6 @@ namespace DisplayPort
 
     class MainLink : virtual public Object
     {
-    private:
-        virtual void initializeRegkeyDatabase() = 0;
-        virtual void applyRegkeyOverrides() = 0;
-
     public:
         virtual bool physicalLayerSetTestPattern(PatternInfo * patternInfo) = 0;
 
@@ -147,6 +143,9 @@ namespace DisplayPort
 
         // Check if we should skip power down eDP when head detached.
         virtual bool skipPowerdownEdpPanelWhenHeadDetach() = 0;
+
+        // Check if we should skip reading PCON Caps in MST case.
+        virtual bool isMSTPCONCapsReadDisabled() = 0;
 
         // Get GPU DSC capabilities
         virtual void getDscCaps(bool *pbDscSupported = NULL,

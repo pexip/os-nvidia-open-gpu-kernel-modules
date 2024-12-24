@@ -44,6 +44,8 @@ void uvm_ats_init(const UvmPlatformInfo *platform_info)
 
 void uvm_ats_init_va_space(uvm_va_space_t *va_space)
 {
+    uvm_init_rwsem(&va_space->ats.lock, UVM_LOCK_ORDER_LEAF);
+
     if (UVM_ATS_IBM_SUPPORTED())
         uvm_ats_ibm_init_va_space(va_space);
 }
@@ -56,6 +58,10 @@ NV_STATUS uvm_ats_add_gpu(uvm_parent_gpu_t *parent_gpu)
         // incorrect NVLink addresses. See dma_addr_to_gpu_addr().
 
         return uvm_ats_ibm_add_gpu(parent_gpu);
+    }
+    else if (UVM_ATS_SVA_SUPPORTED()) {
+        if (g_uvm_global.ats.enabled)
+            return uvm_ats_sva_add_gpu(parent_gpu);
     }
 
     return NV_OK;
@@ -70,6 +76,10 @@ void uvm_ats_remove_gpu(uvm_parent_gpu_t *parent_gpu)
         // uvm_ats_add_gpu() (gpu retained_count etc.).
 
         uvm_ats_ibm_remove_gpu(parent_gpu);
+    }
+    else if (UVM_ATS_SVA_SUPPORTED()) {
+        if (g_uvm_global.ats.enabled)
+            uvm_ats_sva_remove_gpu(parent_gpu);
     }
 }
 
@@ -87,6 +97,8 @@ NV_STATUS uvm_ats_bind_gpu(uvm_gpu_va_space_t *gpu_va_space)
 
     if (UVM_ATS_IBM_SUPPORTED())
         status = uvm_ats_ibm_bind_gpu(gpu_va_space);
+    else if (UVM_ATS_SVA_SUPPORTED())
+        status = uvm_ats_sva_bind_gpu(gpu_va_space);
 
     return status;
 }
@@ -100,6 +112,8 @@ void uvm_ats_unbind_gpu(uvm_gpu_va_space_t *gpu_va_space)
 
     if (UVM_ATS_IBM_SUPPORTED())
         uvm_ats_ibm_unbind_gpu(gpu_va_space);
+    else if (UVM_ATS_SVA_SUPPORTED())
+        uvm_ats_sva_unbind_gpu(gpu_va_space);
 }
 
 NV_STATUS uvm_ats_register_gpu_va_space(uvm_gpu_va_space_t *gpu_va_space)
@@ -126,6 +140,8 @@ NV_STATUS uvm_ats_register_gpu_va_space(uvm_gpu_va_space_t *gpu_va_space)
 
     if (UVM_ATS_IBM_SUPPORTED())
         status = uvm_ats_ibm_register_gpu_va_space(gpu_va_space);
+    else if (UVM_ATS_SVA_SUPPORTED())
+        status = uvm_ats_sva_register_gpu_va_space(gpu_va_space);
 
     if (status == NV_OK)
         uvm_processor_mask_set(&va_space->ats.registered_gpu_va_spaces, gpu_id);
@@ -148,6 +164,8 @@ void uvm_ats_unregister_gpu_va_space(uvm_gpu_va_space_t *gpu_va_space)
 
     if (UVM_ATS_IBM_SUPPORTED())
         uvm_ats_ibm_unregister_gpu_va_space(gpu_va_space);
+    else if (UVM_ATS_SVA_SUPPORTED())
+        uvm_ats_sva_unregister_gpu_va_space(gpu_va_space);
 
     uvm_va_space_down_write(va_space);
     uvm_processor_mask_clear(&va_space->ats.registered_gpu_va_spaces, gpu_id);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -60,6 +60,16 @@ void hypervisorSetHypervVgpuSupported_IMPL(POBJHYPERVISOR pHypervisor)
 NvBool hypervisorIsVgxHyper_IMPL(void)
 {
     return os_is_vgx_hyper();
+}
+
+NvBool hypervisorIsAC_IMPL(void)
+{
+    return NV_FALSE;
+}
+
+void hypervisorSetACSupported_IMPL(POBJHYPERVISOR pHypervisor)
+{
+    pHypervisor->bIsACSupported = NV_TRUE;
 }
 
 NV_STATUS hypervisorInjectInterrupt_IMPL
@@ -711,7 +721,8 @@ NV_STATUS  NV_API_CALL  nv_vgpu_get_sparse_mmap(
         {
             if (pKernelHostVgpuDevice->gfid != 0)
             {
-                rmStatus = kbifGetNumVFSparseMmapRegions_HAL(pGpu, pKernelBif, pKernelHostVgpuDevice, numAreas);
+                rmStatus = kbifGetVFSparseMmapRegions_HAL(pGpu, pKernelBif, pKernelHostVgpuDevice, os_page_size,
+                                                          numAreas, NULL, NULL);
                 if (rmStatus == NV_OK)
                 {
                     os_alloc_mem((void **)&vfRegionOffsets, sizeof(NvU64) * (*numAreas));
@@ -719,7 +730,7 @@ NV_STATUS  NV_API_CALL  nv_vgpu_get_sparse_mmap(
                     if (vfRegionOffsets && vfRegionSizes)
                     {
                         rmStatus = kbifGetVFSparseMmapRegions_HAL(pGpu, pKernelBif, pKernelHostVgpuDevice, os_page_size,
-                                                                  vfRegionOffsets, vfRegionSizes);
+                                                                  numAreas, vfRegionOffsets, vfRegionSizes);
                         if (rmStatus == NV_OK)
                         {
                             *offsets = vfRegionOffsets;
@@ -992,12 +1003,20 @@ NV_STATUS osIsVgpuVfioPresent(void)
     return os_call_vgpu_vfio((void *) &vgpu_info, CMD_VGPU_VFIO_PRESENT);
 }
 
+NV_STATUS osIsVfioPciCorePresent(void)
+{
+    vgpu_vfio_info vgpu_info;
+
+    return os_call_vgpu_vfio((void *) &vgpu_info, CMD_VFIO_PCI_CORE_PRESENT);
+}
+
+
 void initVGXSpecificRegistry(OBJGPU *pGpu)
 {
     NvU32 data32;
-#if !defined(NVCPU_X86_64)
-    osWriteRegistryDword(pGpu, NV_REG_STR_RM_BAR2_APERTURE_SIZE_MB, 4);
-#endif
+    osWriteRegistryDword(pGpu, NV_REG_STR_RM_POWER_FEATURES, 0x55455555);
+    osWriteRegistryDword(pGpu, NV_REG_STR_RM_INFOROM_DISABLE_BBX,
+                               NV_REG_STR_RM_INFOROM_DISABLE_BBX_YES);
     osWriteRegistryDword(pGpu, NV_REG_PROCESS_NONSTALL_INTR_IN_LOCKLESS_ISR,
                                NV_REG_PROCESS_NONSTALL_INTR_IN_LOCKLESS_ISR_ENABLE);
     if ((osReadRegistryDword(pGpu, NV_REG_STR_RM_DUMP_NVLOG, &data32) != NV_OK))

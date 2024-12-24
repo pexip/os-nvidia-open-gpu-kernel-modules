@@ -28,6 +28,9 @@
 #include "kernel/gpu/mem_mgr/mem_mgr.h"
 #include "kernel/gpu/gr/kernel_graphics.h"
 #include "kernel/gpu/falcon/kernel_falcon.h"
+#include "kernel/gpu/rc/kernel_rc.h"
+
+#include "kernel/gpu/conf_compute/conf_compute.h"
 
 #include "class/cl0090.h" // KERNEL_GRAPHICS_CONTEXT
 #include "class/cl9067.h" // FERMI_CONTEXT_SHARE_A
@@ -47,29 +50,30 @@ kchangrpapiConstruct_IMPL
     RS_RES_ALLOC_PARAMS_INTERNAL *pParams
 )
 {
-    NvBool            bTsgAllocated     = NV_FALSE;
-    RsResourceRef    *pResourceRef      = pCallContext->pResourceRef;
-    NV_STATUS         rmStatus;
-    OBJVASPACE       *pVAS              = NULL;
-    OBJGPU           *pGpu              = GPU_RES_GET_GPU(pKernelChannelGroupApi);
-    KernelMIGManager *pKernelMIGManager = NULL;
-    KernelFifo       *pKernelFifo       = GPU_GET_KERNEL_FIFO(pGpu);
-    NvHandle          hVASpace          = NV01_NULL_OBJECT;
-    Device           *pDevice           = NULL;
-    NvU32             gfid              = GPU_GFID_PF;
-    RsShared         *pShared           = NULL;
-    RsClient         *pClient;
-    NvBool            bLockAcquired           = NV_FALSE;
-    Heap             *pHeap                   = GPU_GET_HEAP(pGpu);
-    NvBool            bMIGInUse               = NV_FALSE;
-    CTX_BUF_INFO     *bufInfoList             = NULL;
-    NvU32             bufCount                = 0;
-    NvBool            bReserveMem             = NV_FALSE;
-    MIG_INSTANCE_REF  ref;
-    RM_API           *pRmApi = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
-    KernelChannelGroup *pKernelChannelGroup = NULL;
-    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS *pAllocParams = NULL;
-    RM_ENGINE_TYPE    rmEngineType;
+    NvBool                                  bTsgAllocated       = NV_FALSE;
+    RsResourceRef                          *pResourceRef        = pCallContext->pResourceRef;
+    NV_STATUS                               rmStatus;
+    OBJVASPACE                             *pVAS                = NULL;
+    OBJGPU                                 *pGpu                = GPU_RES_GET_GPU(pKernelChannelGroupApi);
+    KernelMIGManager                       *pKernelMIGManager   = NULL;
+    KernelFifo                             *pKernelFifo         = GPU_GET_KERNEL_FIFO(pGpu);
+    NvHandle                                hVASpace            = NV01_NULL_OBJECT;
+    Device                                 *pDevice             = NULL;
+    NvU32                                   gfid                = GPU_GFID_PF;
+    RsShared                               *pShared             = NULL;
+    RsClient                               *pClient;
+    NvBool                                  bLockAcquired       = NV_FALSE;
+    Heap                                   *pHeap               = GPU_GET_HEAP(pGpu);
+    NvBool                                  bMIGInUse           = NV_FALSE;
+    CTX_BUF_INFO                           *bufInfoList         = NULL;
+    NvU32                                   bufCount            = 0;
+    NvBool                                  bReserveMem         = NV_FALSE;
+    MIG_INSTANCE_REF                        ref;
+    RM_API                                 *pRmApi              = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
+    KernelChannelGroup                     *pKernelChannelGroup = NULL;
+    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS *pAllocParams        = NULL;
+    RM_ENGINE_TYPE                          rmEngineType;
+
 
     NV_PRINTF(LEVEL_INFO,
               "hClient: 0x%x, hParent: 0x%x, hObject:0x%x, hClass: 0x%x\n",
@@ -167,8 +171,7 @@ kchangrpapiConstruct_IMPL
         // to determine runlistId from engineId passed by client. This
         // runlistId is used to associate all future channels in this TSG to
         // that runlist. Setting the engineType will cause the runlist
-        // corresponding to that engine to be chosen in
-        // kchangrpGetDefaultRunlist_HAL.
+        // corresponding to that engine to be chosen.
         //
         pKernelChannelGroup->engineType = rmEngineType;
     }
@@ -187,7 +190,8 @@ kchangrpapiConstruct_IMPL
         NV_CHECK_OK_OR_GOTO(
             rmStatus,
             LEVEL_ERROR,
-            kmigmgrGetInstanceRefFromClient(pGpu, pKernelMIGManager, pParams->hClient, &ref),
+            kmigmgrGetInstanceRefFromDevice(pGpu, pKernelMIGManager,
+                                            pDevice, &ref),
             failed);
 
         NV_CHECK_OK_OR_GOTO(
@@ -201,6 +205,15 @@ kchangrpapiConstruct_IMPL
         // Rewrite the engineType with the global engine type
         pKernelChannelGroup->engineType = rmEngineType;
         pHeap = ref.pKernelMIGGpuInstance->pMemoryPartitionHeap;
+    }
+    else
+    {
+        // Only GR0 is allowed without MIG
+        if ((RM_ENGINE_TYPE_IS_GR(rmEngineType)) && (rmEngineType != RM_ENGINE_TYPE_GR0))
+        {
+            rmStatus = NV_ERR_INVALID_ARGUMENT;
+            goto failed;
+        }
     }
 
     if((pDevice->vaMode != NV_DEVICE_ALLOCATION_VAMODE_MULTIPLE_VASPACES) || (hVASpace != 0))
@@ -230,13 +243,28 @@ kchangrpapiConstruct_IMPL
 
     if (!RMCFG_FEATURE_PLATFORM_GSP)
     {
-        NV_ASSERT_OK_OR_GOTO(rmStatus,
-            ctxBufPoolInit(pGpu, pHeap, &pKernelChannelGroup->pCtxBufPool),
-            failed);
+        NvHandle hRcWatchdog;
 
-        NV_ASSERT_OK_OR_GOTO(rmStatus,
-            ctxBufPoolInit(pGpu, pHeap, &pKernelChannelGroup->pChannelBufPool),
-            failed);
+        //
+        // WAR for 4217716 - Force allocations made on behalf of watchdog client to
+        // RM reserved heap. This avoids a constant memory allocation from appearing
+        // due to the ctxBufPool reservation out of PMA.
+        //
+        rmStatus = krcWatchdogGetClientHandle(GPU_GET_KERNEL_RC(pGpu), &hRcWatchdog);
+        if ((rmStatus != NV_OK) || (pParams->hClient != hRcWatchdog))
+        {
+            NV_ASSERT_OK_OR_GOTO(rmStatus,
+                ctxBufPoolInit(pGpu, pHeap, &pKernelChannelGroup->pCtxBufPool),
+                failed);
+
+            NV_ASSERT_OK_OR_GOTO(rmStatus,
+                ctxBufPoolInit(pGpu, pHeap, &pKernelChannelGroup->pChannelBufPool),
+                failed);
+        }
+        else
+        {
+            NV_PRINTF(LEVEL_INFO, "Skipping ctxBufPoolInit for RC watchdog\n");
+        }
     }
 
     NV_ASSERT_OK_OR_GOTO(rmStatus,
@@ -266,6 +294,28 @@ kchangrpapiConstruct_IMPL
                                    NVA06C_CTRL_INTERLEAVE_LEVEL_MEDIUM),
         failed);
 
+    ConfidentialCompute *pConfCompute = GPU_GET_CONF_COMPUTE(pGpu);
+    MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+    if ((pConfCompute != NULL) &&
+        (pConfCompute->getProperty(pCC, PDB_PROP_CONFCOMPUTE_CC_FEATURE_ENABLED)))
+    {
+        // TODO: jira CONFCOMP-1621: replace this with actual flag for TSG alloc that skips scrub
+        if ((pMemoryManager->bScrubChannelSetupInProgress) &&
+            (pKernelChannelGroup->pChannelBufPool != NULL) &&
+            (pKernelChannelGroup->pCtxBufPool != NULL))
+        {
+            if (pCallContext->secInfo.privLevel < RS_PRIV_LEVEL_KERNEL)
+            {
+                rmStatus = NV_ERR_INVALID_ARGUMENT;
+                NV_PRINTF(LEVEL_ERROR, "Only kernel priv clients can skip scrubber\n");
+                goto failed;
+            }
+            ctxBufPoolSetScrubSkip(pKernelChannelGroup->pChannelBufPool, NV_TRUE);
+            ctxBufPoolSetScrubSkip(pKernelChannelGroup->pCtxBufPool, NV_TRUE);
+            NV_PRINTF(LEVEL_INFO, "Skipping scrubber for all allocations on this context\n");
+        }
+    }
+
     //
     // If ctx buf pools are enabled, filter out partitionable engines
     // that aren't part of our instance.
@@ -273,20 +323,28 @@ kchangrpapiConstruct_IMPL
     // Memory needs to be reserved in the pool only for buffers for
     // engines in instance.
     //
+
+    //
+    // Size of memory that will be calculated for ctxBufPool reservation if ctxBufPool is enabled and MIG is disabled
+    // or current engine belongs to this MIG instance and MIG is enabled
+    //
     if (pKernelChannelGroup->pCtxBufPool != NULL &&
-        kmigmgrIsEngineInInstance(pGpu, pKernelMIGManager, pKernelChannelGroup->engineType, ref))
+        (!bMIGInUse || kmigmgrIsEngineInInstance(pGpu, pKernelMIGManager, pKernelChannelGroup->engineType, ref)))
     {
         // GR Buffers
         if (RM_ENGINE_TYPE_IS_GR(pKernelChannelGroup->engineType))
         {
             KernelGraphics *pKernelGraphics = GPU_GET_KERNEL_GRAPHICS(pGpu, RM_ENGINE_TYPE_GR_IDX(pKernelChannelGroup->engineType));
-            NvU32 bufId;
+            NvU32 bufId = 0;
             portMemSet(&bufInfoList[0], 0, sizeof(CTX_BUF_INFO) * NV_ENUM_SIZE(GR_CTX_BUFFER));
             bufCount = 0;
+
+            kgraphicsDiscoverMaxLocalCtxBufferSize(pGpu, pKernelGraphics);
+
             FOR_EACH_IN_ENUM(GR_CTX_BUFFER, bufId)
             {
                 // TODO expose engine class capabilities to kernel RM
-                if (kgrmgrIsCtxBufSupported(bufId, !IS_MIG_ENABLED(pGpu)))
+                if (kgrmgrIsCtxBufSupported(bufId, NV_FALSE))
                 {
                     const CTX_BUF_INFO *pBufInfo = kgraphicsGetCtxBufferInfo(pGpu, pKernelGraphics, bufId);
                     bufInfoList[bufCount] = *pBufInfo;
@@ -351,6 +409,7 @@ kchangrpapiConstruct_IMPL
                 &pKernelChannelGroupApi->hKernelGraphicsContext,
                 KERNEL_GRAPHICS_CONTEXT,
                 NvP64_NULL,
+                0,
                 RMAPI_ALLOC_FLAGS_SKIP_RPC,
                 NvP64_NULL,
                 &pRmApi->defaultSecInfo),
@@ -369,6 +428,7 @@ kchangrpapiConstruct_IMPL
                                pParams->hResource,
                                pParams->externalClassId,
                                pAllocParams,
+                               sizeof(*pAllocParams),
                                rmStatus);
         //
         // Make sure that corresponding RPC occurs when freeing
@@ -872,6 +932,7 @@ kchangrpapiSetLegacyMode_IMPL
                                                   &hkCtxShare,
                                                   FERMI_CONTEXT_SHARE_A,
                                                   NV_PTR_TO_NvP64(&kctxshareParams),
+                                                  sizeof(kctxshareParams),
                                                   RMAPI_ALLOC_FLAGS_SKIP_RPC,
                                                   NvP64_NULL,
                                                   &pRmApi->defaultSecInfo),
@@ -896,6 +957,7 @@ kchangrpapiSetLegacyMode_IMPL
                                                       &hkCtxShare,
                                                       FERMI_CONTEXT_SHARE_A,
                                                       NV_PTR_TO_NvP64(&kctxshareParams),
+                                                      sizeof(kctxshareParams),
                                                       RMAPI_ALLOC_FLAGS_SKIP_RPC,
                                                       NvP64_NULL,
                                                       &pRmApi->defaultSecInfo),
@@ -1073,7 +1135,8 @@ kchangrpapiCtrlCmdGpFifoSchedule_IMPL
     // If no channels have a runlist set, get the default and use it.
     if (runlistId == INVALID_RUNLIST_ID)
     {
-        runlistId = kchangrpGetDefaultRunlist_HAL(pGpu, pKernelChannelGroup);
+        runlistId = kfifoGetDefaultRunlist_HAL(pGpu, pKernelFifo,
+            pKernelChannelGroup->engineType);
     }
 
     // We can rewrite TSG runlist id just as we will do that for all TSG channels below
@@ -1137,7 +1200,7 @@ kchangrpapiCtrlCmdBind_IMPL
 {
     NV_STATUS     rmStatus = NV_OK;
     OBJGPU       *pGpu     = GPU_RES_GET_GPU(pKernelChannelGroupApi);
-    NvHandle      hClient  = RES_GET_CLIENT_HANDLE(pKernelChannelGroupApi);
+    Device       *pDevice  = GPU_RES_GET_DEVICE(pKernelChannelGroupApi);
     CHANNEL_NODE *pChanNode;
     RM_ENGINE_TYPE localEngineType;
     RM_ENGINE_TYPE globalEngineType;
@@ -1154,7 +1217,7 @@ kchangrpapiCtrlCmdBind_IMPL
         MIG_INSTANCE_REF ref;
 
         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
-            kmigmgrGetInstanceRefFromClient(pGpu, pKernelMIGManager, hClient, &ref));
+            kmigmgrGetInstanceRefFromDevice(pGpu, pKernelMIGManager, pDevice, &ref));
 
         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
             kmigmgrGetLocalToGlobalEngineType(pGpu, pKernelMIGManager, ref,

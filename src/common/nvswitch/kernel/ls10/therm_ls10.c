@@ -28,7 +28,6 @@
 #include "ls10/therm_ls10.h"
 #include "error_nvswitch.h"
 #include "soe/soeiftherm.h"
-#include "rmflcncmdif_nvswitch.h"
 
 #include "flcn/flcnable_nvswitch.h"
 #include "flcn/flcn_nvswitch.h"
@@ -460,7 +459,7 @@ nvswitch_therm_soe_callback_ls10
 }
 
 //
-// nvswitch_ctrl_therm_read_voltage
+// nvswitch_therm_read_voltage
 //
 // Temperature and voltage are only available on SKUs which have thermal and
 // voltage sensors.
@@ -544,7 +543,7 @@ nvswitch_ctrl_therm_read_voltage_ls10
 }
 
 //
-// nvswitch_ctrl_therm_read_power
+// nvswitch_therm_read_power
 //
 // Power is only available on SKUs which have thermal and
 // voltage sensors.

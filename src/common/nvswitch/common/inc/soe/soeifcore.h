@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -24,6 +24,8 @@
 #ifndef _SOECORE_H_
 #define _SOECORE_H_
 
+#define SOE_CORE_BIOS_SIZE_LS10                0x100000          // 1 MB
+
 /*!
  * @file   soeifutil.h
  * @brief  SOE CORE Command Queue
@@ -40,62 +42,62 @@ enum
     /*!
      * Read the BIOS Size
      */
-    RM_SOE_CORE_CMD_READ_BIOS_SIZE = 0x0,
+    RM_SOE_CORE_CMD_READ_BIOS_SIZE,
 
     /*!
      * Read the BIOS
      */
-    RM_SOE_CORE_CMD_READ_BIOS = 0x1,
+    RM_SOE_CORE_CMD_READ_BIOS,
 
     /*!
      * Run DMA self-test
      */
-    RM_SOE_CORE_CMD_DMA_SELFTEST = 0x2,
+    RM_SOE_CORE_CMD_DMA_SELFTEST,
 
     /*!
      * Perform I2C transaction
      */
-    RM_SOE_CORE_CMD_I2C_ACCESS = 0x3,
+    RM_SOE_CORE_CMD_I2C_ACCESS,
 
     /*!
      * Issue NPORT Reset
      */
-    RM_SOE_CORE_CMD_ISSUE_NPORT_RESET = 0x4,
+    RM_SOE_CORE_CMD_ISSUE_NPORT_RESET,
 
     /*!
      * Restore NPORT state
      */
-    RM_SOE_CORE_CMD_RESTORE_NPORT_STATE = 0x5,
+    RM_SOE_CORE_CMD_RESTORE_NPORT_STATE,
 
     /*!
      * Set NPORT TPROD state
      */
-    RM_SOE_CORE_CMD_SET_NPORT_TPROD_STATE = 0x6,
+    RM_SOE_CORE_CMD_SET_NPORT_TPROD_STATE,
 
     /*!
      * Read VRs
      */
-    RM_SOE_CORE_CMD_GET_VOLTAGE_VALUES = 0x7,
+    RM_SOE_CORE_CMD_GET_VOLTAGE_VALUES,
 
     /*!
      * Init PLM2 protected registers
      */
-    RM_SOE_CORE_CMD_INIT_L2_STATE = 0x8,
+    RM_SOE_CORE_CMD_INIT_L2_STATE,
 
     /*!
      * Read Power
      */
-    RM_SOE_CORE_CMD_GET_POWER_VALUES = 0x9,
+    RM_SOE_CORE_CMD_GET_POWER_VALUES,
 
     /*!
      * Set NPORT interrupts
      */
-    RM_SOE_CORE_CMD_SET_NPORT_INTRS = 0xA,
+    RM_SOE_CORE_CMD_SET_NPORT_INTRS,
 
     /*!
      * Disable NPORT fatal interrupt
      */
-    RM_SOE_CORE_CMD_DISABLE_NPORT_FATAL_INTR = 0xF,
+    RM_SOE_CORE_CMD_DISABLE_NPORT_FATAL_INTR,
 };
 
 // Timeout for SOE reset callback function

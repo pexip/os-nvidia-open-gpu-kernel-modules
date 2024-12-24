@@ -1,0 +1,17 @@
+Author: Andreas Beckmann <anbe@debian.org>
+Description: some hmm bits are not always available
+ hmm_pfn_to_page() was introduced in Linux 5.8
+
+--- a/kernel-open/nvidia-uvm/uvm_linux.h
++++ b/kernel-open/nvidia-uvm/uvm_linux.h
+@@ -118,7 +118,9 @@ static inline const struct cpumask *uvm_
+ // hmm_range_fault() needs CONFIG_HMM_MIRROR. To detect racing CPU invalidates
+ // of memory regions while hmm_range_fault() is being called, MMU interval
+ // notifiers are needed.
+-    #if defined(CONFIG_HMM_MIRROR) && defined(NV_MMU_INTERVAL_NOTIFIER)
++// hmm_pfn_to_page() was added in Linux 5.8 (2733ea144dcce)
++    #if defined(CONFIG_HMM_MIRROR) && defined(NV_MMU_INTERVAL_NOTIFIER) && \
++	    LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+         #define UVM_HMM_RANGE_FAULT_SUPPORTED() 1
+     #else
+         #define UVM_HMM_RANGE_FAULT_SUPPORTED() 0

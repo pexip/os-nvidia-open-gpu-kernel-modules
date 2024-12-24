@@ -26,6 +26,7 @@
 
 #include "nvkms-evo.h"
 #include "nvkms-dpy.h"
+#include "nvkms-dpy-override.h"
 #include "nvkms-hdmi.h"
 #include "nvkms-rm.h"
 #include "nvkms-rmapi.h"
@@ -70,7 +71,7 @@ static NvBool ValidateEdid                (const NVDpyEvoRec *pDpyEvo,
                                            const NvBool ignoreEdidChecksum);
 static void LogEdid                       (NVDpyEvoPtr pDpyEvo,
                                            NVEvoInfoStringPtr pInfoString);
-static void ClearEdid                     (NVDpyEvoPtr pDpyEvo);
+static void ClearEdid                     (NVDpyEvoPtr pDpyEvo, const NvBool bSendHdmiCapsToRm);
 static void ClearCustomEdid               (const NVDpyEvoRec *pDpyEvo);
 static void WriteEdidToResman             (const NVDpyEvoRec *pDpyEvo,
                                            const NVEdidRec *pEdid);
@@ -89,14 +90,14 @@ static void AssignDpyEvoName              (NVDpyEvoPtr pDpyEvo);
 static NvBool IsConnectorTMDS             (NVConnectorEvoPtr);
 
 
-static void DpyDisconnectEvo(NVDpyEvoPtr pDpyEvo)
+static void DpyDisconnectEvo(NVDpyEvoPtr pDpyEvo, const NvBool bSendHdmiCapsToRm)
 {
     NVDispEvoPtr pDispEvo = pDpyEvo->pDispEvo;
 
     pDispEvo->connectedDisplays =
         nvDpyIdListMinusDpyId(pDispEvo->connectedDisplays, pDpyEvo->id);
 
-    ClearEdid(pDpyEvo);
+    ClearEdid(pDpyEvo, bSendHdmiCapsToRm);
 }
 
 static NvBool DpyConnectEvo(
@@ -350,6 +351,7 @@ static void ApplyNewEdid(
     NVDpyEvoPtr pDpyEvo,
     const NVEdidRec *pEdid,
     const NVParsedEdidEvoRec *pParsedEdid,
+    const NvBool bSendHdmiCapsToRm,
     NVEvoInfoStringPtr pInfoString)
 {
     if (pDpyEvo->edid.buffer != NULL) {
@@ -391,7 +393,9 @@ static void ApplyNewEdid(
         DpyAssignColorSpaceCaps(pDpyEvo, pInfoString);
     }
 
-    nvUpdateHdmiCaps(pDpyEvo);
+    if (bSendHdmiCapsToRm) {
+        nvSendHdmiCapsToRm(pDpyEvo);
+    }
 
     nvDpyProbeMaxPixelClock(pDpyEvo);
 
@@ -573,7 +577,8 @@ static void ReadAndApplyEdidEvo(
          * worrying that this request has different parameters (like CustomEdid
          * or mode validation overrides).
          */
-        ApplyNewEdid(pDpyEvo, &edid, pParsedEdid, &infoString);
+        ApplyNewEdid(pDpyEvo, &edid, pParsedEdid, TRUE /* bSendHdmiCapsToRm */,
+                     &infoString);
     } else {
         nvFree(edid.buffer);
     }
@@ -653,7 +658,7 @@ void nvDpyProbeMaxPixelClock(NVDpyEvoPtr pDpyEvo)
     if (pDevEvo->gpus != NULL) {
 
         NVEvoSorCaps *sorCaps = pDevEvo->gpus[displayOwner].capabilities.sor;
-        NvU32 orIndex = nvEvoConnectorGetPrimaryOr(pConnectorEvo);
+        NvU32 orIndex = pConnectorEvo->or.primary;
 
         if (NV0073_CTRL_SYSTEM_GET_CAP(pDevEvo->commonCapsBits,
                 NV0073_CTRL_SYSTEM_CAPS_CROSS_BAR_SUPPORTED)) {
@@ -681,7 +686,10 @@ void nvDpyProbeMaxPixelClock(NVDpyEvoPtr pDpyEvo)
                  * those driving heads, we don't need to exclude RM from
                  * selecting any SOR, so an sorExcludeMask of 0 is appropriate.
                  */
-                if (nvAssignSOREvo(pConnectorEvo, 0) &&
+                if (nvAssignSOREvo(pDispEvo,
+                                   nvDpyIdToNvU32(pConnectorEvo->displayId),
+                                   FALSE /* b2Heads1Or */,
+                                   0 /* sorExcludeMask */) &&
                     nvHdmiFrlAssessLink(pDpyEvo)) {
                     /*
                      * Note that although we "assessed" the link above, the
@@ -1379,6 +1387,12 @@ static void LogEdid(NVDpyEvoPtr pDpyEvo, NVEvoInfoStringPtr pInfoString)
         { NVT_TYPE_CUST_AUTO,        "Customized Auto Timings" },
         { NVT_TYPE_CUST_MANUAL,      "Customized Manual Timings" },
         { NVT_TYPE_CVT_RB_2,"Reduced Blanking Coordinated Video Timings, v2" },
+        { NVT_TYPE_DMT_RB_2,         "Display Monitor Timings, V2" },
+        { NVT_TYPE_DISPLAYID_7,      "DisplayID Type 7 Timings" },
+        { NVT_TYPE_DISPLAYID_8,      "DisplayID Type 8 Timings" },
+        { NVT_TYPE_DISPLAYID_9,      "DisplayID Type 9 Timings" },
+        { NVT_TYPE_DISPLAYID_10,     "DisplayID Type 10 Timings" },
+        { NVT_TYPE_CVT_RB_3,         "Reduced Blanking Coordinated Video Timings, v3" },
     };
 
     /*
@@ -1425,6 +1439,16 @@ static void LogEdid(NVDpyEvoPtr pDpyEvo, NVEvoInfoStringPtr pInfoString)
                 case NVT_TYPE_CUST_AUTO:
                 case NVT_TYPE_CUST_MANUAL:
                 case NVT_TYPE_CVT_RB_2:
+                case NVT_TYPE_DMT_RB_2:
+                case NVT_TYPE_DISPLAYID_7:
+                case NVT_TYPE_DISPLAYID_8:
+                case NVT_TYPE_DISPLAYID_9:
+                case NVT_TYPE_DISPLAYID_10:
+                case NVT_TYPE_CVT_RB_3:
+                    /*
+                     * XXX temporarily disable the warning so that additional
+                     * NVT_TYPEs_ can be added to nvtiming.h.  Bug 3849339.
+                     */
                 default:
                     break;
             }
@@ -1824,14 +1848,15 @@ static void LogEdid(NVDpyEvoPtr pDpyEvo, NVEvoInfoStringPtr pInfoString)
  * structure.
  */
 
-static void ClearEdid(NVDpyEvoPtr pDpyEvo)
+static void ClearEdid(NVDpyEvoPtr pDpyEvo, const NvBool bSendHdmiCapsToRm)
 {
     NVEdidRec edid = { };
     NVEvoInfoStringRec infoString;
     nvInitInfoString(&infoString, NULL, 0);
 
     if (EdidHasChanged(pDpyEvo, &edid, NULL)) {
-        ApplyNewEdid(pDpyEvo, &edid, NULL, &infoString);
+        ApplyNewEdid(pDpyEvo, &edid, NULL,
+                     bSendHdmiCapsToRm, &infoString);
     }
 }
 
@@ -2263,7 +2288,7 @@ NVDpyEvoPtr nvAllocDpyEvo(NVDispEvoPtr pDispEvo,
 
 void nvFreeDpyEvo(NVDispEvoPtr pDispEvo, NVDpyEvoPtr pDpyEvo)
 {
-    DpyDisconnectEvo(pDpyEvo);
+    DpyDisconnectEvo(pDpyEvo, FALSE /* bSendHdmiCapsToRm */);
 
     // Let the DP library host implementation handle deleting a pDpy as if the
     // library had notified it of a lost device.
@@ -2415,7 +2440,6 @@ static void UpdateDpYUV420InfoFrame(const NVDispEvoRec *pDispEvo,
 {
     const NVDispHeadStateEvoRec *pHeadState =
                                 &pDispEvo->headState[head];
-    const NVHwModeTimingsEvo *pTimings = &pHeadState->timings;
     NV0073_CTRL_SPECIFIC_SET_OD_PACKET_PARAMS params = { 0 };
     NVDevEvoPtr pDevEvo = pDispEvo->pDevEvo;
     NvU32 ret;
@@ -2448,11 +2472,11 @@ static void UpdateDpYUV420InfoFrame(const NVDispEvoRec *pDispEvo,
         sdp->db.pixEncoding = SDP_VSC_PIX_ENC_YCBCR420;
         sdp->db.colorimetryFormat = SDP_VSC_COLOR_FMT_YCBCR_COLORIMETRY_ITU_R_BT709;
 
-        switch (pTimings->pixelDepth) {
-            case NVKMS_PIXEL_DEPTH_30_444:
+        switch (pAttributesSet->colorBpc) {
+            case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10:
                 sdp->db.bitDepth = SDP_VSC_BIT_DEPTH_YCBCR_10BPC;
                 break;
-            case NVKMS_PIXEL_DEPTH_24_444:
+            case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8:
                 sdp->db.bitDepth = SDP_VSC_BIT_DEPTH_YCBCR_8BPC;
                 break;
             default:
@@ -2547,10 +2571,13 @@ void nvUpdateInfoFrames(NVDpyEvoRec *pDpyEvo)
 NvBool nvDpyRequiresDualLinkEvo(const NVDpyEvoRec *pDpyEvo,
                                 const NVHwModeTimingsEvo *pTimings)
 {
+    const NvU32 pixelClock = (pTimings->yuv420Mode == NV_YUV420_MODE_HW) ?
+        (pTimings->pixelClock / 2) : pTimings->pixelClock;
+
     // Dual link HDMI is not possible.
     nvAssert(!(nvDpyIsHdmiEvo(pDpyEvo) &&
-               (pTimings->pixelClock > pDpyEvo->maxSingleLinkPixelClockKHz)));
-    return (pTimings->pixelClock > pDpyEvo->maxSingleLinkPixelClockKHz);
+               (pixelClock > pDpyEvo->maxSingleLinkPixelClockKHz)));
+    return (pixelClock > pDpyEvo->maxSingleLinkPixelClockKHz);
 }
 
 /*!
@@ -2702,13 +2729,48 @@ NvBool nvDpyGetDynamicData(
     struct NvKmsQueryDpyDynamicDataParams *pParams)
 {
     NVDispEvoPtr pDispEvo = pDpyEvo->pDispEvo;
-    const struct NvKmsQueryDpyDynamicDataRequest *pRequest = &pParams->request;
+    struct NvKmsQueryDpyDynamicDataRequest *pRequest = &pParams->request;
     struct NvKmsQueryDpyDynamicDataReply *pReply = &pParams->reply;
     NVConnectorEvoPtr pConnectorEvo = pDpyEvo->pConnectorEvo;
     NVDpyIdList connectedList;
     NVDpyIdList oneDpyIdList = nvAddDpyIdToEmptyDpyIdList(pDpyEvo->id);
+    NVDpyOverridePtr pDpyOverride = nvDpyEvoGetOverride(pDpyEvo);
 
     nvkms_memset(pReply, 0, sizeof(*pReply));
+
+    if (pDpyOverride != NULL) {
+        if (pDpyOverride->connected && !pRequest->forceDisconnected) {
+            /*
+             * If display is overridden as connected, treat the request as if it
+             * had both forceConnected and overrideEdid set, unless the request
+             * had forceDisconnected set.
+             *
+             * If the request already had an EDID override, honor that EDID instead
+             * of the display override EDID.
+             */
+            NvBool old = pRequest->forceConnected;
+            pRequest->forceConnected = TRUE;
+
+            if (!pRequest->overrideEdid) {
+                size_t len = nvReadDpyOverrideEdid(pDpyOverride,
+                                                   pRequest->edid.buffer,
+                                                   ARRAY_LEN(pRequest->edid.buffer));
+
+                if (len != 0) {
+                    pRequest->overrideEdid = TRUE;
+                    pRequest->edid.bufferSize = len;
+                } else {
+                    pRequest->forceConnected = old;
+                }
+            }
+        } else if (!pDpyOverride->connected && !pRequest->forceConnected) {
+            /*
+             * If display is overriden as disconnected, treat the request as if it
+             * had forceDisconnected set, unless the request had forceConnected set.
+             */
+            pRequest->forceDisconnected = TRUE;
+        }
+    }
 
     /*
      * Check for the connection state of the dpy.
@@ -2769,7 +2831,7 @@ NvBool nvDpyGetDynamicData(
             return FALSE;
         }
     } else {
-        DpyDisconnectEvo(pDpyEvo);
+        DpyDisconnectEvo(pDpyEvo, TRUE /* bSendHdmiCapsToRm */);
     }
 
     if (nvConnectorUsesDPLib(pConnectorEvo)) {
@@ -2844,6 +2906,7 @@ void nvDpyUpdateCurrentAttributes(NVDpyEvoRec *pDpyEvo)
         newAttributes.dithering.mode    = NV_KMS_DPY_ATTRIBUTE_CURRENT_DITHERING_MODE_NONE;
         newAttributes.digitalSignal =
             nvGetDefaultDpyAttributeDigitalSignalValue(pDpyEvo->pConnectorEvo);
+        newAttributes.numberOfHardwareHeadsUsed = 0;
     }
 
     if (newAttributes.colorSpace !=
@@ -2902,18 +2965,194 @@ void nvDpyUpdateCurrentAttributes(NVDpyEvoRec *pDpyEvo)
             newAttributes.digitalSignal);
     }
 
+    if (newAttributes.numberOfHardwareHeadsUsed !=
+        pDpyEvo->currentAttributes.numberOfHardwareHeadsUsed) {
+        nvSendDpyAttributeChangedEventEvo(
+            pDpyEvo,
+            NV_KMS_DPY_ATTRIBUTE_NUMBER_OF_HARDWARE_HEADS_USED,
+            newAttributes.numberOfHardwareHeadsUsed);
+    }
+
     pDpyEvo->currentAttributes = newAttributes;
 }
 
 // Returns TRUE if this display is capable of Adaptive-Sync
 NvBool nvDpyIsAdaptiveSync(const NVDpyEvoRec *pDpyEvo)
 {
-    return FALSE;
+    return ((pDpyEvo->vrr.type ==
+             NVKMS_DPY_VRR_TYPE_ADAPTIVE_SYNC_DEFAULTLISTED) ||
+            (pDpyEvo->vrr.type ==
+             NVKMS_DPY_VRR_TYPE_ADAPTIVE_SYNC_NON_DEFAULTLISTED));
 }
 
 // Returns TRUE if this display is in the Adaptive-Sync defaultlist
-NvBool nvDpyIsAdaptiveSyncDefaultlisted(const NVParsedEdidEvoRec *pParsedEdid)
+NvBool nvDpyIsAdaptiveSyncDefaultlisted(const NVDpyEvoRec *pDpyEvo)
 {
-    return FALSE;
+    NV0073_CTRL_SPECIFIC_DEFAULT_ADAPTIVESYNC_DISPLAY_PARAMS params = { };
+    NVDispEvoPtr pDispEvo = pDpyEvo->pDispEvo;
+    NVDevEvoPtr pDevEvo = pDispEvo->pDevEvo;
+    NvU32 ret;
+
+    if (!pDpyEvo->parsedEdid.valid) {
+        return FALSE;
+    }
+
+    params.manufacturerID = pDpyEvo->parsedEdid.info.manuf_id;
+    params.productID = pDpyEvo->parsedEdid.info.product_id;
+
+    ret = nvRmApiControl(nvEvoGlobal.clientHandle,
+                         pDevEvo->displayCommonHandle,
+                         NV0073_CTRL_CMD_SPECIFIC_DEFAULT_ADAPTIVESYNC_DISPLAY,
+                         &params, sizeof(params));
+
+    if (ret != NVOS_STATUS_SUCCESS) {
+        nvEvoLogDisp(pDispEvo, EVO_LOG_ERROR,
+                     "Failed to query default adaptivesync listing for %s", pDpyEvo->name);
+        return FALSE;
+    }
+
+    return params.bDefaultAdaptivesync;
 }
 
+static enum NvKmsDpyAttributeColorBpcValue GetYuv422MaxBpc(
+    const NVDpyEvoRec *pDpyEvo)
+{
+    const NVT_EDID_CEA861_INFO *p861Info =
+        &pDpyEvo->parsedEdid.info.ext861;
+
+    nvAssert(nvDpyIsHdmiEvo(pDpyEvo) ||
+             nvConnectorUsesDPLib(pDpyEvo->pConnectorEvo));
+
+    if (!pDpyEvo->parsedEdid.valid ||
+        !pDpyEvo->parsedEdid.info.input.isDigital) {
+        return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_UNKNOWN;
+    }
+
+    if (pDpyEvo->parsedEdid.info.version >= NVT_EDID_VER_1_4) {
+        if (pDpyEvo->parsedEdid.info.u.feature_ver_1_4_digital.support_ycrcb_422) {
+            if (pDpyEvo->parsedEdid.info.input.u.digital.bpc >= 10) {
+                return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+            } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc >= 8) {
+                return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+            }
+        }
+    } else {
+        nvAssert(!nvConnectorUsesDPLib(pDpyEvo->pConnectorEvo));
+
+        if (p861Info->revision >= NVT_CEA861_REV_A &&
+                !!(p861Info->basic_caps & NVT_CEA861_CAP_YCbCr_422)) {
+            return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+        }
+    }
+
+    return NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_UNKNOWN;
+}
+
+NVColorFormatInfoRec nvGetColorFormatInfo(const NVDpyEvoRec *pDpyEvo)
+{
+    const NVConnectorEvoRec *pConnectorEvo =
+            pDpyEvo->pConnectorEvo;
+    NVColorFormatInfoRec colorFormatsInfo = { };
+
+    if (pConnectorEvo->legacyType ==
+            NV0073_CTRL_SPECIFIC_DISPLAY_TYPE_CRT) {
+
+        colorFormatsInfo.rgb444.maxBpc =
+            NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+    } else if (pConnectorEvo->legacyType ==
+                   NV0073_CTRL_SPECIFIC_DISPLAY_TYPE_DFP) {
+
+        if (pConnectorEvo->signalFormat ==
+                NVKMS_CONNECTOR_SIGNAL_FORMAT_DSI) {
+
+            if (pDpyEvo->parsedEdid.valid) {
+                switch (pDpyEvo->parsedEdid.info.input.u.digital.bpc) {
+                    case 10:
+                        colorFormatsInfo.rgb444.maxBpc =
+                            NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+                        break;
+                    case 6:
+                        colorFormatsInfo.rgb444.maxBpc =
+                            NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6;
+                        break;
+                    default:
+                        nvAssert(!"Unsupported bpc for DSI");
+                        // fall through
+                    case 8:
+                        colorFormatsInfo.rgb444.maxBpc =
+                            NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+                        break;
+                }
+            } else {
+                colorFormatsInfo.rgb444.maxBpc =
+                    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+            }
+        } else if (nvConnectorUsesDPLib(pDpyEvo->pConnectorEvo)) {
+
+            if (pDpyEvo->parsedEdid.valid &&
+                pDpyEvo->parsedEdid.info.input.isDigital &&
+                pDpyEvo->parsedEdid.info.version >= NVT_EDID_VER_1_4) {
+                if (pDpyEvo->parsedEdid.info.input.u.digital.bpc >= 10) {
+                    colorFormatsInfo.rgb444.maxBpc =
+                        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {
+                    colorFormatsInfo.rgb444.maxBpc =
+                        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6;
+                } else {
+                    colorFormatsInfo.rgb444.maxBpc =
+                        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+                    colorFormatsInfo.yuv444.maxBpc =
+                        NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+                }
+
+                colorFormatsInfo.yuv422.maxBpc = GetYuv422MaxBpc(pDpyEvo);
+            } else {
+                colorFormatsInfo.rgb444.maxBpc =
+                    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+            }
+        } else {
+
+            colorFormatsInfo.rgb444.maxBpc =
+                NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+            if (nvDpyIsHdmiEvo(pDpyEvo)) {
+                colorFormatsInfo.yuv444.maxBpc =
+                    NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_8;
+                colorFormatsInfo.yuv422.maxBpc =
+                    GetYuv422MaxBpc(pDpyEvo);
+            }
+        }
+    }
+
+    return colorFormatsInfo;
+}
+
+NvU32 nvDpyGetPossibleApiHeadsMask(const NVDpyEvoRec *pDpyEvo)
+{
+    NvU32 possibleApiHeadMask = 0x0;
+    NvU32 possibleNumLayers = NVKMS_MAX_LAYERS_PER_HEAD;
+    const NVDevEvoRec *pDevEvo = pDpyEvo->pDispEvo->pDevEvo;
+
+    /*
+     * DSI supports only the hardware head-0 assigment, and the
+     * dp-serializer dpys are bound to the specific hardware head;
+     * the modeset client can be allowed to choose only those
+     * api-heads to drive these dpys which has the number of layers
+     * less than or equal to the number of layers supported by the
+     * bound hardware heads.
+     */
+    if (pDpyEvo->pConnectorEvo->signalFormat ==
+            NVKMS_CONNECTOR_SIGNAL_FORMAT_DSI) {
+        possibleNumLayers = pDevEvo->head[0].numLayers;
+    } else if (nvConnectorIsDPSerializer(pDpyEvo->pConnectorEvo)) {
+        const NvU32 boundHead = pDpyEvo->dp.serializerStreamIndex;
+        possibleNumLayers = pDevEvo->head[boundHead].numLayers;
+    }
+
+    for (NvU32 apiHead = 0; apiHead < pDevEvo->numApiHeads; apiHead++) {
+        if (pDevEvo->apiHead[apiHead].numLayers <= possibleNumLayers) {
+            possibleApiHeadMask |= NVBIT(apiHead);
+        }
+    }
+
+    return possibleApiHeadMask;
+}

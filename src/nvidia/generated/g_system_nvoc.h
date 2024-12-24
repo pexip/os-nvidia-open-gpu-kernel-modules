@@ -315,14 +315,14 @@ typedef struct SYS_STATIC_CONFIG
     /*! Indicates the type of OS flavor */
     NvU32 osType;
 
-    /*! AMD SEV (AMD's Secure Encrypted Virtualization) Status */
-    NvU32 osSevStatus;
+    /*! Indicates confidentail compute OS support is enabled or not */
+    NvBool bOsCCEnabled;
 
-    /*! Indicates AMD SEV is enabled or not */
-    NvBool bOsSevEnabled;
+    /*! Indicates Intel TDX confidentail compute OS support is enabled or not */
+    NvBool bOsCCTdxEnabled;
 } SYS_STATIC_CONFIG;
 
-typedef enum 
+typedef enum
 {
     CPU_VENDOR_UNKNOWN = 0,
     CPU_VENDOR_INTEL,
@@ -342,7 +342,7 @@ typedef struct
     NvU32 l1DataCacheSize;         // L1 data (or unified) cache size (KB)
     NvU32 l2DataCacheSize;         // L2 data (or unified) cache size (KB)
     NvU32 dataCacheLineSize;       // Bytes per line in the L1 data cache
-    NvU32 hostPageSize;            // Native host os page size (4k/64k/etc)
+    NvU64 hostPageSize;            // Native host os page size (4k/64k/etc)
     NvU32 numPhysicalCpus;         // Number of physical cpus
     NvU32 numLogicalCpus;          // Total number of logical cpus
     NvU32 maxLogicalCpus;          // Max Number of Cores on the System
@@ -412,7 +412,6 @@ struct OBJSYS {
     NvU32 gpuLockModuleMask;
     NvBool PDB_PROP_SYS_ROUTE_TO_PHYSICAL_LOCK_BYPASS;
     NvU32 pwrTransitionTimeoutOverride;
-    NvBool bMulticastFlaEnabled;
     SYS_STATIC_CONFIG staticConfig;
     NvU32 debugFlags;
     NvU32 backtraceStackDepth;
@@ -426,6 +425,8 @@ struct OBJSYS {
     NvBool PDB_PROP_SYS_IS_QSYNC_FW_REVISION_CHECK_DISABLED;
     NvU64 rmInstanceId;
     NvU32 currentCid;
+    NvBool bUseDeferredClientListFree;
+    NvU32 clientListDeferredFreeLimit;
     OS_RM_CAPS *pOsRmCaps;
     struct OBJGPUMGR *pGpuMgr;
     struct OBJGSYNCMGR *pGsyncMgr;

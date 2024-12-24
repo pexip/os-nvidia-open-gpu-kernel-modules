@@ -27,6 +27,7 @@
 #include "rmapi/rs_utils.h"
 #include "gpu/hwpm/profiler_v2.h"
 #include "ctrl/ctrlb0cc/ctrlb0ccinternal.h"
+#include "ctrl/ctrlb0cc/ctrlb0ccprofiler.h"
 #include "mem_mgr/mem.h"
 #include "vgpu/rpc.h"
 
@@ -88,7 +89,7 @@ profilerBaseCtrlCmdFreePmaStream_IMPL
             pProfiler->pBoundPmaBuf = NULL;
             pCntMem->pMemDesc->bRmExclusiveUse = NV_FALSE;
             pBufMem->pMemDesc->bRmExclusiveUse = NV_FALSE;
-            
+
         }
         if (pCountRef != NULL)
         {
@@ -158,7 +159,7 @@ profilerBaseCtrlCmdBindPmResources_IMPL
             pBufMem->pMemDesc->bRmExclusiveUse = NV_FALSE;
             return NV_ERR_INVALID_ARGUMENT;
         }
-        
+
         pProfiler->pBoundCntBuf = pCntRef;
         pProfiler->pBoundPmaBuf = pBufRef;
     }
@@ -262,30 +263,41 @@ profilerBaseCtrlCmdAllocPmaStream_IMPL
     NvHandle  hObject                         = RES_GET_HANDLE(pProfiler);
     NvBool    bMemPmaBufferRegistered         = NV_FALSE;
     NvBool    bMemPmaBytesAvailableRegistered = NV_FALSE;
+    NVB0CC_CTRL_INTERNAL_ALLOC_PMA_STREAM_PARAMS internalParams;
     RsResourceRef     *pMemoryRef = NULL;
     //
     // REGISTER  MEMDESCs TO GSP
     // These are no-op with BareMetal/No GSP
     //
-    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR, 
+    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
                         memdescRegisterToGSP(pGpu, hClient, hParent, pParams->hMemPmaBuffer),
                         fail);
     bMemPmaBufferRegistered = NV_TRUE;
 
-    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR, 
+    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
                         memdescRegisterToGSP(pGpu, hClient, hParent, pParams->hMemPmaBytesAvailable),
                         fail);
     bMemPmaBytesAvailableRegistered = NV_TRUE;
 
-
+    portMemSet(&internalParams, 0, sizeof(NVB0CC_CTRL_INTERNAL_ALLOC_PMA_STREAM_PARAMS));
+    internalParams.hMemPmaBuffer = pParams->hMemPmaBuffer;
+    internalParams.pmaBufferOffset = pParams->pmaBufferOffset;
+    internalParams.pmaBufferSize = pParams->pmaBufferSize;
+    internalParams.hMemPmaBytesAvailable = pParams->hMemPmaBytesAvailable;
+    internalParams.pmaBytesAvailableOffset = pParams->pmaBytesAvailableOffset;
+    internalParams.ctxsw = pParams->ctxsw;
+    internalParams.pmaChannelIdx = pParams->pmaChannelIdx;
+    internalParams.pmaBufferVA = pParams->pmaBufferVA;
+    internalParams.bInputPmaChIdx = NV_FALSE;
 
      NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
         pRmApi->Control(pRmApi,
                         hClient,
                         hObject,
                         NVB0CC_CTRL_CMD_INTERNAL_ALLOC_PMA_STREAM,
-                        pParams, sizeof(*pParams)), fail);
+                        &internalParams, sizeof(internalParams)), fail);
 
+    pParams->pmaChannelIdx = internalParams.pmaChannelIdx;
     if (serverutilGetResourceRef(hClient, pParams->hMemPmaBytesAvailable, &pMemoryRef) == NV_OK &&
         serverutilGetResourceRef(hClient, pParams->hMemPmaBuffer, &pMemoryRef) == NV_OK)
     {
@@ -302,12 +314,13 @@ profilerBaseCtrlCmdAllocPmaStream_IMPL
             pProfiler->ppBytesAvailable = (RsResourceRef**)portMemAllocNonPaged(maxPmaParams.maxPmaChannels * sizeof(RsResourceRef*));
             pProfiler->ppStreamBuffers = (RsResourceRef**)portMemAllocNonPaged(maxPmaParams.maxPmaChannels * sizeof(RsResourceRef*));
         }
+
         NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
             serverutilGetResourceRef(hClient, pParams->hMemPmaBytesAvailable, &pMemoryRef), fail);
         pProfiler->ppBytesAvailable[pParams->pmaChannelIdx] = pMemoryRef;
         refAddDependant(pMemoryRef, RES_GET_REF(pProfiler));
 
-        NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR, 
+        NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
             serverutilGetResourceRef(hClient, pParams->hMemPmaBuffer, &pMemoryRef), fail);
         pProfiler->ppStreamBuffers[pParams->pmaChannelIdx] = pMemoryRef;
         refAddDependant(pMemoryRef, RES_GET_REF(pProfiler));
@@ -316,7 +329,10 @@ profilerBaseCtrlCmdAllocPmaStream_IMPL
         pProfiler->pmaVchIdx = pParams->pmaChannelIdx;
         pProfiler->bLegacyHwpm = NV_FALSE;
     }
-    
+
+    // Copy output params to external struct.
+    pParams->pmaBufferVA = internalParams.pmaBufferVA;
+
     return status;
 
 fail:
@@ -334,3 +350,4 @@ fail:
 
     return status;
 }
+
