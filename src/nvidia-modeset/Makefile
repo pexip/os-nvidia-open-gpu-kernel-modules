@@ -95,6 +95,7 @@ endif
 ifeq ($(TARGET_ARCH),aarch64)
   CFLAGS += -mgeneral-regs-only
   CFLAGS += -march=armv8-a
+  CFLAGS += -ffixed-x18
   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mno-outline-atomics)
 endif
 
@@ -105,6 +106,7 @@ CFLAGS += -fno-strict-aliasing
 CFLAGS += -ffunction-sections
 CFLAGS += -fdata-sections
 CFLAGS += -ffreestanding
+CFLAGS += -fno-stack-protector
 
 CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -Wformat-overflow=2)
 CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -Wformat-truncation=1)

@@ -2509,26 +2509,22 @@ nvswitch_os_vsnprintf
 void
 nvswitch_os_assert_log
 (
-    int cond,
     const char *fmt,
     ...
 )
 {
-    if(cond == 0x0)
+    if (printk_ratelimit())
     {
-        if (printk_ratelimit())
-        {
-            va_list arglist;
-            char fmt_printk[NVSWITCH_LOG_BUFFER_SIZE];
+        va_list arglist;
+        char fmt_printk[NVSWITCH_LOG_BUFFER_SIZE];
 
-            va_start(arglist, fmt);
-            vsnprintf(fmt_printk, sizeof(fmt_printk), fmt, arglist);
-            va_end(arglist);
-            nvswitch_os_print(NVSWITCH_DBG_LEVEL_ERROR, fmt_printk);
-            WARN_ON(1);
-         }
-         dbg_breakpoint();
-    }
+        va_start(arglist, fmt);
+        vsnprintf(fmt_printk, sizeof(fmt_printk), fmt, arglist);
+        va_end(arglist);
+        nvswitch_os_print(NVSWITCH_DBG_LEVEL_ERROR, fmt_printk);
+        WARN_ON(1);
+     }
+     dbg_breakpoint();
 }
 
 /*
@@ -2693,5 +2689,19 @@ nvswitch_os_get_supported_register_events_params
 {
     *many_events   = NV_FALSE;
     *os_descriptor = NV_FALSE;
+    return NVL_SUCCESS;
+}
+
+NvlStatus
+nvswitch_os_get_pid
+(
+    NvU32 *pPid
+)
+{
+    if (pPid != NULL)
+    {
+        *pPid = task_pid_nr(current);
+    }
+    
     return NVL_SUCCESS;
 }

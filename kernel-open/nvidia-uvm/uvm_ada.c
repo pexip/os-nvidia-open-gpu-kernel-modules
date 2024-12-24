@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2021 NVIDIA Corporation
+    Copyright (c) 2021-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -49,10 +49,12 @@ void uvm_hal_ada_arch_init_properties(uvm_parent_gpu_t *parent_gpu)
     // A single top level PDE on Ada covers 128 TB and that's the minimum size
     // that can be used.
     parent_gpu->rm_va_base = 0;
-    parent_gpu->rm_va_size = 128ull * 1024 * 1024 * 1024 * 1024;
+    parent_gpu->rm_va_size = 128 * UVM_SIZE_1TB;
 
-    parent_gpu->uvm_mem_va_base = 384ull * 1024 * 1024 * 1024 * 1024;
+    parent_gpu->uvm_mem_va_base = 384 * UVM_SIZE_1TB;
     parent_gpu->uvm_mem_va_size = UVM_MEM_VA_SIZE;
+
+    parent_gpu->ce_phys_vidmem_write_supported = true;
 
     parent_gpu->peer_copy_mode = g_uvm_global.peer_copy_mode;
 
@@ -92,4 +94,6 @@ void uvm_hal_ada_arch_init_properties(uvm_parent_gpu_t *parent_gpu)
     parent_gpu->map_remap_larger_page_promotion = false;
 
     parent_gpu->plc_supported = true;
+
+    parent_gpu->no_ats_range_required = false;
 }

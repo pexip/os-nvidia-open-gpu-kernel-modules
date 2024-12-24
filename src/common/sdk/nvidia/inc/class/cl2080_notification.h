@@ -200,9 +200,11 @@ extern "C" {
 #define NV2080_NOTIFIERS_POSSIBLE_ERROR                            (164)
 #define NV2080_NOTIFIERS_NVLINK_INFO_LINK_UP                       (165)
 #define NV2080_NOTIFIERS_NVLINK_INFO_LINK_DOWN                     (176)
-#define NV2080_NOTIFIERS_HDMI_FRL_RETRAINING_REQUEST               (177)
-#define NV2080_NOTIFIERS_AUX_POWER_STATE_CHANGE                    (178)
-#define NV2080_NOTIFIERS_MAXCOUNT                                  (179)
+#define NV2080_NOTIFIERS_NVPCF_EVENTS                              (177)
+#define NV2080_NOTIFIERS_HDMI_FRL_RETRAINING_REQUEST               (178)
+#define NV2080_NOTIFIERS_VRR_SET_TIMEOUT                           (179)
+#define NV2080_NOTIFIERS_AUX_POWER_STATE_CHANGE                    (180)
+#define NV2080_NOTIFIERS_MAXCOUNT                                  (181)
 
 // Indexed GR notifier reference
 #define NV2080_NOTIFIERS_GR(x)         ((x == 0) ? (NV2080_NOTIFIERS_GR0) : (NV2080_NOTIFIERS_GR1 + (x - 1)))
@@ -496,6 +498,10 @@ typedef struct {
     NvU32 GpuId;
     NvU32 linkId;
 } Nv2080NvlinkLnkChangeNotification;
+
+typedef struct {
+    NvU32 head;
+} Nv2080VrrSetTimeoutNotification;
 
 #ifdef __cplusplus
 };     /* extern "C" */

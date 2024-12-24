@@ -78,10 +78,10 @@ kmemsysConstructEngine_IMPL
 
 /*
  * Initialize the Kernel Memory System state.
- * 
+ *
  * @param[in]  pGpu pointer to the GPU instance.
  * @param[in]  pKernelMemorySystem pointer to the kernel side KernelMemorySystem instance.
- * 
+ *
  * @return NV_OK upon success.
  */
 NV_STATUS kmemsysStateInitLocked_IMPL
@@ -104,6 +104,58 @@ NV_STATUS kmemsysStateInitLocked_IMPL
         fail);
 
     pKernelMemorySystem->pStaticConfig = pStaticConfig;
+
+    KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
+
+    pKernelMemorySystem->memPartitionNumaInfo = portMemAllocNonPaged(sizeof(MEM_PARTITION_NUMA_INFO) * KMIGMGR_MAX_GPU_SWIZZID);
+    if (pKernelMemorySystem->memPartitionNumaInfo == NULL)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Failed to allocate memory for numa information.\n");
+        status = NV_ERR_NO_MEMORY;
+        NV_ASSERT_OR_GOTO(0, fail);
+    }
+    portMemSet(pKernelMemorySystem->memPartitionNumaInfo, 0, sizeof(MEM_PARTITION_NUMA_INFO) * KMIGMGR_MAX_GPU_SWIZZID);
+
+    if (gpuIsSelfHosted(pGpu) &&
+        (pKernelBif != NULL) && pKernelBif->getProperty(pKernelBif, PDB_PROP_KBIF_IS_C2C_LINK_UP))
+    {
+        //
+        // memsysSetupCoherentCpuLink should be done only for the self hosted
+        // configuration(SHH) where the coherent C2C link connects host CPU(TH500) and GPU
+        // and not in the externally hosted(EHH) case where host CPU(say x86) is connected
+        // to GPU through PCIe and C2C only connects the TH500 (for EGM memory) and GPU.
+        // The gpuIsSelfHosted(pGpu) check here is to distinguish between the SHH
+        // and EHH configuration as C2C link is up in both of these cases.
+        //
+
+        if (IS_GSP_CLIENT(pGpu))
+        {
+            GspStaticConfigInfo *pGSCI = GPU_GET_GSP_STATIC_INFO(pGpu);
+
+            if (pGSCI->bAtsSupported)
+            {
+                NV_PRINTF(LEVEL_INFO, "ATS supported\n");
+
+                pGpu->setProperty(pGpu, PDB_PROP_GPU_ATS_SUPPORTED, NV_TRUE);
+            }
+
+            //
+            // PDB_PROP_GPU_C2C_SYSMEM is already set in physical RM but not in
+            // in Kernel-RM where it is actually consumed. setting PDB_PROP_GPU_C2C_SYSMEM
+            // in Kernel-RM when the platform is self-hosted and the C2C links are up, which
+            // indicate the C2C is connected to CPU and Physical-RM would have set up the HSHUB
+            // to route sysmem through C2C.
+            //
+            pGpu->setProperty(pGpu, PDB_PROP_GPU_C2C_SYSMEM, NV_TRUE);
+        }
+
+        //
+        // kmemesysSetupCoherentCpuLink should not be called from physical RM as
+        // it is intended to be called on kernel side to update
+        // KernelMemorySystem for C2C, NUMA functionality.
+        //
+        NV_ASSERT_OK_OR_GOTO(status, kmemsysSetupCoherentCpuLink(pGpu, pKernelMemorySystem, NV_FALSE), fail);
+    }
 
 fail:
     if (status != NV_OK)
@@ -130,11 +182,63 @@ kmemsysStatePreLoad_IMPL
     kmemsysProgramSysmemFlushBuffer_HAL(pGpu, pKernelMemorySystem);
     kmemsysAssertSysmemFlushBufferValid_HAL(pGpu, pKernelMemorySystem);
 
+    // Self Hosted GPUs should have its memory onlined by now.
+    if (gpuIsSelfHosted(pGpu) &&
+        pGpu->getProperty(pGpu, PDB_PROP_GPU_COHERENT_CPU_MAPPING) &&
+        osNumaOnliningEnabled(pGpu->pOsGpuInfo) &&
+        !pKernelMemorySystem->bNumaNodesAdded)
+    {
+        //
+        // TODO: Bug 1945658: Deferred error checking from stateInit so that stateDestroy
+        // gets called. Refer kmemsysNumaAddMemory_HAL call site for further
+        // details.
+        //
+        return NV_ERR_INVALID_STATE;
+    }
+
+    return NV_OK;
+}
+
+NV_STATUS
+kmemsysStatePostLoad_IMPL
+(
+    OBJGPU *pGpu,
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU32 flags
+)
+{
+    if (IS_SILICON(pGpu) &&
+        pGpu->getProperty(pGpu, PDB_PROP_GPU_ATS_SUPPORTED))
+    {
+        NV_STATUS status = kmemsysSetupAllAtsPeers_HAL(pGpu, pKernelMemorySystem);
+        if (status != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "ATS peer setup failed.\n");
+            return status;
+        }
+    }
+
+    return NV_OK;
+}
+
+NV_STATUS
+kmemsysStatePreUnload_IMPL
+(
+    OBJGPU *pGpu,
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU32 flags
+)
+{
+    if (IS_SILICON(pGpu) &&
+        pGpu->getProperty(pGpu, PDB_PROP_GPU_ATS_SUPPORTED))
+    {
+        kmemsysRemoveAllAtsPeers_HAL(pGpu, pKernelMemorySystem);
+    }
     return NV_OK;
 }
 
 /*
- * Release the state accumulated in StateInit.  
+ * Release the state accumulated in StateInit.
  * @param[in]  pGpu pointer to the GPU instance.
  * @param[in]  pKernelMemorySystem pointer to the kernel side KernelMemorySystem instance.
  */
@@ -144,6 +248,15 @@ void kmemsysStateDestroy_IMPL
     KernelMemorySystem *pKernelMemorySystem
 )
 {
+
+    // Teardown of Coherent Cpu Link is not required on Physical RM
+    KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
+
+    if (pKernelBif && pKernelBif->getProperty(pKernelBif, PDB_PROP_KBIF_IS_C2C_LINK_UP) &&
+        pGpu->getProperty(pGpu, PDB_PROP_GPU_COHERENT_CPU_MAPPING))
+    {
+        kmemsysTeardownCoherentCpuLink(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu), NV_FALSE);
+    }
 
     portMemFree((void *)pKernelMemorySystem->pStaticConfig);
 }
@@ -171,6 +284,27 @@ kmemsysDestruct_IMPL
     KernelMemorySystem *pKernelMemorySystem
 )
 {
+    OBJGPU *pGpu = ENG_GET_GPU(pKernelMemorySystem);
+
+    //
+    // kmemsysNumaRemoveAllMemory_HAL() is called here in Destruct instead of
+    // Destroy to guarantee that NUMA memory is removed. This goes against
+    // Init/Destroy symmetry, but it is necessary because kmemsysStateDestroy
+    // may not be called for all cases when kmemsysStateInit was called
+    // (e.g., when kmemsys or another engine afterwards fails Init).
+    //
+    // If NUMA memory is not removed, then all subsequent attempts to add NUMA
+    // memory will fail, which will cause failures in future RM init attempts.
+    //
+    if (pKernelMemorySystem->memPartitionNumaInfo != NULL)
+    {
+        if (pKernelMemorySystem->bNumaNodesAdded == NV_TRUE)
+        {
+            kmemsysNumaRemoveAllMemory_HAL(pGpu, pKernelMemorySystem);
+        }
+        portMemFree(pKernelMemorySystem->memPartitionNumaInfo);
+    }
+
     pKernelMemorySystem->sysmemFlushBuffer = 0;
     memdescFree(pKernelMemorySystem->pSysmemFlushBufferMemDesc);
     memdescDestroy(pKernelMemorySystem->pSysmemFlushBufferMemDesc);
@@ -235,9 +369,9 @@ kmemsysAllocComprResources_KERNEL
  * @param[in]  pGpu pointer to the GPU instance.
  * @param[in]  pKernelMemorySystem pointer to the kernel side KernelMemorySystem instance.
  * @param[out] pConfig pointer to the static config init on Physical driver.
- * 
+ *
  * @return NV_OK upon success.
- *         NV_ERR* otherwise.  
+ *         NV_ERR* otherwise.
  */
 NV_STATUS
 kmemsysInitStaticConfig_KERNEL
@@ -397,6 +531,7 @@ kmemsysGetMIGGPUInstanceMemInfo_IMPL
     NvU64 vmmuSegmentSize;
     NvU64 startAddr;
     NvU64 endAddr;
+    NvU64 partitionSize;
 
     NV_ASSERT_OR_RETURN(pAddrRange != NULL, NV_ERR_INVALID_ARGUMENT);
     *pAddrRange = NV_RANGE_EMPTY;
@@ -422,10 +557,73 @@ kmemsysGetMIGGPUInstanceMemInfo_IMPL
     NV_ASSERT_OR_RETURN((vmmuSegmentSize != 0), NV_ERR_INVALID_STATE);
 
     startAddr = pKernelMemorySystem->gpuInstanceMemConfig[swizzId].startingVmmuSegment * vmmuSegmentSize;
-    endAddr = startAddr + (pKernelMemorySystem->gpuInstanceMemConfig[swizzId].memSizeInVmmuSegment * vmmuSegmentSize) - 1;
+    partitionSize = pKernelMemorySystem->gpuInstanceMemConfig[swizzId].memSizeInVmmuSegment * vmmuSegmentSize;
+
+    if (osNumaOnliningEnabled(pGpu->pOsGpuInfo))
+    {
+        NvU64 memblockSize;
+        NvU64 alignedStartAddr;
+
+        NV_ASSERT_OK_OR_RETURN(osNumaMemblockSize(&memblockSize));
+
+        //
+        // Align the partition start address and size to memblock size
+        // Some FB memory is wasted here if it is not already aligned.
+        //
+        alignedStartAddr = NV_ALIGN_UP64(startAddr, memblockSize);
+
+        if(pKernelMemorySystem->bNumaMigPartitionSizeEnumerated)
+        {
+            partitionSize = pKernelMemorySystem->numaMigPartitionSize[swizzId];
+        }
+        else
+        {
+            partitionSize -= (alignedStartAddr - startAddr);
+        }
+
+        partitionSize = NV_ALIGN_DOWN64(partitionSize, memblockSize);
+        startAddr = alignedStartAddr;
+    }
+
+    endAddr = startAddr + partitionSize - 1;
+
     *pAddrRange = rangeMake(startAddr, endAddr);
 
     return NV_OK;
+}
+
+/**
+ * @brief Modifies numaMigPartitionSize array such that memory size of
+          all the mig partitions with swizzId between startSwizzId and
+          endSwizzId is assigned the minimum value among all partition's
+          memory size.
+ *
+ * @param[IN]      pKernelMemorySystem
+ * @param[IN]      startSwizzId
+ * @param[IN]      endSwizzId
+ *
+ */
+static void
+_kmemsysSetNumaMigPartitionSizeSubArrayToMinimumValue
+(
+    KernelMemorySystem *pKernelMemorySystem,
+    NvU64 startSwizzId,
+    NvU64 endSwizzId
+)
+{
+    NvU64 minPartitionSize = pKernelMemorySystem->numaMigPartitionSize[startSwizzId];
+    NvU64 index;
+
+    for (index = startSwizzId; index <= endSwizzId; index++)
+    {
+        if(pKernelMemorySystem->numaMigPartitionSize[index] < minPartitionSize)
+            minPartitionSize = pKernelMemorySystem->numaMigPartitionSize[index];
+    }
+
+    for (index = startSwizzId; index <= endSwizzId; index++)
+    {
+        pKernelMemorySystem->numaMigPartitionSize[index] = minPartitionSize;
+    }
 }
 
 /*!
@@ -481,6 +679,30 @@ kmemsysPopulateMIGGPUInstanceMemConfig_KERNEL
             kmemsysSwizzIdToVmmuSegmentsRange_HAL(pGpu, pKernelMemorySystem, swizzId, vmmuSegmentSize, totalVmmuSegments));
     }
 
+    if (osNumaOnliningEnabled(pGpu->pOsGpuInfo))
+    {
+        NV_RANGE addrRange = NV_RANGE_EMPTY;
+        NvU32 memSize;
+
+        for(swizzId = 0; swizzId < KMIGMGR_MAX_GPU_SWIZZID; swizzId++)
+        {
+            kmemsysGetMIGGPUInstanceMemInfo(pGpu, pKernelMemorySystem, swizzId, &addrRange);
+            pKernelMemorySystem->numaMigPartitionSize[swizzId] = addrRange.hi - addrRange.lo + 1;
+        }
+
+        //
+        // In GH180 for all the swizzId's for a given memory profile (FULL, HALF, QUARTER 
+        // and EIGHTH partitions) might not be same. Modify numaMigPartitionSize array
+        // for the partition size to be constant for a given profile. BUG 4284299.
+        //
+        for (memSize = NV2080_CTRL_GPU_PARTITION_FLAG_MEMORY_SIZE_FULL; memSize < NV2080_CTRL_GPU_PARTITION_FLAG_MEMORY_SIZE__SIZE; memSize++)
+        {
+            NV_RANGE swizzRange = kmigmgrMemSizeFlagToSwizzIdRange(pGpu, pKernelMIGManager, 
+                                      DRF_NUM(2080_CTRL_GPU, _PARTITION_FLAG, _MEMORY_SIZE, memSize));
+            _kmemsysSetNumaMigPartitionSizeSubArrayToMinimumValue(pKernelMemorySystem, swizzRange.lo, swizzRange.hi);
+        }
+        pKernelMemorySystem->bNumaMigPartitionSizeEnumerated = NV_TRUE;
+    }
     return NV_OK;
 }
 
@@ -579,38 +801,59 @@ kmemsysSetupCoherentCpuLink_IMPL
 {
     KernelBus     *pKernelBus     = GPU_GET_KERNEL_BUS(pGpu);
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
-    NvU64          memblockSize   = 0;
-    NvU64          numaOnlineBase = 0;
     NvU64          numaOnlineSize = 0;
+    NvU64          fbSize         = (pMemoryManager->Ram.fbTotalMemSizeMb << 20);
     NvU32          data32;
     NvBool         bCpuMapping    = NV_TRUE; // Default enable
+    NvS32          numaNodeId     = NV0000_CTRL_NO_NUMA_NODE;
+    NvU64          memblockSize   = 0;
+    NvU64          numaOnlineBase = 0;
+    NvU64          rsvdFastSize   = 0;
+    NvU64          rsvdSlowSize   = 0;
+    NvU64          rsvdISOSize    = 0;
+    NvU64          totalRsvdBytes = 0;
 
     {
         NV_ASSERT_OK_OR_RETURN(kmemsysGetFbNumaInfo_HAL(pGpu, pKernelMemorySystem,
                                                         &pKernelMemorySystem->coherentCpuFbBase,
-                                                        &pGpu->numaNodeId));
+                                                        &numaNodeId));
         if (pKernelMemorySystem->coherentCpuFbBase != 0)
         {
-            RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-            NV2080_CTRL_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE_PARAMS params = {0};
+            if (gpuIsSelfHosted(pGpu))
+            {
+                //
+                // For self-hosted, coherentCpuFbEnd is only till the FB size
+                // end and NOT till the FB AMAP end since self-hosted doesn't
+                // support indirect peer and requires GPU nvlink for peer.
+                //
+                pKernelMemorySystem->coherentCpuFbEnd = pKernelMemorySystem->coherentCpuFbBase + fbSize;
+            }
+            else
+            {
+                RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+                NV2080_CTRL_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE_PARAMS params = {0};
 
-            NV_ASSERT_OK_OR_RETURN(pRmApi->Control(pRmApi,
-                    pGpu->hInternalClient,
-                    pGpu->hInternalSubdevice,
-                    NV2080_CTRL_CMD_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE,
-                    &params,
-                    sizeof(NV2080_CTRL_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE_PARAMS)));
-            pKernelMemorySystem->coherentCpuFbEnd = pKernelMemorySystem->coherentCpuFbBase +
-                                                    params.coherentFbApertureSize;
+                NV_ASSERT_OK_OR_RETURN(pRmApi->Control(pRmApi,
+                                                       pGpu->hInternalClient,
+                                                       pGpu->hInternalSubdevice,
+                                                       NV2080_CTRL_CMD_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE,
+                                                       &params,
+                                                       sizeof(NV2080_CTRL_INTERNAL_GET_COHERENT_FB_APERTURE_SIZE_PARAMS)));
+                //
+                // Indirect peer(uses P9 to reach other GV100) in P9+GV100 requires coherentCpuFbEnd to
+                // also include the entire FB AMAP range even when FB size is less than the FB AMAP size.
+                //
+                pKernelMemorySystem->coherentCpuFbEnd = pKernelMemorySystem->coherentCpuFbBase +
+                                                        params.coherentFbApertureSize;
+            }
         }
     }
 
     if ((osReadRegistryDword(pGpu,
                              NV_REG_STR_OVERRIDE_GPU_NUMA_NODE_ID, &data32)) == NV_OK)
     {
-        pGpu->numaNodeId = (NvS32)data32;
-        NV_PRINTF(LEVEL_ERROR, "Override GPU NUMA node ID %d!\n",
-                  pGpu->numaNodeId);
+        numaNodeId = (NvS32)data32;
+        NV_PRINTF(LEVEL_ERROR, "Override GPU NUMA node ID %d!\n", numaNodeId);
     }
 
     // Parse regkey here
@@ -629,40 +872,59 @@ kmemsysSetupCoherentCpuLink_IMPL
         return NV_OK;
     }
 
-    NV_ASSERT_OK_OR_RETURN(kbusCreateCoherentCpuMapping_HAL(pGpu, pKernelBus, bFlush));
+    NV_ASSERT_OK_OR_RETURN(osNumaMemblockSize(&memblockSize));
+
+    memmgrCalcReservedFbSpaceHal_HAL(pGpu, pMemoryManager, &rsvdFastSize, &rsvdSlowSize, &rsvdISOSize);
+
+    //
+    // Calculate the size of the memory which can be safely onlined to the
+    // kernel after accounting for different reserved memory requirements.
+    //
+    // Align rsvd memory to 64K granularity.
+    // TODO : rsvdMemorySize is not finalized at this point of time in 
+    // GH180, currently rsvdMemorySize is not increasing after this
+    // point. This needs to be fixed.
+    //
+    totalRsvdBytes += NV_ALIGN_UP(pMemoryManager->rsvdMemorySize, 0x10000);
+    totalRsvdBytes += (rsvdFastSize + rsvdSlowSize + rsvdISOSize);
+    totalRsvdBytes += pMemoryManager->Ram.reservedMemSize;
+
+    //
+    // TODO: make sure the onlineable memory is aligned to memblockSize
+    // Currently, if we have leftover memory, it'll just be wasted because no
+    // one can access it. If FB size itself is memblock size unaligned(because
+    // of CBC and row remapper deductions), then the memory wastage is unavoidable.
+    //
+    numaOnlineSize = NV_ALIGN_DOWN64(fbSize - totalRsvdBytes, memblockSize);
+
+    pKernelMemorySystem->numaOnlineBase   = numaOnlineBase;
+    pKernelMemorySystem->numaOnlineSize   = numaOnlineSize;
+
+    NV_PRINTF(LEVEL_INFO, "fbSize: 0x%llx NUMA reserved memory size: 0x%llx online memory size: 0x%llx\n",
+                  fbSize, totalRsvdBytes, numaOnlineSize);
+    //
+    // TODO: Bug 1945658: Soldier through on GPU memory add
+    // failure(which is often possible because of missing auto online
+    // setting) and instead check for failure on stateLoad.
+    // Any failure in StateInit results in gpuStateDestroy not getting called.
+    // kgspUnloadRm_IMPL from gpuStateDestroy also doesn't get called leaving
+    // GSP in unclean state and requiring GPU reset to recover from that.
+    //
+    // kmemsysNumaAddMemory_HAL by itself cannot be called from stateLoad
+    // because the memory mapping that follows this call site comes from linear
+    // kernel virtual address when memory is added to the kernel vs the
+    // VMALLOC_START region when memory is not added.
+    //
+    NV_ASSERT_OK(kmemsysNumaAddMemory_HAL(pGpu, pKernelMemorySystem, 0, 0,
+                                          numaOnlineSize, &numaNodeId));
+    pGpu->numaNodeId = numaNodeId;
+
+    NV_ASSERT_OK_OR_RETURN(kbusCreateCoherentCpuMapping_HAL(pGpu, pKernelBus, numaOnlineSize, bFlush));
 
     // Switch the toggle for coherent link mapping only if migration is successful
     pGpu->setProperty(pGpu, PDB_PROP_GPU_COHERENT_CPU_MAPPING, NV_TRUE);
 
-    //
-    // TODO clean up with bug 2020982
-    // RM: Encapsulate NUMA-specific kernel code and logic in a new object
-    //
-    if (osNumaMemblockSize(&memblockSize) == NV_OK)
-    {
-        NvU64 rsvdFastSize   = 0;
-        NvU64 rsvdSlowSize   = 0;
-        NvU64 rsvdISOSize    = 0;
-        NvU64 totalResvBytes = 0;
-
-        memmgrCalcReservedFbSpaceHal_HAL(pGpu, pMemoryManager, &rsvdFastSize, &rsvdSlowSize, &rsvdISOSize); 
-        totalResvBytes = (rsvdFastSize + rsvdSlowSize + rsvdISOSize);
-        totalResvBytes += memmgrGetRsvdMemorySize(pMemoryManager);
-
-        //
-        // Online all of FB memory less reserved memory, aligned to memblock
-        //
-        // TODO: make sure the onlineable memory is aligned to memblockSize
-        // Currently, if we have leftover memory, it'll just be wasted because no
-        // one can access it
-        //
-        numaOnlineSize = NV_ALIGN_DOWN(pMemoryManager->Ram.fbUsableMemSize - totalResvBytes, memblockSize);
-        NV_PRINTF(LEVEL_INFO, "NUMA reserved memory size: 0x%llx online memory size: 0x%llx\n",
-                  totalResvBytes, numaOnlineSize);
-
-        pKernelMemorySystem->numaOnlineBase   = numaOnlineBase;
-        pKernelMemorySystem->numaOnlineSize   = numaOnlineSize;
-    }
+    NV_ASSERT_OK_OR_RETURN(kbusVerifyCoherentLink_HAL(pGpu, pKernelBus));
 
     return NV_OK;
 }
@@ -728,3 +990,4 @@ kmemsysGetUsableFbSize_KERNEL
 {
     return kmemsysReadUsableFbSize_HAL(pGpu, pKernelMemorySystem, pFbSize);
 }
+

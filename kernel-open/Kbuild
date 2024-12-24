@@ -70,9 +70,13 @@ $(foreach _module, $(NV_KERNEL_MODULES), \
 
 EXTRA_CFLAGS += -I$(src)/common/inc
 EXTRA_CFLAGS += -I$(src)
-EXTRA_CFLAGS += -Wall -MD $(DEFINES) $(INCLUDES) -Wno-cast-qual -Wno-error -Wno-format-extra-args
+EXTRA_CFLAGS += -Wall $(DEFINES) $(INCLUDES) -Wno-cast-qual -Wno-error -Wno-format-extra-args
 EXTRA_CFLAGS += -D__KERNEL__ -DMODULE -DNVRM
-EXTRA_CFLAGS += -DNV_VERSION_STRING=\"525.147.05\"
+EXTRA_CFLAGS += -DNV_VERSION_STRING=\"535.183.01\"
+
+ifneq ($(SYSSRCHOST1X),)
+ EXTRA_CFLAGS += -I$(SYSSRCHOST1X)
+endif
 
 EXTRA_CFLAGS += -Wno-unused-function
 
@@ -87,7 +91,8 @@ ifeq ($(ARCH),arm64)
 endif
 
 ifeq ($(NV_BUILD_TYPE),debug)
- EXTRA_CFLAGS += -g -gsplit-dwarf
+ EXTRA_CFLAGS += -g
+ EXTRA_CFLAGS += $(call cc-option,-gsplit-dwarf,)
 endif
 
 EXTRA_CFLAGS += -ffreestanding
@@ -118,6 +123,9 @@ ifneq ($(wildcard /proc/sgi_uv),)
  EXTRA_CFLAGS += -DNV_CONFIG_X86_UV
 endif
 
+ifdef VGX_FORCE_VFIO_PCI_CORE
+ EXTRA_CFLAGS += -DNV_VGPU_FORCE_VFIO_PCI_CORE
+endif
 
 #
 # The conftest.sh script tests various aspects of the target kernel.
@@ -144,6 +152,8 @@ NV_CONFTEST_CMD := /bin/sh $(NV_CONFTEST_SCRIPT) \
 NV_CFLAGS_FROM_CONFTEST := $(shell $(NV_CONFTEST_CMD) build_cflags)
 
 NV_CONFTEST_CFLAGS = $(NV_CFLAGS_FROM_CONFTEST) $(EXTRA_CFLAGS) -fno-pie
+NV_CONFTEST_CFLAGS += $(call cc-disable-warning,pointer-sign)
+NV_CONFTEST_CFLAGS += $(call cc-option,-fshort-wchar,)
 
 NV_CONFTEST_COMPILE_TEST_HEADERS := $(obj)/conftest/macros.h
 NV_CONFTEST_COMPILE_TEST_HEADERS += $(obj)/conftest/functions.h
@@ -212,8 +222,10 @@ NV_HEADER_PRESENCE_TESTS = \
  drm/drm_auth.h \
  drm/drm_gem.h \
  drm/drm_crtc.h \
+ drm/drm_color_mgmt.h \
  drm/drm_atomic.h \
  drm/drm_atomic_helper.h \
+ drm/drm_atomic_state_helper.h \
  drm/drm_encoder.h \
  drm/drm_atomic_uapi.h \
  drm/drm_drv.h \
@@ -237,7 +249,6 @@ NV_HEADER_PRESENCE_TESTS = \
  linux/efi.h \
  linux/kconfig.h \
  linux/platform/tegra/mc_utils.h \
- linux/semaphore.h \
  linux/printk.h \
  linux/ratelimit.h \
  linux/prio_tree.h \
@@ -259,6 +270,7 @@ NV_HEADER_PRESENCE_TESTS = \
  linux/platform/tegra/dce/dce-client-ipc.h \
  linux/nvhost.h \
  linux/nvhost_t194.h \
+ linux/host1x-next.h \
  asm/book3s/64/hash-64k.h \
  asm/set_memory.h \
  asm/prom.h \
@@ -292,8 +304,11 @@ NV_HEADER_PRESENCE_TESTS = \
  linux/iosys-map.h \
  asm/coco.h \
  linux/vfio_pci_core.h \
+ linux/mdev.h \
  soc/tegra/bpmp-abi.h \
- soc/tegra/bpmp.h
+ soc/tegra/bpmp.h \
+ linux/cc_platform.h \
+ asm/cpufeature.h
 
 # Filename to store the define for the header in $(1); this is only consumed by
 # the rule below that concatenates all of these together.

@@ -86,7 +86,8 @@ static NV_STATUS block_migrate_map_mapped_pages(uvm_va_block_t *va_block,
     // Only map those pages that are not already mapped on destination
     for_each_va_block_unset_page_in_region_mask(page_index, pages_mapped_on_destination, region) {
         prot = uvm_va_block_page_compute_highest_permission(va_block, dest_id, page_index);
-        UVM_ASSERT(prot != UVM_PROT_NONE);
+        if (prot == UVM_PROT_NONE)
+            continue;
 
         if (va_block_context->mask_by_prot[prot - 1].count++ == 0)
             uvm_page_mask_zero(&va_block_context->mask_by_prot[prot - 1].page_mask);
@@ -132,6 +133,22 @@ static NV_STATUS block_migrate_map_unmapped_pages(uvm_va_block_t *va_block,
     // Save the mask of unmapped pages because it will change after the
     // first map operation
     uvm_page_mask_complement(&va_block_context->caller_page_mask, &va_block->maybe_mapped_pages);
+
+    if (uvm_va_block_is_hmm(va_block) && !UVM_ID_IS_CPU(dest_id)) {
+        // Do not map pages that are already resident on the CPU. This is in
+        // order to avoid breaking system-wide atomic operations on HMM. HMM's
+        // implementation of system-side atomic operations involves restricting
+        // mappings to one processor (CPU or a GPU) at a time. If we were to
+        // grant a GPU a mapping to system memory, this gets into trouble
+        // because, on the CPU side, Linux can silently upgrade PTE permissions
+        // (move from read-only, to read-write, without any MMU notifiers
+        // firing), thus breaking the model by allowing simultaneous read-write
+        // access from two separate processors. To avoid that, just don't map
+        // such pages at all, when migrating.
+        uvm_page_mask_andnot(&va_block_context->caller_page_mask,
+                             &va_block_context->caller_page_mask,
+                             uvm_va_block_resident_mask_get(va_block, UVM_ID_CPU));
+    }
 
     // Only map those pages that are not mapped anywhere else (likely due
     // to a first touch or a migration). We pass
@@ -206,28 +223,39 @@ NV_STATUS uvm_va_block_migrate_locked(uvm_va_block_t *va_block,
     NV_STATUS status, tracker_status = NV_OK;
 
     uvm_assert_mutex_locked(&va_block->lock);
+    UVM_ASSERT(uvm_hmm_check_context_vma_is_valid(va_block, va_block_context->hmm.vma, region));
 
-    va_block_context->policy = uvm_va_range_get_policy(va_block->va_range);
-
-    if (uvm_va_policy_is_read_duplicate(va_block_context->policy, va_space)) {
-        status = uvm_va_block_make_resident_read_duplicate(va_block,
-                                                           va_block_retry,
-                                                           va_block_context,
-                                                           dest_id,
-                                                           region,
-                                                           NULL,
-                                                           NULL,
-                                                           UVM_MAKE_RESIDENT_CAUSE_API_MIGRATE);
+    if (uvm_va_block_is_hmm(va_block)) {
+        status = uvm_hmm_va_block_migrate_locked(va_block,
+                                                 va_block_retry,
+                                                 va_block_context,
+                                                 dest_id,
+                                                 region,
+                                                 UVM_MAKE_RESIDENT_CAUSE_API_MIGRATE);
     }
     else {
-        status = uvm_va_block_make_resident(va_block,
-                                            va_block_retry,
-                                            va_block_context,
-                                            dest_id,
-                                            region,
-                                            NULL,
-                                            NULL,
-                                            UVM_MAKE_RESIDENT_CAUSE_API_MIGRATE);
+        uvm_va_policy_t *policy = uvm_va_range_get_policy(va_block->va_range);
+
+        if (uvm_va_policy_is_read_duplicate(policy, va_space)) {
+            status = uvm_va_block_make_resident_read_duplicate(va_block,
+                                                               va_block_retry,
+                                                               va_block_context,
+                                                               dest_id,
+                                                               region,
+                                                               NULL,
+                                                               NULL,
+                                                               UVM_MAKE_RESIDENT_CAUSE_API_MIGRATE);
+        }
+        else {
+            status = uvm_va_block_make_resident(va_block,
+                                                va_block_retry,
+                                                va_block_context,
+                                                dest_id,
+                                                region,
+                                                NULL,
+                                                NULL,
+                                                UVM_MAKE_RESIDENT_CAUSE_API_MIGRATE);
+        }
     }
 
     if (status == NV_OK && mode == UVM_MIGRATE_MODE_MAKE_RESIDENT_AND_MAP) {
@@ -316,7 +344,8 @@ static bool migration_should_do_cpu_preunmap(uvm_va_space_t *va_space,
 // read-duplication is enabled in the VA range. This is because, when migrating
 // read-duplicated VA blocks, the source processor doesn't need to be unmapped
 // (though it may need write access revoked).
-static bool va_range_should_do_cpu_preunmap(uvm_va_policy_t *policy, uvm_va_space_t *va_space)
+static bool va_range_should_do_cpu_preunmap(const uvm_va_policy_t *policy,
+                                            uvm_va_space_t *va_space)
 {
     return !uvm_va_policy_is_read_duplicate(policy, va_space);
 }
@@ -341,8 +370,6 @@ static bool va_block_should_do_cpu_preunmap(uvm_va_block_t *va_block,
 
     if (!va_block)
         return true;
-
-    UVM_ASSERT(va_range_should_do_cpu_preunmap(va_block_context->policy, uvm_va_block_get_va_space(va_block)));
 
     region = uvm_va_block_region_from_start_end(va_block, max(start, va_block->start), min(end, va_block->end));
 
@@ -406,7 +433,7 @@ static void preunmap_multi_block(uvm_va_range_t *va_range,
     }
 
     if (num_unmap_pages > 0)
-        unmap_mapping_range(&va_range->va_space->mapping, start, end - start + 1, 1);
+        unmap_mapping_range(va_range->va_space->mapping, start, end - start + 1, 1);
 }
 
 static NV_STATUS uvm_va_range_migrate_multi_block(uvm_va_range_t *va_range,
@@ -467,11 +494,9 @@ static NV_STATUS uvm_va_range_migrate(uvm_va_range_t *va_range,
                                       uvm_tracker_t *out_tracker)
 {
     NvU64 preunmap_range_start = start;
+    uvm_va_policy_t *policy = uvm_va_range_get_policy(va_range);
 
-    UVM_ASSERT(va_block_context->policy == uvm_va_range_get_policy(va_range));
-
-    should_do_cpu_preunmap = should_do_cpu_preunmap && va_range_should_do_cpu_preunmap(va_block_context->policy,
-                                                                                       va_range->va_space);
+    should_do_cpu_preunmap = should_do_cpu_preunmap && va_range_should_do_cpu_preunmap(policy, va_range->va_space);
 
     // Divide migrations into groups of contiguous VA blocks. This is to trigger
     // CPU unmaps for that region before the migration starts.
@@ -524,6 +549,17 @@ static NV_STATUS uvm_migrate_ranges(uvm_va_space_t *va_space,
     NV_STATUS status = NV_OK;
     bool skipped_migrate = false;
 
+    if (!first_va_range) {
+        // For HMM, we iterate over va_blocks since there is no va_range.
+        return uvm_hmm_migrate_ranges(va_space,
+                                      va_block_context,
+                                      base,
+                                      length,
+                                      dest_id,
+                                      mode,
+                                      out_tracker);
+    }
+
     UVM_ASSERT(first_va_range == uvm_va_space_iter_first(va_space, base, base));
 
     va_range_last = NULL;
@@ -536,8 +572,6 @@ static NV_STATUS uvm_migrate_ranges(uvm_va_space_t *va_space,
             status = NV_ERR_INVALID_ADDRESS;
             break;
         }
-
-        va_block_context->policy = uvm_va_range_get_policy(va_range);
 
         // For UVM-Lite GPUs, the CUDA driver may suballocate a single va_range
         // into many range groups.  For this reason, we iterate over each va_range first
@@ -594,10 +628,10 @@ static NV_STATUS uvm_migrate(uvm_va_space_t *va_space,
                              NvU64 length,
                              uvm_processor_id_t dest_id,
                              NvU32 migrate_flags,
+                             uvm_va_range_t *first_va_range,
                              uvm_tracker_t *out_tracker)
 {
     NV_STATUS status = NV_OK;
-    uvm_va_range_t *first_va_range = uvm_va_space_iter_first(va_space, base, base);
     uvm_va_block_context_t *va_block_context;
     bool do_mappings;
     bool do_two_passes;
@@ -606,9 +640,6 @@ static NV_STATUS uvm_migrate(uvm_va_space_t *va_space,
 
     uvm_assert_rwsem_locked(&va_space->lock);
 
-    if (!first_va_range || first_va_range->type != UVM_VA_RANGE_TYPE_MANAGED)
-        return NV_ERR_INVALID_ADDRESS;
-
     // If the GPU has its memory disabled, just skip the migration and let
     // faults take care of things.
     if (!uvm_va_space_processor_has_memory(va_space, dest_id))
@@ -616,6 +647,9 @@ static NV_STATUS uvm_migrate(uvm_va_space_t *va_space,
 
     if (mm)
         uvm_assert_mmap_lock_locked(mm);
+    else if (!first_va_range)
+        return NV_ERR_INVALID_ADDRESS;
+
     va_block_context = uvm_va_block_context_alloc(mm);
     if (!va_block_context)
         return NV_ERR_NO_MEMORY;
@@ -638,7 +672,9 @@ static NV_STATUS uvm_migrate(uvm_va_space_t *va_space,
     // 1- Transfer all VA blocks (do not add mappings)
     // 2- Go block by block reexecuting the transfer (in case someone moved it
     // since the first pass), and adding the mappings.
-    is_single_block = is_migration_single_block(first_va_range, base, length);
+    //
+    // For HMM (!first_va_range), we always do a single pass.
+    is_single_block = !first_va_range || is_migration_single_block(first_va_range, base, length);
     do_mappings = UVM_ID_IS_GPU(dest_id) || !(migrate_flags & UVM_MIGRATE_FLAG_SKIP_CPU_MAP);
     do_two_passes = do_mappings && !is_single_block;
 
@@ -854,6 +890,7 @@ NV_STATUS uvm_api_migrate(UVM_MIGRATE_PARAMS *params, struct file *filp)
 
     if ((params->flags & UVM_MIGRATE_FLAGS_TEST_ALL) && !uvm_enable_builtin_tests) {
         UVM_INFO_PRINT("Test flag set for UVM_MIGRATE. Did you mean to insmod with uvm_enable_builtin_tests=1?\n");
+        UVM_INFO_PRINT("TEMP\n");
         return NV_ERR_INVALID_ARGUMENT;
     }
 
@@ -908,33 +945,44 @@ NV_STATUS uvm_api_migrate(UVM_MIGRATE_PARAMS *params, struct file *filp)
         tracker_ptr = &tracker;
 
     if (params->length > 0) {
-        status = uvm_api_range_type_check(va_space, mm, params->base, params->length);
-        if (status == NV_OK) {
+        uvm_api_range_type_t type;
+
+        type = uvm_api_range_type_check(va_space, mm, params->base, params->length);
+        if (type == UVM_API_RANGE_TYPE_INVALID) {
+            status = NV_ERR_INVALID_ADDRESS;
+            goto done;
+        }
+
+        if (type == UVM_API_RANGE_TYPE_ATS) {
+            uvm_migrate_args_t uvm_migrate_args =
+            {
+                .va_space                       = va_space,
+                .mm                             = mm,
+                .start                          = params->base,
+                .length                         = params->length,
+                .dst_id                         = (dest_gpu ? dest_gpu->id : UVM_ID_CPU),
+                .dst_node_id                    = (int)params->cpuNumaNode,
+                .populate_permissions           = UVM_POPULATE_PERMISSIONS_INHERIT,
+                .touch                          = false,
+                .skip_mapped                    = false,
+                .populate_on_cpu_alloc_failures = false,
+                .user_space_start               = &params->userSpaceStart,
+                .user_space_length              = &params->userSpaceLength,
+            };
+
+            status = uvm_migrate_pageable(&uvm_migrate_args);
+        }
+        else {
             status = uvm_migrate(va_space,
                                  mm,
                                  params->base,
                                  params->length,
                                  (dest_gpu ? dest_gpu->id : UVM_ID_CPU),
                                  params->flags,
+                                 uvm_va_space_iter_first(va_space,
+                                                         params->base,
+                                                         params->base),
                                  tracker_ptr);
-        }
-        else if (status == NV_WARN_NOTHING_TO_DO) {
-            uvm_migrate_args_t uvm_migrate_args =
-            {
-                .va_space               = va_space,
-                .mm                     = mm,
-                .start                  = params->base,
-                .length                 = params->length,
-                .dst_id                 = (dest_gpu ? dest_gpu->id : UVM_ID_CPU),
-                .dst_node_id            = (int)params->cpuNumaNode,
-                .populate_permissions   = UVM_POPULATE_PERMISSIONS_INHERIT,
-                .touch                  = false,
-                .skip_mapped            = false,
-                .user_space_start       = &params->userSpaceStart,
-                .user_space_length      = &params->userSpaceLength,
-            };
-
-            status = uvm_migrate_pageable(&uvm_migrate_args);
         }
     }
 
@@ -1029,10 +1077,26 @@ NV_STATUS uvm_api_migrate_range_group(UVM_MIGRATE_RANGE_GROUP_PARAMS *params, st
         NvU64 start = rgr->node.start;
         NvU64 length = rgr->node.end - rgr->node.start + 1;
 
-        if (gpu && !uvm_gpu_can_address(gpu, start, length))
+        if (gpu && !uvm_gpu_can_address(gpu, start, length)) {
             status = NV_ERR_OUT_OF_RANGE;
-        else
-            status = uvm_migrate(va_space, mm, start, length, dest_id, migrate_flags, &local_tracker);
+        }
+        else {
+            uvm_va_range_t *first_va_range = uvm_va_space_iter_first(va_space, start, start);
+
+            if (!first_va_range || first_va_range->type != UVM_VA_RANGE_TYPE_MANAGED) {
+                status = NV_ERR_INVALID_ADDRESS;
+                goto done;
+            }
+
+            status = uvm_migrate(va_space,
+                                 mm,
+                                 start,
+                                 length,
+                                 dest_id,
+                                 migrate_flags,
+                                 first_va_range,
+                                 &local_tracker);
+        }
 
         if (status != NV_OK)
             goto done;

@@ -984,10 +984,10 @@ void      nvswitch_store_topology_information_ls10(nvswitch_device *device, nvli
 NvlStatus nvswitch_ctrl_i2c_indexed_ls10(nvswitch_device *device, NVSWITCH_CTRL_I2C_INDEXED_PARAMS *pParams);
 NvBool    nvswitch_i2c_is_device_access_allowed_ls10(nvswitch_device *device, NvU32 port, NvU8 addr, NvBool bIsRead);
 NvlStatus nvswitch_minion_get_ali_debug_registers_ls10(nvswitch_device *device, nvlink_link *link, NVSWITCH_MINION_ALI_DEBUG_REGISTERS *params);
+void      nvswitch_execute_unilateral_link_shutdown_ls10(nvlink_link *link);
 void      nvswitch_setup_link_system_registers_ls10(nvswitch_device *device, nvlink_link *link);
 void      nvswitch_load_link_disable_settings_ls10(nvswitch_device *device, nvlink_link *link);
 void      nvswitch_link_disable_interrupts_ls10(nvswitch_device *device, NvU32 link);
-void      nvswitch_execute_unilateral_link_shutdown_ls10(nvlink_link *link);
 
 void      nvswitch_init_dlpl_interrupts_ls10(nvlink_link *link);
 void      nvswitch_set_dlpl_interrupts_ls10(nvlink_link *link);
@@ -1020,6 +1020,7 @@ NvlStatus nvswitch_reset_and_train_link_ls10(nvswitch_device *device, nvlink_lin
 NvBool    nvswitch_are_link_clocks_on_ls10(nvswitch_device *device, nvlink_link *link, NvU32 clocksMask);
 NvBool    nvswitch_does_link_need_termination_enabled_ls10(nvswitch_device *device, nvlink_link *link);
 NvlStatus nvswitch_link_termination_setup_ls10(nvswitch_device *device, nvlink_link* link);
+void      nvswitch_get_error_rate_threshold_ls10(nvlink_link *link);
 
 #endif //_LS10_H_
 

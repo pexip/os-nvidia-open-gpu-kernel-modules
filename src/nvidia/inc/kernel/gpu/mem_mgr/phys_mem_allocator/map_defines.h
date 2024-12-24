@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -22,7 +22,7 @@
  */
 
 /*!
- *  @brief Contains common defines between addrtree and regmap
+ *  @brief Contains common defines for regmap
  */
 
 #ifndef MAP_DEFINES_H
@@ -90,7 +90,7 @@ typedef NvU32 PMA_PAGESTATUS;
 #define ATTRIB_PERSISTENT  NVBIT(MAP_IDX_PERSISTENT)
 #define ATTRIB_NUMA_REUSE  NVBIT(MAP_IDX_NUMA_REUSE)
 #define ATTRIB_BLACKLIST   NVBIT(MAP_IDX_BLACKLIST)
-#define ATTRIB_MASK        (ATTRIB_EVICTING | ATTRIB_SCRUBBING \
+#define ATTRIB_MASK        (ATTRIB_EVICTING | ATTRIB_SCRUBBING      \
                             | ATTRIB_PERSISTENT | ATTRIB_NUMA_REUSE \
                             | ATTRIB_BLACKLIST)
 
@@ -114,6 +114,9 @@ typedef struct _PMA_STATS
     NvU64 numFreeFrames;             // PMA-wide free 64KB frame count
     NvU64 numFree2mbPages;           // PMA-wide free 2MB pages count
 #if !defined(NVWATCH)
+    NvU64 num2mbPagesProtected;      // PMA-wide total number of 2MB pages in protected memory
+    NvU64 numFreeFramesProtected;    // PMA-wide free 64KB frame count in protected memory
+    NvU64 numFree2mbPagesProtected;  // PMA-wide free 2MB pages count in protected memory
 #endif // !defined(NVWATCH)
 } PMA_STATS;
 

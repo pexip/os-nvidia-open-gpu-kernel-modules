@@ -149,7 +149,7 @@ typedef struct THREAD_STATE_DB
 
 //
 // The normal power transition requirement for Windows is 4 seconds.
-// Use longer time to let OS fire timeout and ask recovery. 
+// Use longer time to let OS fire timeout and ask recovery.
 //
 #define TIMEOUT_WDDM_POWER_TRANSITION_INTERVAL_MS       9800
 

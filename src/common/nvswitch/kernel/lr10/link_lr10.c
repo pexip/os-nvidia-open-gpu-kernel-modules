@@ -2215,6 +2215,7 @@ nvswitch_setup_link_system_registers_lr10
     NvU32 lineRate = 0;
     NVLINK_CONFIG_DATA_LINKENTRY *vbios_link_entry = NULL;
     NVSWITCH_BIOS_NVLINK_CONFIG *bios_config;
+    NvU32 base_entry;
 
     bios_config = nvswitch_get_bios_nvlink_config(device);
     if ((bios_config == NULL) || (bios_config->bit_address == 0))
@@ -2235,14 +2236,17 @@ nvswitch_setup_link_system_registers_lr10
     }
     else
     {
-        vbios_link_entry = &bios_config->link_vbios_entry[bios_config->link_base_entry_assigned][link->linkNumber];
+        base_entry = bios_config->link_base_entry_assigned;
+
+        vbios_link_entry = &bios_config->link_vbios_entry[base_entry][link->linkNumber];
     }
+
+    regval = NVSWITCH_LINK_RD32_LR10(device, link->linkNumber, NVLIPT_LNK,
+                                           _NVLIPT_LNK_CTRL_SYSTEM_LINK, _CLK_CTRL);
 
     // LINE_RATE SYSTEM register
     if (device->regkeys.nvlink_speed_control != NV_SWITCH_REGKEY_SPEED_CONTROL_SPEED_DEFAULT)
     {
-        regval   = NVSWITCH_LINK_RD32_LR10(device, link->linkNumber, NVLIPT_LNK,
-                                           _NVLIPT_LNK_CTRL_SYSTEM_LINK, _CLK_CTRL);
         lineRate = _nvswitch_get_nvlink_linerate_lr10(device, device->regkeys.nvlink_speed_control);
         regval   = FLD_SET_DRF_NUM(_NVLIPT_LNK_CTRL_SYSTEM_LINK, _CLK_CTRL,
                                     _LINE_RATE, lineRate, regval);
@@ -2580,6 +2584,7 @@ nvswitch_does_link_need_termination_enabled_lr10
         chip_device->bDisabledRemoteEndLinkMaskCached = NV_TRUE;
     }
 
+    // return NV_TRUE if the link is inside of  disabledRemoteEndLinkMask
     return ((BIT64(link->linkNumber) & chip_device->disabledRemoteEndLinkMask) != 0);
 #else
     return NV_FALSE;

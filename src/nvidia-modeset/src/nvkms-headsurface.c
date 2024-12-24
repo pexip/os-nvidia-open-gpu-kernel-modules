@@ -475,7 +475,7 @@ static NvU32 HsGetSemaphoreIndex(
 }
 
 /*!
- * Read the payload of the semaphore described in the pHwState.
+ * Read the payload of the semaphore described in the pSemaSurface.
  */
 static NvU32 HsFlipQueueReadSemaphore(
     const NVHsChannelEvoRec *pHsChannel,
@@ -503,16 +503,16 @@ static NvU32 HsFlipQueueReadSemaphore(
 }
 
 /*!
- * Return whether the specified pHwState is ready to flip.
+ * Return whether the specified pFlipState is ready to flip.
  */
 static NvBool HsFlipQueueEntryIsReady(
     const NVHsChannelEvoRec *pHsChannel,
-    const NVFlipChannelEvoHwState *pHwState)
+    const NVHsLayerRequestedFlipState *pFlipState)
 {
     const NVFlipNIsoSurfaceEvoHwState *pSemaSurface =
-        &pHwState->syncObject.u.semaphores.acquireSurface;
+        &pFlipState->syncObject.u.semaphores.acquireSurface;
 
-    if (pHwState->syncObject.usingSyncpt) {
+    if (pFlipState->syncObject.usingSyncpt) {
         return TRUE;
     }
 
@@ -527,9 +527,9 @@ static NvBool HsFlipQueueEntryIsReady(
         if (pHsChannel->swapGroupFlipping) {
             // With swap group flipping, the client semaphore should be
             // written before the non-stall interrupt kicking off the flip.
-            nvAssert(semaphoreValue == pHwState->syncObject.u.semaphores.acquireValue);
+            nvAssert(semaphoreValue == pFlipState->syncObject.u.semaphores.acquireValue);
         } else {
-            if (semaphoreValue != pHwState->syncObject.u.semaphores.acquireValue) {
+            if (semaphoreValue != pFlipState->syncObject.u.semaphores.acquireValue) {
                 return FALSE;
             }
         }
@@ -546,44 +546,41 @@ static NvBool HsFlipQueueEntryIsReady(
 }
 
 /*!
- * Update the reference count of all the surfaces described in the pHwState.
+ * Update the reference count of all the surfaces described in the pFlipState.
  */
 static void HsUpdateFlipQueueEntrySurfaceRefCount(
     NVDevEvoPtr pDevEvo,
-    const NVFlipChannelEvoHwState *pHwState,
+    const NVHsLayerRequestedFlipState *pFlipState,
     NvBool increase)
 {
     HsChangeSurfaceFlipRefCount(
-        pDevEvo, pHwState->pSurfaceEvo[NVKMS_LEFT], increase);
+        pDevEvo, pFlipState->pSurfaceEvo[NVKMS_LEFT], increase);
 
     HsChangeSurfaceFlipRefCount(
-        pDevEvo, pHwState->pSurfaceEvo[NVKMS_RIGHT], increase);
+        pDevEvo, pFlipState->pSurfaceEvo[NVKMS_RIGHT], increase);
 
-    HsChangeSurfaceFlipRefCount(
-        pDevEvo, pHwState->completionNotifier.surface.pSurfaceEvo, increase);
-
-    if (!pHwState->syncObject.usingSyncpt) {
+    if (!pFlipState->syncObject.usingSyncpt) {
         HsChangeSurfaceFlipRefCount(
-            pDevEvo, pHwState->syncObject.u.semaphores.acquireSurface.pSurfaceEvo, increase);
+            pDevEvo, pFlipState->syncObject.u.semaphores.acquireSurface.pSurfaceEvo, increase);
 
         HsChangeSurfaceFlipRefCount(
-            pDevEvo, pHwState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo, increase);
+            pDevEvo, pFlipState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo, increase);
     }
 }
 
 /*!
- * Update bookkeeping for "flipping away" from a pHwState.
+ * Update bookkeeping for "flipping away" from a pFlipState.
  */
 static void HsReleaseFlipQueueEntry(
     NVDevEvoPtr pDevEvo,
     NVHsChannelEvoPtr pHsChannel,
-    const NVFlipChannelEvoHwState *pHwState)
+    const NVHsLayerRequestedFlipState *pFlipState)
 {
     /*
      * If a semaphore surface was specified, we can now write its release value.
      */
-    if (!pHwState->syncObject.usingSyncpt &&
-        pHwState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo != NULL) {
+    if (!pFlipState->syncObject.usingSyncpt &&
+        pFlipState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo != NULL) {
 
         /*
          * XXX NVKMS HEADSURFACE TODO: write the timestamp in the EVO/NVDisplay
@@ -595,18 +592,18 @@ static void HsReleaseFlipQueueEntry(
          */
 
         nvHs3dReleaseSemaphore(pHsChannel,
-                               pHwState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo,
-                               pHwState->syncObject.u.semaphores.releaseSurface.format,
-                               pHwState->syncObject.u.semaphores.releaseSurface.offsetInWords,
-                               pHwState->syncObject.u.semaphores.releaseValue,
+                               pFlipState->syncObject.u.semaphores.releaseSurface.pSurfaceEvo,
+                               pFlipState->syncObject.u.semaphores.releaseSurface.format,
+                               pFlipState->syncObject.u.semaphores.releaseSurface.offsetInWords,
+                               pFlipState->syncObject.u.semaphores.releaseValue,
                                TRUE /* allPreceedingReads */);
     }
 
     /*
-     * HeadSurface no longer needs to read from the surfaces in pHwState;
+     * HeadSurface no longer needs to read from the surfaces in pFlipState;
      * decrement their reference counts.
      */
-    HsUpdateFlipQueueEntrySurfaceRefCount(pDevEvo, pHwState, FALSE);
+    HsUpdateFlipQueueEntrySurfaceRefCount(pDevEvo, pFlipState, FALSE);
 }
 
 /*!
@@ -681,12 +678,12 @@ static void HsFastForwardFlipQueue(
  *
  * \param[in,out]  pHsChannel  The headSurface channel.
  * \param[in]      layer       The layer of the flip queue.
- * \param[in]      pHwState    The hwState to be pushed on the flip queue.
+ * \param[in]      pFlipState    The hwState to be pushed on the flip queue.
  */
 void nvHsPushFlipQueueEntry(
     NVHsChannelEvoPtr pHsChannel,
     const NvU8 layer,
-    const NVFlipChannelEvoHwState *pHwState)
+    const NVHsLayerRequestedFlipState *pFlipState)
 {
     NVDevEvoPtr pDevEvo = pHsChannel->pDispEvo->pDevEvo;
     NVListRec *pFlipQueue = &pHsChannel->flipQueue[layer].queue;
@@ -701,7 +698,7 @@ void nvHsPushFlipQueueEntry(
         return;
     }
 
-    pEntry->hwState = *pHwState;
+    pEntry->hwState = *pFlipState;
 
     /* Increment the ref counts on the surfaces in the flip queue entry. */
 
@@ -722,26 +719,26 @@ void nvHsPushFlipQueueEntry(
  * Remove the first entry in the flip queue and return it.
  *
  * If the first entry in the flipQueue is ready to be consumed by headSurface,
- * remove it from the list and return it in the 'pHwState' argument.
+ * remove it from the list and return it in the 'pFlipState' argument.
  *
  * If this function returns TRUE, it is the caller's responsibility to
  * eventually call
  *
- *    HsUpdateFlipQueueEntrySurfaceRefCount(pHwState, FALSE)
+ *    HsUpdateFlipQueueEntrySurfaceRefCount(pDevEvo, pFlipState, FALSE)
  *
- * for the returned pHwState.
+ * for the returned pFlipState.
  *
  * \param[in,out]  pHsChannel  The headSurface channel.
  * \param[in]      layer       The layer of the flip queue.
- * \param[out]     pHwState    The hwState that was popped off the flip queue.
+ * \param[out]     pFlipState    The hwState that was popped off the flip queue.
  *
  * \return   Return TRUE if a flip queue entry was popped off the queue and
- *           copied into pHwState.
+ *           copied into pFlipState.
  */
 static NvBool HsPopFlipQueueEntry(
     NVHsChannelEvoPtr pHsChannel,
     const NvU8 layer,
-    NVFlipChannelEvoHwState *pHwState)
+    NVHsLayerRequestedFlipState *pFlipState)
 {
     NVListRec *pFlipQueue = &pHsChannel->flipQueue[layer].queue;
     NVHsChannelFlipQueueEntry *pEntry;
@@ -758,7 +755,7 @@ static NvBool HsPopFlipQueueEntry(
         return FALSE;
     }
 
-    *pHwState = pEntry->hwState;
+    *pFlipState = pEntry->hwState;
 
     nvListDel(&pEntry->flipQueueEntry);
     nvFree(pEntry);
@@ -781,7 +778,7 @@ static void HsUpdateFlipQueueCurrent(
 
     for (layer = 0; layer < ARRAY_LEN(pHsChannel->flipQueue); layer++) {
 
-        NVFlipChannelEvoHwState newCurrent = { };
+        NVHsLayerRequestedFlipState newCurrent = { };
 
         /*
          * XXX NVKMS HEADSURFACE TODO: fast forward to the last ready flip queue
@@ -1206,8 +1203,6 @@ static void HsFlipHelper(
     const NvBool allowFlipLock)
 {
     NVDevEvoRec *pDevEvo = pHsDevice->pDevEvo;
-    struct NvKmsFlipRequest *pRequest;
-    struct NvKmsFlipParams *pFlipParams;
     struct NvKmsFlipCommonParams *pParamsOneHead;
     NVHsNotifiersRec *pHsNotifiers = &pHsDevice->notifiers;
     const NvU32 sd = pHsChannel->pDispEvo->displayOwner;
@@ -1215,18 +1210,16 @@ static void HsFlipHelper(
     NvBool ret;
 
     /*
-     * Use a preallocated NvKmsFlipParams, so that we don't have to allocate
+     * Use preallocated memory, so that we don't have to allocate
      * memory here (and deal with allocation failure).
      */
-    pFlipParams = &pHsChannel->scratchParams;
+    struct NvKmsFlipRequestOneHead *pFlipHead = &pHsChannel->scratchParams;
 
-    nvkms_memset(pFlipParams, 0, sizeof(*pFlipParams));
+    nvkms_memset(pFlipHead, 0, sizeof(*pFlipHead));
 
-    pRequest = &pFlipParams->request;
-
-    pParamsOneHead = &pRequest->sd[sd].head[apiHead];
-
-    pRequest->commit = NV_TRUE;
+    pFlipHead->sd = sd;
+    pFlipHead->head = apiHead;
+    pParamsOneHead = &pFlipHead->flip;
 
     if (isFirstFlip) {
         /*
@@ -1265,8 +1258,6 @@ static void HsFlipHelper(
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].csc.matrix = NVKMS_IDENTITY_CSC_MATRIX;
 
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].completionNotifier.specified = TRUE;
-
-    pRequest->sd[sd].requestedHeadsBitMask = NVBIT(apiHead);
 
     if (surfaceHandles[NVKMS_LEFT] != 0) {
         NVEvoApiHandlesRec *pOpenDevSurfaceHandles =
@@ -1311,8 +1302,11 @@ static void HsFlipHelper(
 
     ret = nvFlipEvo(pDevEvo,
                     pDevEvo->pNvKmsOpenDev,
-                    pRequest,
-                    &pFlipParams->reply,
+                    pFlipHead,
+                    1     /* numFlipHeads */,
+                    TRUE  /* commit */,
+                    FALSE /* allowVrr */,
+                    NULL  /* pReply */,
                     FALSE /* skipUpdate */,
                     allowFlipLock);
 
@@ -1820,11 +1814,9 @@ void nvHsProcessPendingViewportFlips(NVDevEvoPtr pDevEvo)
  */
 static void HsProcFsRecordScanline(
     const NVDispEvoRec *pDispEvo,
-    const NvU32 head)
+    const NvU32 apiHead)
 {
 #if NVKMS_PROCFS_ENABLE
-    const NvU32 apiHead = nvHardwareHeadToApiHead(head);
-    const NVDevEvoRec *pDevEvo = pDispEvo->pDevEvo;
     NVHsChannelEvoRec *pHsChannel = pDispEvo->pHsChannel[apiHead];
     NvU16 scanLine = 0;
     NvBool inBlankingPeriod = FALSE;
@@ -1833,7 +1825,7 @@ static void HsProcFsRecordScanline(
         return;
     }
 
-    pDevEvo->hal->GetScanLine(pDispEvo, head, &scanLine, &inBlankingPeriod);
+    nvApiHeadGetScanLine(pDispEvo, apiHead, &scanLine, &inBlankingPeriod);
 
     if (inBlankingPeriod) {
         pHsChannel->statistics.scanLine.nInBlankingPeriod++;
@@ -2137,11 +2129,12 @@ static NvBool HsCanOmitNonSgHsUpdate(NVHsChannelEvoPtr pHsChannel)
 /*!
  * Receive RG line 1 callback, in process context with nvkms_lock held.
  */
-static void HsServiceRGLineInterrupt(void *dataPtr, NvU32 dataU32)
+static void HsRgLine1CallbackProc(NVDispEvoRec *pDispEvo,
+                                  const NvU32 head,
+                                  NVRgLine1CallbackPtr pCallback)
 {
-    NVDispEvoRec *pDispEvo = (NVDispEvoRec *)dataPtr;
-    NvU32 head = dataU32;
-    const NvU32 apiHead = nvHardwareHeadToApiHead(head);
+    const NvU32 apiHead =
+        (NvU32)(NvUPtr)pCallback->pUserData;
     NVHsChannelEvoPtr pHsChannel = pDispEvo->pHsChannel[apiHead];
 
     /*
@@ -2169,7 +2162,7 @@ static void HsServiceRGLineInterrupt(void *dataPtr, NvU32 dataU32)
          *   flip to the render offset.
          */
         NvU32 activeViewportOffset =
-            pDispEvo->pDevEvo->hal->GetActiveViewportOffset(pDispEvo, head);
+            nvApiHeadGetActiveViewportOffset(pDispEvo, apiHead);
 
         nvAssert((activeViewportOffset == 0) ||
                  (activeViewportOffset == pHsChannel->config.frameSize.height));
@@ -2191,7 +2184,7 @@ static void HsServiceRGLineInterrupt(void *dataPtr, NvU32 dataU32)
             } else {
                 NVHsDeviceEvoRec *pHsDevice = pDispEvo->pDevEvo->pHsDevice;
 
-                HsProcFsRecordScanline(pDispEvo, head);
+                HsProcFsRecordScanline(pDispEvo, apiHead);
 
                 if (HsCanOmitNonSgHsUpdate(pHsChannel)) {
                     HsProcFsRecordOmittedNonSgHsUpdate(pHsChannel);
@@ -2216,10 +2209,9 @@ static void HsServiceRGLineInterrupt(void *dataPtr, NvU32 dataU32)
  *
  */
 static void HsVBlankCallback(NVDispEvoRec *pDispEvo,
-                             const NvU32 head,
                              NVVBlankCallbackPtr pCallbackData)
 {
-    const NvU32 apiHead = nvHardwareHeadToApiHead(head);
+    const NvU32 apiHead = pCallbackData->apiHead;
     NVHsChannelEvoPtr pHsChannel = pDispEvo->pHsChannel[apiHead];
     NVHsDeviceEvoRec *pHsDevice = pDispEvo->pDevEvo->pHsDevice;
 
@@ -2251,7 +2243,7 @@ static void HsVBlankCallback(NVDispEvoRec *pDispEvo,
         return;
     }
 
-    HsProcFsRecordScanline(pDispEvo, head);
+    HsProcFsRecordScanline(pDispEvo, apiHead);
 
     /*
      * XXX NVKMS HEADSURFACE TODO: evaluate whether there has been
@@ -2274,29 +2266,6 @@ static void HsVBlankCallback(NVDispEvoRec *pDispEvo,
         nvHsNextFrame(pHsDevice, pHsChannel,
                       NV_HS_NEXT_FRAME_REQUEST_TYPE_VBLANK);
     }
-}
-
-/*!
- * Receive RG line 1 interrupt notification from resman.
- *
- * This function is registered as the kernel callback function from resman when
- * the RG line 1 interrupt is generated.
- *
- * This function is called within resman's context, so we schedule a zero timer
- * callback to process the swapgroup check and release without holding the
- * resman lock.
- */
-static void HsRGLineInterruptCallback(NvU32 rgIntrLine, void *param1,
-                                      NvBool bIsIrqlIsr /* unused */)
-{
-    void *pDispEvoRefPtr = (void *)((NvUPtr)param1 &
-                                    ~(NVKMS_MAX_HEADS_PER_DISP-1));
-    NvU32 head = (NvUPtr)param1 & (NVKMS_MAX_HEADS_PER_DISP-1);
-    (void) nvkms_alloc_timer_with_ref_ptr(
-        HsServiceRGLineInterrupt, /* callback */
-        pDispEvoRefPtr, /* ref_ptr */
-        head,  /* dataU32 */
-        0); /* usec */
 }
 
 /*!
@@ -2325,7 +2294,7 @@ void nvHsAddVBlankCallback(NVHsChannelEvoPtr pHsChannel)
  */
 void nvHsAddRgLine1Callback(NVHsChannelEvoPtr pHsChannel)
 {
-    const NVDispEvoRec *pDispEvo = pHsChannel->pDispEvo;
+    NVDispEvoRec *pDispEvo = pHsChannel->pDispEvo;
     NvBool found;
     NvU32 val;
 
@@ -2341,12 +2310,13 @@ void nvHsAddRgLine1Callback(NVHsChannelEvoPtr pHsChannel)
         return;
     }
 
-    pHsChannel->rgIntrCallbackObjectHandle =
+    pHsChannel->pRgIntrCallback =
         nvApiHeadAddRgLine1Callback(pDispEvo,
                                     pHsChannel->apiHead,
-                                    HsRGLineInterruptCallback);
+                                    HsRgLine1CallbackProc,
+                                    (void*)(NvUPtr)pHsChannel->apiHead);
 
-    if (pHsChannel->rgIntrCallbackObjectHandle == 0) {
+    if (pHsChannel->pRgIntrCallback == NULL) {
         nvAssert(!"Failed to register headSurface RG line 1 interrupt");
     } else {
         pHsChannel->usingRgIntrForSwapGroups = TRUE;
@@ -2365,8 +2335,8 @@ void nvHsRemoveRgLine1Callback(NVHsChannelEvoPtr pHsChannel)
 
     if (pHsChannel->usingRgIntrForSwapGroups) {
         nvRmRemoveRgLine1Callback(pDispEvo,
-                                  pHsChannel->rgIntrCallbackObjectHandle);
-        pHsChannel->rgIntrCallbackObjectHandle = 0;
+                                  pHsChannel->pRgIntrCallback);
+        pHsChannel->pRgIntrCallback = NULL;
     }
 }
 
@@ -2388,7 +2358,6 @@ void nvHsRemoveVBlankCallback(NVHsChannelEvoPtr pHsChannel)
     NVDispEvoRec *pDispEvo = pHsChannel->pDispEvo;
 
     nvApiHeadUnregisterVBlankCallback(pDispEvo,
-                                      pHsChannel->apiHead,
                                       pHsChannel->vBlankCallback);
     pHsChannel->vBlankCallback = NULL;
 }
@@ -2646,7 +2615,7 @@ static void HsProcFsScanLine(
 
 static void HsProcFsFlipQueueOneEntry(
     NVEvoInfoStringRec *pInfoString,
-    const NVFlipChannelEvoHwState *pFlipState)
+    const NVHsLayerRequestedFlipState *pFlipState)
 {
     /*
      * Print the pointers by casting to NvUPtr and formatting with NvUPtr_fmtx,
@@ -2847,24 +2816,23 @@ void nvHsProcFs(
     NVEvoInfoStringRec *pInfoString,
     NVDevEvoRec *pDevEvo,
     NvU32 dispIndex,
-    NvU32 head)
+    NvU32 apiHead)
 {
     NVDispEvoPtr pDispEvo = pDevEvo->pDispEvo[dispIndex];
-    const NvU32 apiHead = nvHardwareHeadToApiHead(head);
     const NVHsChannelEvoRec *pHsChannel = pDispEvo->pHsChannel[apiHead];
     const NVHsStateOneHeadAllDisps *pHsOneHeadAllDisps =
         &pDevEvo->apiHeadSurfaceAllDisps[apiHead];
 
     if (pHsChannel == NULL) {
         nvEvoLogInfoString(pInfoString,
-                           "  headSurface[head:%02d]        : disabled", head);
+                           "  headSurface[head:%02d]        : disabled", apiHead);
         return;
     }
 
     nvEvoLogInfoString(pInfoString,
                        "  headSurface[head:%02d]        : "
                        "enabled (needed for: %s)",
-                       head, HsProcFsGetNeededForString(pHsChannel));
+                       apiHead, HsProcFsGetNeededForString(pHsChannel));
 
     HsProcFsFrameStatistics(pInfoString, pHsChannel);
 

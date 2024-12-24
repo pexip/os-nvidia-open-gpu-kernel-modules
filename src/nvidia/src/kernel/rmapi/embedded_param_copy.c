@@ -218,7 +218,8 @@ NV_STATUS embeddedParamCopyIn(RMAPI_PARAM_COPY *paramCopies, RmCtrlParams *pRmCt
     NvU32 paramsCnt = 1;
     NvU32 i, j = 0;
 
-    if (pRmCtrlParams->secInfo.paramLocation == PARAM_LOCATION_KERNEL)
+    if ((pRmCtrlParams->secInfo.paramLocation == PARAM_LOCATION_KERNEL) ||
+        (pRmCtrlParams->flags & NVOS54_FLAGS_FINN_SERIALIZED))
     {
         return NV_OK;
     }
@@ -765,7 +766,8 @@ NV_STATUS embeddedParamCopyOut(RMAPI_PARAM_COPY *paramCopies, RmCtrlParams *pRmC
     NV_STATUS status = NV_OK;
     void* pParams = pRmCtrlParams->pParams;
 
-    if (pRmCtrlParams->secInfo.paramLocation == PARAM_LOCATION_KERNEL)
+    if ((pRmCtrlParams->secInfo.paramLocation == PARAM_LOCATION_KERNEL) ||
+        (pRmCtrlParams->flags & NVOS54_FLAGS_FINN_SERIALIZED))
     {
         return NV_OK;
     }
@@ -886,7 +888,7 @@ NV_STATUS embeddedParamCopyOut(RMAPI_PARAM_COPY *paramCopies, RmCtrlParams *pRmC
         case NV83DE_CTRL_CMD_DEBUG_WRITE_MEMORY:
         {
             CHECK_PARAMS_OR_RETURN(pRmCtrlParams, NV83DE_CTRL_DEBUG_WRITE_MEMORY_PARAMS);
-                        
+
             status = rmapiParamsRelease(&paramCopies[0]);
             ((NV83DE_CTRL_DEBUG_WRITE_MEMORY_PARAMS*)pRmCtrlParams->pParams)->buffer = paramCopies[0].pUserParams;
             break;

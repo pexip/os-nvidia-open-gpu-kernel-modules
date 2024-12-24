@@ -120,9 +120,10 @@
     _op(NvlStatus, nvswitch_deassert_link_reset,    (nvswitch_device *device, nvlink_link *link), _arch)  \
     _op(NvBool,    nvswitch_is_soe_supported,       (nvswitch_device *device), _arch)  \
     _op(NvlStatus, nvswitch_init_soe, (nvswitch_device *device), _arch)  \
-    _op(void,      nvswitch_soe_init_l2_state,       (nvswitch_device *device), _arch) \
     _op(NvBool,    nvswitch_is_inforom_supported,   (nvswitch_device *device), _arch)  \
     _op(NvBool,    nvswitch_is_spi_supported,       (nvswitch_device *device), _arch)  \
+    _op(NvBool,    nvswitch_is_bios_supported,      (nvswitch_device *device), _arch)  \
+    _op(NvlStatus, nvswitch_get_bios_size,         (nvswitch_device *device, NvU32 *pSize),  _arch)  \
     _op(NvBool,    nvswitch_is_smbpbi_supported,   (nvswitch_device *device), _arch)  \
     _op(NvlStatus, nvswitch_post_init_device_setup, (nvswitch_device *device), _arch)  \
     _op(void,      nvswitch_post_init_blacklist_device_setup, (nvswitch_device *device), _arch)  \
@@ -229,9 +230,10 @@
     _op(NvlStatus, nvswitch_ctrl_clear_counters, (nvswitch_device *device, NVSWITCH_NVLINK_CLEAR_COUNTERS_PARAMS *ret), _arch) \
     _op(NvlStatus, nvswitch_ctrl_set_nvlink_error_threshold, (nvswitch_device *device, NVSWITCH_SET_NVLINK_ERROR_THRESHOLD_PARAMS *pParams), _arch) \
     _op(NvlStatus, nvswitch_ctrl_get_nvlink_error_threshold, (nvswitch_device *device, NVSWITCH_GET_NVLINK_ERROR_THRESHOLD_PARAMS *pParams), _arch) \
-    _op(NvlStatus, nvswitch_ctrl_therm_read_voltage, (nvswitch_device *device, NVSWITCH_CTRL_GET_VOLTAGE_PARAMS *info), _arch) \
-    _op(NvlStatus, nvswitch_ctrl_therm_read_power, (nvswitch_device *device, NVSWITCH_GET_POWER_PARAMS *info), _arch) \
     _op(NvlStatus, nvswitch_ctrl_get_board_part_number, (nvswitch_device *device, NVSWITCH_GET_BOARD_PART_NUMBER_VECTOR *p), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_therm_read_voltage, (nvswitch_device *device, NVSWITCH_CTRL_GET_VOLTAGE_PARAMS *info), _arch) \
+    _op(void,      nvswitch_soe_init_l2_state,       (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_therm_read_power, (nvswitch_device *device, NVSWITCH_GET_POWER_PARAMS *info), _arch) \
     _op(NvBool,    nvswitch_does_link_need_termination_enabled, (nvswitch_device *device, nvlink_link *link), _arch) \
     _op(NvlStatus, nvswitch_link_termination_setup, (nvswitch_device *device, nvlink_link *link), _arch) \
     _op(NvlStatus, nvswitch_check_io_sanity, (nvswitch_device *device), _arch) \

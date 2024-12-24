@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,17 +26,18 @@
 
 #include "nverror.h"
 #include "gpu/bif/kernel_bif.h"
+#include "gpu/fsp/kern_fsp.h"
 #include "platform/chipset/chipset.h"
 #include "ctrl/ctrl2080/ctrl2080bus.h"
 
 #include "published/hopper/gh100/dev_fb.h"
+#include "published/hopper/gh100/hwproject.h"
 #include "published/hopper/gh100/dev_xtl_ep_pri.h"
+#include "published/hopper/gh100/dev_nv_xpl.h"
 #include "published/hopper/gh100/dev_xtl_ep_pcfg_gpu.h"
 #include "published/hopper/gh100/hwproject.h"
 
 #include "os/os.h"
-
-static void _kbifEnablePcieAtomics_GH100(OBJGPU *);
 
 /*!
  * @brief Check if MSI is enabled in HW
@@ -272,7 +273,6 @@ kbifPcieConfigEnableRelaxedOrdering_GH100
     KernelBif *pKernelBif
 )
 {
-
     NvU32 xveDevCtrlStatus;
 
     if (GPU_BUS_CFG_CYCLE_RD32(pGpu,
@@ -339,7 +339,6 @@ kbifGetXveStatusBits_GH100
     NvU32     *pStatus
 )
 {
-
     // control/status reg 0x68
     NvU32 xtlDevCtrlStatus;
 
@@ -419,7 +418,6 @@ kbifClearXveStatus_GH100
     NvU32     *pStatus
 )
 {
-
     NvU32 xtlDevCtrlStatus;
 
     if (pStatus)
@@ -462,7 +460,6 @@ kbifGetXveAerBits_GH100
     NvU32     *pBits
 )
 {
-
     NvU32 xtlAerUncorr;
     NvU32 xtlAerCorr;
 
@@ -538,7 +535,6 @@ kbifClearXveAer_GH100
     NvU32      bits
 )
 {
-
     NvU32 xtlAerUncorr = 0;
     NvU32 xtlAerCorr   = 0;
 
@@ -611,7 +607,6 @@ kbifGetPciConfigSpacePriMirror_GH100
     NvU32     *pSize
 )
 {
-
     *pBase = DEVICE_BASE(NV_EP_PCFGM);
     *pSize = DEVICE_EXTENT(NV_EP_PCFGM) - DEVICE_BASE(NV_EP_PCFGM) + 1;
     return NV_OK;
@@ -658,7 +653,7 @@ kbifProbePcieReqAtomicCaps_GH100
     pKernelBif->osPcieAtomicsOpMask = osAtomicsMask;
 
     // Program PCIe atomics register settings
-    _kbifEnablePcieAtomics_GH100(pGpu);
+    kbifEnablePcieAtomics_HAL(pGpu, pKernelBif);
 
     return;
 }
@@ -666,12 +661,15 @@ kbifProbePcieReqAtomicCaps_GH100
 /*!
  * @brief Enable PCIe atomics if PCIe hierarchy supports it
  *
- * @param[in] pGpu GPU object pointer
+ * @param[in] pGpu       GPU object pointer
+ * @param[in] pKernelBif Kernel BIF object pointer
+ *
  */
-static void
-_kbifEnablePcieAtomics_GH100
+void
+kbifEnablePcieAtomics_GH100
 (
-    OBJGPU *pGpu
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
 )
 {
     NvU32 regVal;
@@ -735,7 +733,6 @@ kbifGetBusOptionsAddr_GH100
     }
     return status;
 }
-
 
 /*!
  * @brief: Get BAR information from PCIe config space
@@ -874,3 +871,39 @@ kbifCacheVFInfo_GH100
     pGpu->sriovState.firstVFBarAddress[2] = barAddr;
     pGpu->sriovState.b64bitVFBar2         = barIs64Bit;
 }
+
+NvU32
+kbifGetEccCounts_GH100
+(
+    OBJGPU *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32 regVal;
+    NvU32 count = 0;
+
+    // PCIE RBUF
+    regVal = GPU_REG_RD32(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_COUNT_RBUF);
+    count += DRF_VAL(_XPL_DL, _ERR_COUNT_RBUF, _UNCORR_ERR, regVal);
+
+    // PCIE SEQ_LUT
+    regVal = GPU_REG_RD32(pGpu, NV_XPL_BASE_ADDRESS + NV_XPL_DL_ERR_COUNT_SEQ_LUT);
+    count += DRF_VAL(_XPL_DL, _ERR_COUNT_SEQ_LUT, _UNCORR_ERR, regVal);
+
+    // PCIE XTL
+    regVal = GPU_REG_RD32(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_DED_ERROR_STATUS);
+    if (regVal != 0)
+    {
+        count += 1;
+    }
+
+    // PCIE XTL
+    regVal = GPU_REG_RD32(pGpu, NV_XTL_BASE_ADDRESS + NV_XTL_EP_PRI_RAM_ERROR_INTR_STATUS);
+    if (regVal != 0)
+    {
+        count += 1;
+    }
+
+    return count;
+}
+

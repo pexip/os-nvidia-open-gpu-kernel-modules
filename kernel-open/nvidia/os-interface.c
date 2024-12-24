@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1999-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1999-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,6 +28,11 @@
 
 #include "nv-time.h"
 
+#include <linux/mmzone.h>
+#include <linux/numa.h>
+
+#include <linux/pid.h>
+
 extern char *NVreg_TemporaryFilePath;
 
 #define MAX_ERROR_STRING 512
@@ -41,8 +46,8 @@ extern nv_kthread_q_t nv_kthread_q;
 NvU32 os_page_size  = PAGE_SIZE;
 NvU64 os_page_mask  = NV_PAGE_MASK;
 NvU8  os_page_shift = PAGE_SHIFT;
-NvU32 os_sev_status = 0;
-NvBool os_sev_enabled = 0;
+NvBool os_cc_enabled = 0;
+NvBool os_cc_tdx_enabled = 0;
 
 #if defined(CONFIG_DMA_SHARED_BUFFER)
 NvBool os_dma_buf_enabled = NV_TRUE;
@@ -173,7 +178,7 @@ void* NV_API_CALL os_alloc_semaphore
         return NULL;
     }
 
-    NV_INIT_SEMA(os_sema, initialValue);
+    sema_init(os_sema, initialValue);
 
     return (void *)os_sema;
 }
@@ -1192,87 +1197,6 @@ NvBool NV_API_CALL os_is_efi_enabled(void)
     return efi_enabled(EFI_BOOT);
 }
 
-void NV_API_CALL os_get_screen_info(
-    NvU64 *pPhysicalAddress,
-    NvU16 *pFbWidth,
-    NvU16 *pFbHeight,
-    NvU16 *pFbDepth,
-    NvU16 *pFbPitch,
-    NvU64 consoleBar1Address,
-    NvU64 consoleBar2Address
-)
-{
-    *pPhysicalAddress = 0;
-    *pFbWidth = *pFbHeight = *pFbDepth = *pFbPitch = 0;
-
-#if defined(CONFIG_FB) && defined(NV_NUM_REGISTERED_FB_PRESENT)
-    if (num_registered_fb > 0)
-    {
-        int i;
-
-        for (i = 0; i < num_registered_fb; i++)
-        {
-            if (!registered_fb[i])
-                continue;
-
-            /* Make sure base address is mapped to GPU BAR */
-            if ((registered_fb[i]->fix.smem_start == consoleBar1Address) ||
-                (registered_fb[i]->fix.smem_start == consoleBar2Address))
-            {
-                *pPhysicalAddress = registered_fb[i]->fix.smem_start;
-                *pFbWidth = registered_fb[i]->var.xres;
-                *pFbHeight = registered_fb[i]->var.yres;
-                *pFbDepth = registered_fb[i]->var.bits_per_pixel;
-                *pFbPitch = registered_fb[i]->fix.line_length;
-                return;
-            }
-        }
-    }
-#endif
-
-    /*
-     * If the screen info is not found in the registered FBs then fallback
-     * to the screen_info structure.
-     *
-     * The SYSFB_SIMPLEFB option, if enabled, marks VGA/VBE/EFI framebuffers as
-     * generic framebuffers so the new generic system-framebuffer drivers can
-     * be used instead. DRM_SIMPLEDRM drives the generic system-framebuffers
-     * device created by SYSFB_SIMPLEFB.
-     *
-     * SYSFB_SIMPLEFB registers a dummy framebuffer which does not contain the
-     * information required by os_get_screen_info(), therefore you need to
-     * fall back onto the screen_info structure.
-     */
-
-#if NV_IS_EXPORT_SYMBOL_PRESENT_screen_info
-    /*
-     * If there is not a framebuffer console, return 0 size.
-     *
-     * orig_video_isVGA is set to 1 during early Linux kernel
-     * initialization, and then will be set to a value, such as
-     * VIDEO_TYPE_VLFB or VIDEO_TYPE_EFI if an fbdev console is used.
-     */
-    if (screen_info.orig_video_isVGA > 1)
-    {
-        NvU64 physAddr = screen_info.lfb_base;
-#if defined(VIDEO_CAPABILITY_64BIT_BASE)
-        physAddr |= (NvU64)screen_info.ext_lfb_base << 32;
-#endif
-
-        /* Make sure base address is mapped to GPU BAR */
-        if ((physAddr == consoleBar1Address) ||
-            (physAddr == consoleBar2Address))
-        {
-            *pPhysicalAddress = physAddr;
-            *pFbWidth = screen_info.lfb_width;
-            *pFbHeight = screen_info.lfb_height;
-            *pFbDepth = screen_info.lfb_depth;
-            *pFbPitch = screen_info.lfb_linelength;
-        }
-    }
-#endif
-}
-
 void NV_API_CALL os_dump_stack(void)
 {
     dump_stack();
@@ -1422,8 +1346,7 @@ NV_STATUS NV_API_CALL os_get_euid(NvU32 *pSecToken)
     return NV_OK;
 }
 
-// These functions are needed only on x86_64 platforms.
-#if defined(NVCPU_X86_64)
+#if defined(NVCPU_X86_64) || defined(NVCPU_AARCH64)
 
 static NvBool os_verify_checksum(const NvU8 *pMappedAddr, NvU32 length)
 {
@@ -1461,6 +1384,9 @@ static NvBool os_verify_checksum(const NvU8 *pMappedAddr, NvU32 length)
 
 static NV_STATUS os_get_smbios_header_legacy(NvU64 *pSmbsAddr)
 {
+#if !defined(NVCPU_X86_64)
+    return NV_ERR_NOT_SUPPORTED;
+#else
     NV_STATUS status = NV_ERR_OPERATING_SYSTEM;
     NvU8 *pMappedAddr = NULL;
     NvU8 *pIterAddr = NULL;
@@ -1495,6 +1421,7 @@ static NV_STATUS os_get_smbios_header_legacy(NvU64 *pSmbsAddr)
     os_unmap_kernel_space(pMappedAddr, SMBIOS_LEGACY_SIZE);
 
     return status;
+#endif
 }
 
 // This function is needed only if "efi" is enabled.
@@ -1571,13 +1498,13 @@ static NV_STATUS os_get_smbios_header_uefi(NvU64 *pSmbsAddr)
     return status;
 }
 
-#endif // defined(NVCPU_X86_64)
+#endif // defined(NVCPU_X86_64) || defined(NVCPU_AARCH64)
 
 // The function locates the SMBIOS entry point.
 NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr)
 {
 
-#if !defined(NVCPU_X86_64)
+#if !defined(NVCPU_X86_64) && !defined(NVCPU_AARCH64)
     return NV_ERR_NOT_SUPPORTED;
 #else
     NV_STATUS status = NV_OK;
@@ -1784,15 +1711,14 @@ NV_STATUS NV_API_CALL os_numa_memblock_size
     NvU64 *memblock_size
 )
 {
+#if NV_IS_EXPORT_SYMBOL_PRESENT_memory_block_size_bytes
+    *memblock_size = memory_block_size_bytes();
+    return NV_OK;
+#endif
     if (nv_ctl_device.numa_memblock_size == 0)
         return NV_ERR_INVALID_STATE;
     *memblock_size = nv_ctl_device.numa_memblock_size;
     return NV_OK;
-}
-
-NV_STATUS NV_API_CALL os_call_nv_vmbus(NvU32 vmbus_cmd, void *input)
-{
-    return NV_ERR_NOT_SUPPORTED;
 }
 
 NV_STATUS NV_API_CALL os_open_temporary_file
@@ -2003,13 +1929,22 @@ NvBool NV_API_CALL os_is_nvswitch_present(void)
     return !!pci_dev_present(nvswitch_pci_table);
 }
 
-void NV_API_CALL os_get_random_bytes
+/*
+ * This function may sleep (interruptible).
+ */
+NV_STATUS NV_API_CALL os_get_random_bytes
 (
     NvU8 *bytes,
     NvU16 numBytes
 )
 {
+#if defined NV_WAIT_FOR_RANDOM_BYTES_PRESENT
+    if (wait_for_random_bytes() < 0)
+        return NV_ERR_NOT_READY;
+#endif
+
     get_random_bytes(bytes, numBytes);
+    return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_alloc_wait_queue
@@ -2109,5 +2044,453 @@ void NV_API_CALL os_nv_cap_close_fd
 )
 {
     nv_cap_close_fd(fd);
+}
+
+/*
+ * Reads the total memory and free memory of a NUMA node from the kernel.
+ */
+NV_STATUS NV_API_CALL os_get_numa_node_memory_usage
+(
+    NvS32 node_id,
+    NvU64 *free_memory_bytes,
+    NvU64 *total_memory_bytes
+)
+{
+    struct pglist_data *pgdat;
+    struct zone *zone;
+    NvU32 zone_id;
+
+    if (node_id >= MAX_NUMNODES)
+    {
+        nv_printf(NV_DBG_ERRORS, "Invalid NUMA node ID\n");
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    pgdat = NODE_DATA(node_id);
+
+    *free_memory_bytes = 0;
+    *total_memory_bytes = 0;
+
+    for (zone_id = 0; zone_id < MAX_NR_ZONES; zone_id++)
+    {
+        zone = &(pgdat->node_zones[zone_id]);
+        if (!populated_zone(zone))
+            continue;
+        *free_memory_bytes += (zone_page_state_snapshot(zone, NR_FREE_PAGES) * PAGE_SIZE);
+        *total_memory_bytes += (zone->present_pages * PAGE_SIZE);
+    }
+
+    return NV_OK;
+}
+
+typedef struct os_numa_gpu_mem_hotplug_notifier_s
+{
+    NvU64 start_pa;
+    NvU64 size;
+    nv_pci_info_t pci_info;
+    struct notifier_block memory_notifier;
+} os_numa_gpu_mem_hotplug_notifier_t;
+
+static int os_numa_verify_gpu_memory_zone(struct notifier_block *nb,
+                                          unsigned long action, void *data)
+{
+    os_numa_gpu_mem_hotplug_notifier_t *notifier = container_of(nb,
+        os_numa_gpu_mem_hotplug_notifier_t,
+        memory_notifier);
+    struct memory_notify *mhp = data;
+    NvU64 start_pa = PFN_PHYS(mhp->start_pfn);
+    NvU64 size = PFN_PHYS(mhp->nr_pages);
+
+    if (action == MEM_GOING_ONLINE)
+    {
+        // Check if onlining memory falls in the GPU memory range
+        if ((start_pa >= notifier->start_pa) &&
+            (start_pa + size) <= (notifier->start_pa + notifier->size))
+        {
+            /*
+             * Verify GPU memory NUMA node has memory only in ZONE_MOVABLE before
+             * onlining the memory so that incorrect auto online setting doesn't
+             * cause the memory onlined in a zone where kernel allocations
+             * could happen, resulting in GPU memory hot unpluggable and requiring
+             * system reboot.
+             */
+            if (page_zonenum((pfn_to_page(mhp->start_pfn))) != ZONE_MOVABLE)
+            {
+                nv_printf(NV_DBG_ERRORS, "NVRM: Failing GPU memory onlining as the onlining zone "
+                          "is not movable. pa: 0x%llx size: 0x%llx\n"
+                          "NVRM: The NVIDIA GPU %04x:%02x:%02x.%x installed in the system\n"
+                          "NVRM: requires auto onlining mode online_movable enabled in\n"
+                          "NVRM: /sys/devices/system/memory/auto_online_blocks\n",
+                          start_pa, size, notifier->pci_info.domain, notifier->pci_info.bus,
+                          notifier->pci_info.slot, notifier->pci_info.function);
+                return NOTIFY_BAD;
+            }
+        }
+    }
+    return NOTIFY_OK;
+}
+
+#define ADD_REMOVE_GPU_MEMORY_NUM_SEGMENTS 4
+
+NV_STATUS NV_API_CALL os_numa_add_gpu_memory
+(
+    void *handle,
+    NvU64 offset,
+    NvU64 size,
+    NvU32 *nodeId
+)
+{
+#if defined(NV_ADD_MEMORY_DRIVER_MANAGED_PRESENT)
+    int node = 0;
+    nv_linux_state_t *nvl = pci_get_drvdata(handle);
+    nv_state_t *nv = NV_STATE_PTR(nvl);
+    NvU64 base = offset + nvl->coherent_link_info.gpu_mem_pa;
+    int ret = 0;
+    NvU64 memblock_size;
+    NvU64 size_remaining;
+    NvU64 calculated_segment_size;
+    NvU64 segment_size;
+    NvU64 segment_base;
+    os_numa_gpu_mem_hotplug_notifier_t notifier =
+    {
+        .start_pa = base,
+        .size = size,
+        .pci_info = nv->pci_info,
+        .memory_notifier.notifier_call = os_numa_verify_gpu_memory_zone,
+    };
+
+    if (nodeId == NULL)
+    {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    if (bitmap_empty(nvl->coherent_link_info.free_node_bitmap, MAX_NUMNODES))
+    {
+        return NV_ERR_IN_USE;
+    }
+    node = find_first_bit(nvl->coherent_link_info.free_node_bitmap, MAX_NUMNODES);
+    if (node == MAX_NUMNODES)
+    {
+        return NV_ERR_INVALID_STATE;
+    }
+
+    NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_ONLINE_IN_PROGRESS);
+
+    ret = register_memory_notifier(&notifier.memory_notifier);
+    if (ret)
+    {
+        nv_printf(NV_DBG_ERRORS, "NVRM: Memory hotplug notifier registration failed\n");
+        goto failed;
+    }
+
+    //
+    // Adding all memory at once can take a long time. Split up memory into segments
+    // with schedule() in between to prevent soft lockups. Memory segments for
+    // add_memory_driver_managed() need to be aligned to memblock size.
+    //
+    // If there are any issues splitting into segments, then add all memory at once.
+    //
+    if (os_numa_memblock_size(&memblock_size) == NV_OK)
+    {
+        calculated_segment_size = NV_ALIGN_UP(size / ADD_REMOVE_GPU_MEMORY_NUM_SEGMENTS, memblock_size);
+    }
+    else
+    {
+        // Don't split into segments, add all memory at once
+        calculated_segment_size = size;
+    }
+
+    segment_size = calculated_segment_size;
+    segment_base = base;
+    size_remaining = size;
+
+    while ((size_remaining > 0) &&
+           (ret == 0))
+    {
+        if (segment_size > size_remaining)
+        {
+            segment_size = size_remaining;
+        }
+
+#ifdef NV_ADD_MEMORY_DRIVER_MANAGED_HAS_MHP_FLAGS_ARG
+        ret = add_memory_driver_managed(node, segment_base, segment_size, "System RAM (NVIDIA)", MHP_NONE);
+#else
+        ret = add_memory_driver_managed(node, segment_base, segment_size, "System RAM (NVIDIA)");
+#endif
+        nv_printf(NV_DBG_SETUP, "NVRM: add_memory_driver_managed() returns: %d for segment_base: 0x%llx, segment_size: 0x%llx\n",
+                  ret, segment_base, segment_size);
+
+        segment_base += segment_size;
+        size_remaining -= segment_size;
+
+        // Yield CPU to prevent soft lockups
+        schedule();
+    }
+    unregister_memory_notifier(&notifier.memory_notifier);
+
+    if (ret == 0)
+    {
+        struct zone *zone = &NODE_DATA(node)->node_zones[ZONE_MOVABLE];
+        NvU64 start_pfn = base >> PAGE_SHIFT;
+        NvU64 end_pfn = (base + size) >> PAGE_SHIFT;
+
+        /* Verify the full GPU memory range passed on is onlined */
+        if (zone->zone_start_pfn != start_pfn ||
+            zone_end_pfn(zone) != end_pfn)
+        {
+            nv_printf(NV_DBG_ERRORS, "NVRM: GPU memory zone movable auto onlining failed!\n");
+
+#ifdef NV_OFFLINE_AND_REMOVE_MEMORY_PRESENT
+            // Since zone movable auto onlining failed, need to remove the added memory.
+            segment_size = calculated_segment_size;
+            segment_base = base;
+            size_remaining = size;
+
+            while (size_remaining > 0)
+            {
+                if (segment_size > size_remaining)
+                {
+                    segment_size = size_remaining;
+                }
+
+#ifdef NV_REMOVE_MEMORY_HAS_NID_ARG
+                ret = offline_and_remove_memory(node, segment_base, segment_size);
+#else
+                ret = offline_and_remove_memory(segment_base, segment_size);
+#endif
+                nv_printf(NV_DBG_SETUP, "NVRM: offline_and_remove_memory() returns: %d for segment_base: 0x%llx, segment_size: 0x%llx\n",
+                          ret, segment_base, segment_size);
+
+                segment_base += segment_size;
+                size_remaining -= segment_size;
+
+                // Yield CPU to prevent soft lockups
+                schedule();
+            }
+#endif
+            goto failed;
+        }
+
+        *nodeId = node;
+        clear_bit(node, nvl->coherent_link_info.free_node_bitmap);
+        NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_ONLINE);
+        return NV_OK;
+    }
+    nv_printf(NV_DBG_ERRORS, "NVRM: Memory add failed. base: 0x%lx size: 0x%lx ret: %d\n",
+              base, size, ret);
+failed:
+    NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_ONLINE_FAILED);
+    return NV_ERR_OPERATING_SYSTEM;
+#endif
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+
+typedef struct {
+    NvU64 base;
+    NvU64 size;
+    NvU32 nodeId;
+    int ret;
+} remove_numa_memory_info_t;
+
+static void offline_numa_memory_callback
+(
+    void *args
+)
+{
+#ifdef NV_OFFLINE_AND_REMOVE_MEMORY_PRESENT
+    remove_numa_memory_info_t *pNumaInfo = (remove_numa_memory_info_t *)args;
+    int ret = 0;
+    NvU64 memblock_size;
+    NvU64 size_remaining;
+    NvU64 calculated_segment_size;
+    NvU64 segment_size;
+    NvU64 segment_base;
+
+    //
+    // Removing all memory at once can take a long time. Split up memory into segments
+    // with schedule() in between to prevent soft lockups. Memory segments for
+    // offline_and_remove_memory() need to be aligned to memblock size.
+    //
+    // If there are any issues splitting into segments, then remove all memory at once.
+    //
+    if (os_numa_memblock_size(&memblock_size) == NV_OK)
+    {
+        calculated_segment_size = NV_ALIGN_UP(pNumaInfo->size / ADD_REMOVE_GPU_MEMORY_NUM_SEGMENTS, memblock_size);
+    }
+    else
+    {
+        // Don't split into segments, remove all memory at once
+        calculated_segment_size = pNumaInfo->size;
+    }
+
+    segment_size = calculated_segment_size;
+    segment_base = pNumaInfo->base;
+    size_remaining = pNumaInfo->size;
+
+    while (size_remaining > 0)
+    {
+        if (segment_size > size_remaining)
+        {
+            segment_size = size_remaining;
+        }
+
+#ifdef NV_REMOVE_MEMORY_HAS_NID_ARG
+        ret = offline_and_remove_memory(pNumaInfo->nodeId,
+                                        segment_base,
+                                        segment_size);
+#else
+        ret = offline_and_remove_memory(segment_base,
+                                        segment_size);
+#endif
+        nv_printf(NV_DBG_SETUP, "NVRM: offline_and_remove_memory() returns: %d for segment_base: 0x%llx, segment_size: 0x%llx\n",
+                  ret, segment_base, segment_size);
+        pNumaInfo->ret |= ret;
+
+        segment_base += segment_size;
+        size_remaining -= segment_size;
+
+        // Yield CPU to prevent soft lockups
+        schedule();
+    }
+#endif
+}
+
+NV_STATUS NV_API_CALL os_numa_remove_gpu_memory
+(
+    void *handle,
+    NvU64 offset,
+    NvU64 size,
+    NvU32 nodeId
+)
+{
+#ifdef NV_ADD_MEMORY_DRIVER_MANAGED_PRESENT
+    nv_linux_state_t *nvl = pci_get_drvdata(handle);
+#ifdef NV_OFFLINE_AND_REMOVE_MEMORY_PRESENT
+    NvU64 base = offset + nvl->coherent_link_info.gpu_mem_pa;
+    remove_numa_memory_info_t numa_info;
+    nv_kthread_q_item_t remove_numa_memory_q_item;
+    int ret;
+#endif
+
+    if (nodeId >= MAX_NUMNODES)
+    {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if ((nodeId == NUMA_NO_NODE) || test_bit(nodeId, nvl->coherent_link_info.free_node_bitmap))
+    {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_OFFLINE_IN_PROGRESS);
+
+#ifdef NV_OFFLINE_AND_REMOVE_MEMORY_PRESENT
+    numa_info.base   = base;
+    numa_info.size   = size;
+    numa_info.nodeId = nodeId;
+    numa_info.ret    = 0;
+
+    nv_kthread_q_item_init(&remove_numa_memory_q_item,
+                           offline_numa_memory_callback,
+                           &numa_info);
+    nv_kthread_q_schedule_q_item(&nvl->remove_numa_memory_q,
+                                 &remove_numa_memory_q_item);
+    nv_kthread_q_flush(&nvl->remove_numa_memory_q);
+
+    ret = numa_info.ret;
+
+    if (ret == 0)
+    {
+        set_bit(nodeId, nvl->coherent_link_info.free_node_bitmap);
+
+        NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_OFFLINE);
+        return NV_OK;
+    }
+
+    nv_printf(NV_DBG_ERRORS, "NVRM: Memory remove failed. base: 0x%lx size: 0x%lx ret: %d\n",
+              base, size, ret);
+#endif
+    NV_ATOMIC_SET(nvl->numa_info.status, NV_IOCTL_NUMA_STATUS_OFFLINE_FAILED);
+    return NV_ERR_OPERATING_SYSTEM;
+#endif
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+NV_STATUS NV_API_CALL os_offline_page_at_address
+(
+    NvU64 address
+)
+{
+#if defined(CONFIG_MEMORY_FAILURE)
+    int flags = 0;
+    int ret;
+    NvU64 pfn;
+    struct page *page = NV_GET_PAGE_STRUCT(address);
+
+    if (page == NULL)
+    {
+        nv_printf(NV_DBG_ERRORS, "NVRM: Failed to get page struct for address: 0x%llx\n",
+                  address);
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    pfn = page_to_pfn(page);
+
+#ifdef NV_MEMORY_FAILURE_MF_SW_SIMULATED_DEFINED
+    //
+    // Set MF_SW_SIMULATED flag so Linux kernel can differentiate this from a HW
+    // memory failure. HW memory failures cannot be unset via unpoison_memory() API.
+    //
+    // Currently, RM does not use unpoison_memory(), so it makes no difference
+    // whether or not MF_SW_SIMULATED is set. Regardless, it is semantically more
+    // correct to set MF_SW_SIMULATED.
+    //
+    flags |= MF_SW_SIMULATED;
+#endif
+
+#ifdef NV_MEMORY_FAILURE_HAS_TRAPNO_ARG
+    ret = memory_failure(pfn, 0, flags);
+#else
+    ret = memory_failure(pfn, flags);
+#endif
+
+    if (ret != 0)
+    {
+        nv_printf(NV_DBG_ERRORS, "NVRM: page offlining failed. address: 0x%llx pfn: 0x%llx ret: %d\n",
+                  address, pfn, ret);
+        return NV_ERR_OPERATING_SYSTEM;
+    }
+
+    return NV_OK;
+#else // !defined(CONFIG_MEMORY_FAILURE)
+    nv_printf(NV_DBG_ERRORS, "NVRM: memory_failure() not supported by kernel. page offlining failed. address: 0x%llx\n",
+              address);
+    return NV_ERR_NOT_SUPPORTED;
+#endif
+}
+
+void* NV_API_CALL os_get_pid_info(void)
+{
+    return get_task_pid(current, PIDTYPE_PID);
+}
+
+void NV_API_CALL os_put_pid_info(void *pid_info)
+{
+    if (pid_info != NULL)
+        put_pid(pid_info);
+}
+
+NV_STATUS NV_API_CALL os_find_ns_pid(void *pid_info, NvU32 *ns_pid)
+{
+    if ((pid_info == NULL) || (ns_pid == NULL))
+        return NV_ERR_INVALID_ARGUMENT;
+
+    *ns_pid = pid_vnr((struct pid *)pid_info);
+
+    // The call returns 0 if the PID is not found in the current ns
+    if (*ns_pid == 0)
+        return NV_ERR_OBJECT_NOT_FOUND;
+
+    return NV_OK;
 }
 

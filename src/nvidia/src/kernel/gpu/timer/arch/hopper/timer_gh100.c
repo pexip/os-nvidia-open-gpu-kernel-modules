@@ -86,7 +86,7 @@ NV_STATUS tmrSetCurrentTime_GH100
     {
         //
         // We can only safely program the timer offset if FSP includes the fix
-        // for bug 3957833. 
+        // for bug 3957833.
         //
         GPU_REG_WR32(pGpu, NV_PGC6_SCI_SYS_TIMER_OFFSET_1, NvU64_HI32(sysTimerOffsetNs));
         GPU_REG_WR32(pGpu, NV_PGC6_SCI_SYS_TIMER_OFFSET_0, NvU64_LO32(sysTimerOffsetNs) |
@@ -107,8 +107,8 @@ NV_STATUS tmrSetCurrentTime_GH100
 NV_STATUS
 tmrSetCountdown_GH100
 (
-    POBJGPU            pGpu,
-    POBJTMR            pTmr,
+    OBJGPU            *pGpu,
+    OBJTMR            *pTmr,
     NvU32              time,
     NvU32              tmrId,
     THREAD_STATE_NODE *pThreadState

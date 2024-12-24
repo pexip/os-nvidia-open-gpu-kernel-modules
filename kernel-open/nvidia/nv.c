@@ -56,7 +56,11 @@
 #include "nv-pat.h"
 #include "nv-dmabuf.h"
 
-#if !defined(CONFIG_RETPOLINE)
+/*
+ * Commit aefb2f2e619b ("x86/bugs: Rename CONFIG_RETPOLINE =>
+ * CONFIG_MITIGATION_RETPOLINE) in v6.8 renamed CONFIG_RETPOLINE.
+ */
+#if !defined(CONFIG_RETPOLINE) && !defined(CONFIG_MITIGATION_RETPOLINE)
 #include "nv-retpoline.h"
 #endif
 
@@ -86,7 +90,17 @@
 
 #include <linux/ioport.h>
 
+#if defined(NV_LINUX_CC_PLATFORM_H_PRESENT)
+#include <linux/cc_platform.h>
+#endif
+
+#if defined(NV_ASM_CPUFEATURE_H_PRESENT)
+#include <asm/cpufeature.h>
+#endif
+
 #include "conftest/patches.h"
+
+#include "detect-self-hosted.h"
 
 #define RM_THRESHOLD_TOTAL_IRQ_COUNT     100000
 #define RM_THRESHOLD_UNAHNDLED_IRQ_COUNT 99900
@@ -142,6 +156,9 @@ static NvTristate nv_chipset_is_io_coherent = NV_TRISTATE_INDETERMINATE;
 // True if all the successfully probed devices support ATS
 // Assigned at device probe (module init) time
 NvBool nv_ats_supported = NVCPU_IS_PPC64LE
+#if defined(NV_PCI_DEV_HAS_ATS_ENABLED)
+                          || NV_TRUE
+#endif
 ;
 
 // allow an easy way to convert all debug printfs related to events
@@ -229,51 +246,23 @@ struct dev_pm_ops nv_pm_ops = {
  *** STATIC functions
  ***/
 
-#if defined(NVCPU_X86_64)
-#define NV_AMD_SEV_BIT BIT(1)
-
 static
-NvBool nv_is_sev_supported(
+void nv_detect_conf_compute_platform(
     void
 )
 {
-    unsigned int eax, ebx, ecx, edx;
+#if defined(NV_CC_PLATFORM_PRESENT)
+    os_cc_enabled = cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT);
 
-    /* Check for the SME/SEV support leaf */
-    eax = 0x80000000;
-    ecx = 0;
-    native_cpuid(&eax, &ebx, &ecx, &edx);
-    if (eax < 0x8000001f)
-        return NV_FALSE;
-
-    eax = 0x8000001f;
-    ecx = 0;
-    native_cpuid(&eax, &ebx, &ecx, &edx);
-    /* Check whether SEV is supported */
-    if (!(eax & NV_AMD_SEV_BIT))
-        return NV_FALSE;
-
-    return NV_TRUE;
-}
+#if defined(X86_FEATURE_TDX_GUEST)
+    if (cpu_feature_enabled(X86_FEATURE_TDX_GUEST))
+    {
+        os_cc_tdx_enabled = NV_TRUE;
+    }
 #endif
-
-static
-void nv_sev_init(
-    void
-)
-{
-#if defined(MSR_AMD64_SEV) && defined(NVCPU_X86_64)
-    NvU32 lo_val, hi_val;
-
-    if (!nv_is_sev_supported())
-        return;
-
-    rdmsr(MSR_AMD64_SEV, lo_val, hi_val);
-
-    os_sev_status = lo_val;
-#if defined(MSR_AMD64_SEV_ENABLED)
-    os_sev_enabled = (os_sev_status & MSR_AMD64_SEV_ENABLED);
-#endif
+#else
+    os_cc_enabled = NV_FALSE;
+    os_cc_tdx_enabled = NV_FALSE;
 #endif
 }
 
@@ -679,7 +668,7 @@ nv_module_init(nv_stack_t **sp)
     }
 
     nv_init_rsync_info(); 
-    nv_sev_init();
+    nv_detect_conf_compute_platform();
 
     if (!rm_init_rm(*sp))
     {
@@ -1174,6 +1163,7 @@ static int nv_start_device(nv_state_t *nv, nvidia_stack_t *sp)
 #endif
     int rc = 0;
     NvBool kthread_init = NV_FALSE;
+    NvBool remove_numa_memory_kthread_init = NV_FALSE;
     NvBool power_ref = NV_FALSE;
 
     rc = nv_get_rsync_info();
@@ -1238,12 +1228,11 @@ static int nv_start_device(nv_state_t *nv, nvidia_stack_t *sp)
             rm_read_registry_dword(sp, nv, NV_REG_ENABLE_MSI, &msi_config);
             if (msi_config == 1)
             {
-                if (pci_find_capability(nvl->pci_dev, PCI_CAP_ID_MSIX))
+                if (nvl->pci_dev->msix_cap && rm_is_msix_allowed(sp, nv))
                 {
                     nv_init_msix(nv);
                 }
-                if (pci_find_capability(nvl->pci_dev, PCI_CAP_ID_MSI) &&
-                    !(nv->flags & NV_FLAG_USES_MSIX))
+                if (nvl->pci_dev->msi_cap && !(nv->flags & NV_FLAG_USES_MSIX))
                 {
                     nv_init_msi(nv);
                 }
@@ -1311,6 +1300,15 @@ static int nv_start_device(nv_state_t *nv, nvidia_stack_t *sp)
         if (rc)
             goto failed;
         nv->queue = &nvl->queue;
+
+        if (nv_platform_use_auto_online(nvl))
+        {
+            rc = nv_kthread_q_init(&nvl->remove_numa_memory_q,
+                                   "nv_remove_numa_memory");
+            if (rc)
+                goto failed;
+            remove_numa_memory_kthread_init = NV_TRUE;
+        }
     }
 
     if (!rm_init_adapter(sp, nv))
@@ -1355,6 +1353,8 @@ static int nv_start_device(nv_state_t *nv, nvidia_stack_t *sp)
 
     nv->flags |= NV_FLAG_OPEN;
 
+    rm_request_dnotifier_state(sp, nv);
+
     /*
      * Now that RM init is done, allow dynamic power to control the GPU in FINE
      * mode, if enabled.  (If the mode is COARSE, this unref will do nothing
@@ -1398,6 +1398,12 @@ failed:
 
     if (kthread_init && !(nv->flags & NV_FLAG_PERSISTENT_SW_STATE))
         nv_kthread_q_stop(&nvl->bottom_half_q);
+
+    if (remove_numa_memory_kthread_init &&
+        !(nv->flags & NV_FLAG_PERSISTENT_SW_STATE))
+    {
+        nv_kthread_q_stop(&nvl->remove_numa_memory_q);
+    }
 
     if (nvl->isr_bh_unlocked_mutex)
     {
@@ -1635,7 +1641,9 @@ void nv_shutdown_adapter(nvidia_stack_t *sp,
                          nv_state_t *nv,
                          nv_linux_state_t *nvl)
 {
+#if defined(NVCPU_PPC64LE)
     validate_numa_shutdown_state(nvl);
+#endif
 
     rm_disable_adapter(sp, nv);
 
@@ -1687,6 +1695,9 @@ void nv_shutdown_adapter(nvidia_stack_t *sp,
     }
 
     rm_shutdown_adapter(sp, nv);
+
+    if (nv_platform_use_auto_online(nvl))
+        nv_kthread_q_stop(&nvl->remove_numa_memory_q);
 }
 
 /*
@@ -2241,6 +2252,7 @@ nvidia_ioctl(
             }
 
             api->status = nv_get_numa_status(nvl);
+            api->use_auto_online = nv_platform_use_auto_online(nvl);
             api->memblock_size = nv_ctl_device.numa_memblock_size;
             break;
         }
@@ -3321,6 +3333,7 @@ NV_STATUS NV_API_CALL nv_alloc_pages(
     NvU32       cache_type,
     NvBool      zeroed,
     NvBool      unencrypted,
+    NvS32       node_id,
     NvU64      *pte_array,
     void      **priv_data
 )
@@ -3332,7 +3345,7 @@ NV_STATUS NV_API_CALL nv_alloc_pages(
     NvU32 i;
     struct device *dev = NULL;
 
-    nv_printf(NV_DBG_MEMINFO, "NVRM: VM: nv_alloc_pages: %d pages\n", page_count);
+    nv_printf(NV_DBG_MEMINFO, "NVRM: VM: nv_alloc_pages: %d pages, nodeid %d\n", page_count, node_id);
     nv_printf(NV_DBG_MEMINFO, "NVRM: VM:    contig %d  cache_type %d\n",
         contiguous, cache_type);
 
@@ -3390,8 +3403,17 @@ NV_STATUS NV_API_CALL nv_alloc_pages(
      * See Bug 1920398 for more details.
      */
     if (nv && nvl->npu && !nvl->dma_dev.nvlink)
-        at->flags.node0 = NV_TRUE;
+    {
+        at->flags.node = NV_TRUE;
+        at->node_id = 0;
+    }
 #endif
+
+    if (node_id != NUMA_NO_NODE)
+    {
+        at->flags.node = NV_TRUE;
+        at->node_id = node_id;
+    }
 
     if (at->flags.contig)
         status = nv_alloc_contig_pages(nv, at);
@@ -4903,6 +4925,28 @@ NV_STATUS NV_API_CALL nv_get_device_memory_config(
 
     status = NV_OK;
 #endif
+#if defined(NVCPU_AARCH64)
+    if (node_id != NULL)
+    {
+        *node_id = nvl->numa_info.node_id;
+    }
+
+    if (compr_addr_sys_phys)
+    {
+        *compr_addr_sys_phys = nvl->coherent_link_info.gpu_mem_pa;
+    }
+    if (addr_guest_phys)
+    {
+        *addr_guest_phys = nvl->coherent_link_info.gpu_mem_pa;
+    }
+    if (addr_width)
+    {
+        // TH500 PA width - NV_PFB_PRI_MMU_ATS_ADDR_RANGE_GRANULARITY
+        *addr_width = 48 - 37;
+    }
+
+    status = NV_OK;
+#endif
 
     return status;
 }
@@ -5087,23 +5131,36 @@ void nv_linux_remove_device_locked(nv_linux_state_t *nvl)
 void NV_API_CALL nv_control_soc_irqs(nv_state_t *nv, NvBool bEnable)
 {
     int count;
+    unsigned long flags;
+    nv_linux_state_t *nvl = NV_GET_NVL_FROM_NV_STATE(nv);
 
+    if (nv->current_soc_irq != -1)
+        return;
+
+    NV_SPIN_LOCK_IRQSAVE(&nvl->soc_isr_lock, flags);
     if (bEnable)
     {
         for (count = 0; count < nv->num_soc_irqs; count++)
         {
-            nv->soc_irq_info[count].bh_pending = NV_FALSE;
-            nv->current_soc_irq = -1;
-            enable_irq(nv->soc_irq_info[count].irq_num);
+            if (nv->soc_irq_info[count].ref_count == 0)
+            {
+                nv->soc_irq_info[count].ref_count++;
+                enable_irq(nv->soc_irq_info[count].irq_num);
+            }
         }
     }
     else
     {
         for (count = 0; count < nv->num_soc_irqs; count++)
         {
-            disable_irq_nosync(nv->soc_irq_info[count].irq_num);
+            if (nv->soc_irq_info[count].ref_count == 1)
+            {
+                nv->soc_irq_info[count].ref_count--;
+                disable_irq_nosync(nv->soc_irq_info[count].irq_num);
+            }
         }
     }
+    NV_SPIN_UNLOCK_IRQRESTORE(&nvl->soc_isr_lock, flags);
 }
 
 NvU32 NV_API_CALL nv_get_dev_minor(nv_state_t *nv)
@@ -5526,4 +5583,189 @@ void NV_API_CALL nv_get_updated_emu_seg(
         *start = max((resource_size_t)*start, p->start);
         *end = min((resource_size_t)*end, p->end);
     }
+}
+
+NV_STATUS NV_API_CALL nv_get_egm_info(
+    nv_state_t *nv,
+    NvU64 *phys_addr,
+    NvU64 *size,
+    NvS32 *egm_node_id
+)
+{
+#if defined(NV_DEVICE_PROPERTY_READ_U64_PRESENT) && \
+    defined(CONFIG_ACPI_NUMA) && \
+    NV_IS_EXPORT_SYMBOL_PRESENT_pxm_to_node
+    nv_linux_state_t *nvl = NV_GET_NVL_FROM_NV_STATE(nv);
+    NvU64 pa, sz, pxm;
+
+    if (device_property_read_u64(nvl->dev, "nvidia,egm-pxm", &pxm) != 0)
+    {
+        goto failed;
+    }
+
+    if (device_property_read_u64(nvl->dev, "nvidia,egm-base-pa", &pa) != 0)
+    {
+        goto failed;
+    }
+
+    if (device_property_read_u64(nvl->dev, "nvidia,egm-size", &sz) != 0)
+    {
+        goto failed;
+    }
+
+    NV_DEV_PRINTF(NV_DBG_INFO, nv, "DSD properties: \n");
+    NV_DEV_PRINTF(NV_DBG_INFO, nv, "\tEGM base PA: 0x%llx \n", pa);
+    NV_DEV_PRINTF(NV_DBG_INFO, nv, "\tEGM size: 0x%llx \n", sz);
+    NV_DEV_PRINTF(NV_DBG_INFO, nv, "\tEGM _PXM: 0x%llx \n", pxm);
+
+    if (egm_node_id != NULL)
+    {
+        *egm_node_id = pxm_to_node(pxm);
+        nv_printf(NV_DBG_INFO, "EGM node id: %d\n", *egm_node_id);
+    }
+
+    if (phys_addr != NULL)
+    {
+        *phys_addr = pa;
+        nv_printf(NV_DBG_INFO, "EGM base addr: 0x%llx\n", *phys_addr);
+    }
+
+    if (size != NULL)
+    {
+        *size = sz;
+        nv_printf(NV_DBG_INFO, "EGM size: 0x%llx\n", *size);
+    }
+
+    return NV_OK;
+
+failed:
+#endif // NV_DEVICE_PROPERTY_READ_U64_PRESENT
+
+    NV_DEV_PRINTF(NV_DBG_INFO, nv, "Cannot get EGM info\n");
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+void NV_API_CALL nv_get_screen_info(
+    nv_state_t  *nv,
+    NvU64       *pPhysicalAddress,
+    NvU16       *pFbWidth,
+    NvU16       *pFbHeight,
+    NvU16       *pFbDepth,
+    NvU16       *pFbPitch,
+    NvU64       *pFbSize
+)
+{
+    *pPhysicalAddress = 0;
+    *pFbWidth = *pFbHeight = *pFbDepth = *pFbPitch = *pFbSize = 0;
+
+#if defined(CONFIG_FB) && defined(NV_NUM_REGISTERED_FB_PRESENT)
+    if (num_registered_fb > 0)
+    {
+        int i;
+
+        for (i = 0; i < num_registered_fb; i++)
+        {
+            if (!registered_fb[i])
+                continue;
+
+            /* Make sure base address is mapped to GPU BAR */
+            if (NV_IS_CONSOLE_MAPPED(nv, registered_fb[i]->fix.smem_start))
+            {
+                *pPhysicalAddress = registered_fb[i]->fix.smem_start;
+                *pFbWidth = registered_fb[i]->var.xres;
+                *pFbHeight = registered_fb[i]->var.yres;
+                *pFbDepth = registered_fb[i]->var.bits_per_pixel;
+                *pFbPitch = registered_fb[i]->fix.line_length;
+                *pFbSize = (NvU64)(*pFbHeight) * (NvU64)(*pFbPitch);
+                return;
+            }
+        }
+    }
+#endif
+
+    /*
+     * If the screen info is not found in the registered FBs then fallback
+     * to the screen_info structure.
+     *
+     * The SYSFB_SIMPLEFB option, if enabled, marks VGA/VBE/EFI framebuffers as
+     * generic framebuffers so the new generic system-framebuffer drivers can
+     * be used instead. DRM_SIMPLEDRM drives the generic system-framebuffers
+     * device created by SYSFB_SIMPLEFB.
+     *
+     * SYSFB_SIMPLEFB registers a dummy framebuffer which does not contain the
+     * information required by nv_get_screen_info(), therefore you need to
+     * fall back onto the screen_info structure.
+     *
+     * After commit b8466fe82b79 ("efi: move screen_info into efi init code")
+     * in v6.7, 'screen_info' is exported as GPL licensed symbol for ARM64.
+     */
+
+#if NV_CHECK_EXPORT_SYMBOL(screen_info)
+    /*
+     * If there is not a framebuffer console, return 0 size.
+     *
+     * orig_video_isVGA is set to 1 during early Linux kernel
+     * initialization, and then will be set to a value, such as
+     * VIDEO_TYPE_VLFB or VIDEO_TYPE_EFI if an fbdev console is used.
+     */
+    if (screen_info.orig_video_isVGA > 1)
+    {
+        NvU64 physAddr = screen_info.lfb_base;
+#if defined(VIDEO_CAPABILITY_64BIT_BASE)
+        physAddr |= (NvU64)screen_info.ext_lfb_base << 32;
+#endif
+
+        /* Make sure base address is mapped to GPU BAR */
+        if (NV_IS_CONSOLE_MAPPED(nv, physAddr))
+        {
+            *pPhysicalAddress = physAddr;
+            *pFbWidth = screen_info.lfb_width;
+            *pFbHeight = screen_info.lfb_height;
+            *pFbDepth = screen_info.lfb_depth;
+            *pFbPitch = screen_info.lfb_linelength;
+            *pFbSize = (NvU64)(*pFbHeight) * (NvU64)(*pFbPitch);
+        }
+    }
+#else
+    {
+        nv_linux_state_t *nvl = NV_GET_NVL_FROM_NV_STATE(nv);
+        struct pci_dev *pci_dev = nvl->pci_dev;
+        int i;
+
+        if (pci_dev == NULL)
+            return;
+
+        BUILD_BUG_ON(NV_GPU_BAR_INDEX_IMEM != NV_GPU_BAR_INDEX_FB + 1);
+        for (i = NV_GPU_BAR_INDEX_FB; i <= NV_GPU_BAR_INDEX_IMEM; i++)
+        {
+            int bar_index = nv_bar_index_to_os_bar_index(pci_dev, i);
+            struct resource *gpu_bar_res = &pci_dev->resource[bar_index];
+            struct resource *res = gpu_bar_res->child;
+
+            /*
+             * Console resource will become child resource of pci-dev resource.
+             * Check if child resource start address matches with expected
+             * console start address.
+             */
+            if ((res != NULL) &&
+                NV_IS_CONSOLE_MAPPED(nv, res->start))
+            {
+                NvU32 res_name_len = strlen(res->name);
+
+                /*
+                 * The resource name ends with 'fb' (efifb, vesafb, etc.).
+                 * For simple-framebuffer, the resource name is 'BOOTFB'.
+                 * Confirm if the resources name either ends with 'fb' or 'FB'.
+                 */
+                if ((res_name_len > 2) &&
+                    !strcasecmp((res->name + res_name_len - 2), "fb"))
+                {
+                    *pPhysicalAddress = res->start;
+                    *pFbSize = resource_size(res);
+                    return;
+                }
+            }
+        }
+    }
+#endif
 }

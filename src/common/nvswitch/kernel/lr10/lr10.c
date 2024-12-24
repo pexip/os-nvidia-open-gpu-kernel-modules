@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -22,6 +22,7 @@
  */
 
 #include "common_nvswitch.h"
+#include "bios_nvswitch.h"
 #include "error_nvswitch.h"
 #include "regkey_nvswitch.h"
 #include "haldef_nvswitch.h"
@@ -3990,7 +3991,7 @@ nvswitch_link_lane_reversed_lr10
     nvlink_link *link;
 
     link = nvswitch_get_link(device, linkId);
-    if (nvswitch_is_link_in_reset(device, link))
+    if ((link == NULL) || nvswitch_is_link_in_reset(device, link))
     {
         return NV_FALSE;
     }
@@ -6726,6 +6727,25 @@ nvswitch_is_spi_supported_lr10
 }
 
 NvBool
+nvswitch_is_bios_supported_lr10
+(
+    nvswitch_device *device
+)
+{
+    return nvswitch_is_spi_supported(device);
+}
+
+NvlStatus
+nvswitch_get_bios_size_lr10
+(
+    nvswitch_device *device,
+    NvU32 *pSize
+)
+{
+    return nvswitch_bios_read_size(device, pSize);
+}
+
+NvBool
 nvswitch_is_smbpbi_supported_lr10
 (
     nvswitch_device *device
@@ -7596,10 +7616,10 @@ nvswitch_parse_bios_image_lr10
     NV_STATUS status = NV_OK;
 
     // check if spi is supported
-    if (!nvswitch_is_spi_supported(device))
+    if (!nvswitch_is_bios_supported(device))
     {
         NVSWITCH_PRINT(device, ERROR,
-                "%s: SPI is not supported\n",
+                "%s: BIOS is not supported\n",
                 __FUNCTION__);
         return -NVL_ERR_NOT_SUPPORTED;
     }

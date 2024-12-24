@@ -36,6 +36,7 @@
 #include "uvm_mmu.h"
 #include "uvm_gpu_access_counters.h"
 #include "uvm_pmm_sysmem.h"
+#include "uvm_migrate_pageable.h"
 
 static NV_STATUS uvm_test_get_gpu_ref_count(UVM_TEST_GET_GPU_REF_COUNT_PARAMS *params, struct file *filp)
 {
@@ -147,24 +148,23 @@ static NV_STATUS uvm_test_verify_bh_affinity(uvm_intr_handler_t *isr, int node)
 static NV_STATUS uvm_test_numa_check_affinity(UVM_TEST_NUMA_CHECK_AFFINITY_PARAMS *params, struct file *filp)
 {
     uvm_gpu_t *gpu;
-    NV_STATUS status;
-    uvm_rm_user_object_t user_rm_va_space = {
-        .rm_control_fd = -1,
-        .user_client = params->client,
-        .user_object = params->smc_part_ref
-    };
+    NV_STATUS status = NV_OK;
 
     if (!UVM_THREAD_AFFINITY_SUPPORTED())
         return NV_ERR_NOT_SUPPORTED;
 
-    status = uvm_gpu_retain_by_uuid(&params->gpu_uuid, &user_rm_va_space, &gpu);
-    if (status != NV_OK)
-        return status;
+    uvm_mutex_lock(&g_uvm_global.global_lock);
+
+    gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
+    if (!gpu) {
+        status = NV_ERR_INVALID_DEVICE;
+        goto unlock;
+    }
 
     // If the GPU is not attached to a NUMA node, there is nothing to do.
     if (gpu->parent->closest_cpu_numa_node == NUMA_NO_NODE) {
         status = NV_ERR_NOT_SUPPORTED;
-        goto release;
+        goto unlock;
     }
 
     if (gpu->parent->replayable_faults_supported) {
@@ -173,7 +173,7 @@ static NV_STATUS uvm_test_numa_check_affinity(UVM_TEST_NUMA_CHECK_AFFINITY_PARAM
                                               gpu->parent->closest_cpu_numa_node);
         uvm_gpu_replayable_faults_isr_unlock(gpu->parent);
         if (status != NV_OK)
-            goto release;
+            goto unlock;
 
         if (gpu->parent->non_replayable_faults_supported) {
             uvm_gpu_non_replayable_faults_isr_lock(gpu->parent);
@@ -181,7 +181,7 @@ static NV_STATUS uvm_test_numa_check_affinity(UVM_TEST_NUMA_CHECK_AFFINITY_PARAM
                                                   gpu->parent->closest_cpu_numa_node);
             uvm_gpu_non_replayable_faults_isr_unlock(gpu->parent);
             if (status != NV_OK)
-                goto release;
+                goto unlock;
         }
 
         if (gpu->parent->access_counters_supported) {
@@ -191,8 +191,9 @@ static NV_STATUS uvm_test_numa_check_affinity(UVM_TEST_NUMA_CHECK_AFFINITY_PARAM
             uvm_gpu_access_counters_isr_unlock(gpu->parent);
         }
     }
-release:
-    uvm_gpu_release(gpu);
+
+unlock:
+    uvm_mutex_unlock(&g_uvm_global.global_lock);
     return status;
 }
 
@@ -300,7 +301,6 @@ long uvm_test_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_PMM_REVERSE_MAP,              uvm_test_pmm_reverse_map);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_PMM_INDIRECT_PEERS,           uvm_test_pmm_indirect_peers);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_SPACE_MM_RETAIN,           uvm_test_va_space_mm_retain);
-        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_SPACE_MM_DELAY_SHUTDOWN,   uvm_test_va_space_mm_delay_shutdown);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_PMM_CHUNK_WITH_ELEVATED_PAGE, uvm_test_pmm_chunk_with_elevated_page);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_SPACE_INJECT_ERROR,        uvm_test_va_space_inject_error);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_GET_GPU_TIME,                 uvm_test_get_gpu_time);
@@ -324,13 +324,15 @@ long uvm_test_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_RB_TREE_RANDOM,               uvm_test_rb_tree_random);
         UVM_ROUTE_CMD_STACK_NO_INIT_CHECK(UVM_TEST_GET_USER_SPACE_END_ADDRESS, uvm_test_get_user_space_end_address);
         UVM_ROUTE_CMD_STACK_NO_INIT_CHECK(UVM_TEST_GET_CPU_CHUNK_ALLOC_SIZES, uvm_test_get_cpu_chunk_allocation_sizes);
-        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_HMM_SANITY,                   uvm_test_hmm_sanity);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_RANGE_INJECT_ADD_GPU_VA_SPACE_ERROR,
                                        uvm_test_va_range_inject_add_gpu_va_space_error);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_DESTROY_GPU_VA_SPACE_DELAY,   uvm_test_destroy_gpu_va_space_delay);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SEC2_SANITY,                  uvm_test_sec2_sanity);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SEC2_CPU_GPU_ROUNDTRIP,       uvm_test_sec2_cpu_gpu_roundtrip);
         UVM_ROUTE_CMD_STACK_NO_INIT_CHECK(UVM_TEST_CGROUP_ACCOUNTING_SUPPORTED, uvm_test_cgroup_accounting_supported);
-        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_HMM_INIT, uvm_test_hmm_init);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SPLIT_INVALIDATE_DELAY, uvm_test_split_invalidate_delay);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_CPU_CHUNK_API, uvm_test_cpu_chunk_api);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SKIP_MIGRATE_VMA, uvm_test_skip_migrate_vma);
     }
 
     return -EINVAL;

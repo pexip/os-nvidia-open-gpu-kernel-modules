@@ -728,7 +728,7 @@ static NvU8 checkUidMatch
 }
 
 //----------------------------------------------------------------------------
-//  NV_STATUS extractNBSIObjFromDir(pGpu, idx, 
+//  NV_STATUS extractNBSIObjFromDir(pGpu, idx,
 //                                  pNbsiDir, nbsiDirSize, tableLoc,
 //                                  wantedGlobType, wantedGlobIndex,
 //                                  * pActualGlobIdx,
@@ -1159,7 +1159,7 @@ static NV_STATUS freeNbsiCache
 }
 
 //----------------------------------------------------------------------------
-//  NV_STATUS getNbsiCacheInfoForGlobType(pGpu, idx, 
+//  NV_STATUS getNbsiCacheInfoForGlobType(pGpu, idx,
 //                                       globType,
 //                                       *pWantedGlobSource, *pWantedGlobIndex,
 //                                       *pNbsiDir, *pNbsiDirSize, *pCurTbl)
@@ -1384,7 +1384,7 @@ static NV_STATUS getNbsiObjFromCache
 
 
 //----------------------------------------------------------------------------
-//  NV_STATUS getNbsiDirFromRegistry(pGpu, idx, 
+//  NV_STATUS getNbsiDirFromRegistry(pGpu, idx,
 //                                   pNbsiDir, pNbsiDirSize)
 //
 //  This function determines if an emulated NBSI table exists in the registry
@@ -1544,7 +1544,7 @@ static NV_STATUS determineACPIAccess
 }
 
 //----------------------------------------------------------------------------
-//  NV_STATUS getNbsiDirectory(pGpu, idx, 
+//  NV_STATUS getNbsiDirectory(pGpu, idx,
 //                             searchDir, *pNbsiDir, *pNbsiDirSize,
 //                             curSource,
 //                             *pbFreeDirMemRequired,
@@ -1681,11 +1681,11 @@ static NV_STATUS nbsiObjTypeCallAcpi
         *(NvU32 *) inOutData = (globTypeWanted & 0xffff) << 16 |
                                (curGlob & 0xf) << 12 |
                                ((*sizeToRead/inOutDataSz) & 0xfff);
-        status = pGpu->pOS->osCallACPI_DSM(pGpu,
-                                           acpiFunction,
-                                           NV_ACPI_GENERIC_FUNC_GETOBJBYTYPE,
-                                           (NvU32 *)inOutData,
-                                           (NvU16 *)&acpiRtnSize);
+        status = osCallACPI_DSM(pGpu,
+                                acpiFunction,
+                                NV_ACPI_GENERIC_FUNC_GETOBJBYTYPE,
+                                (NvU32 *)inOutData,
+                                (NvU16 *)&acpiRtnSize);
 
         if ((acpiRtnSize == 0) ||
             ((status == NV_OK) &&
@@ -2175,11 +2175,11 @@ static NV_STATUS getTableDataUsingAllObjectCall
     {
         // get page the data is in.
         *(NvU32 *) inOutData = curOffset / inOutDataSz;
-        status = pGpu->pOS->osCallACPI_DSM(pGpu,
-                                           acpiFunction,
-                                           NV_ACPI_GENERIC_FUNC_GETALLOBJS,
-                                           (NvU32 *)inOutData,
-                                           (NvU16 *)&rtnSize);
+        status = osCallACPI_DSM(pGpu,
+                                acpiFunction,
+                                NV_ACPI_GENERIC_FUNC_GETALLOBJS,
+                                (NvU32 *)inOutData,
+                                (NvU16 *)&rtnSize);
         if ((acpiRtnSize == 0) ||
             ((status == NV_OK) &&
              (acpiRtnSize==4) &&
@@ -2575,7 +2575,7 @@ static NV_STATUS getTableUsingAllObjectCall
 }
 
 //----------------------------------------------------------------------------
-//  NV_STATUS _extractNBSIObjFromACPIDir(pGpu, idx, 
+//  NV_STATUS _extractNBSIObjFromACPIDir(pGpu, idx,
 //                                       curDir,
 //                                       acpiFunction, validationOption, acpiMethod,
 //                                       wantedGlobType, wantedGlobIdx,
@@ -2853,11 +2853,11 @@ NV_STATUS getNbsiObjByType
         // (IN/OUT) pSizeOfData In = size of inoutdata, Out = size returned
         //
         rtnSize = (NvU16) (*pRtnObjSize & 0xffff);
-        status = pGpu->pOS->osCallACPI_DSM(pGpu,
-                                           acpiFunction,
-                                           wantedRtnObjOffset,
-                                           (NvU32 *)pRtnObj,
-                                           (NvU16 *)&rtnSize);
+        status = osCallACPI_DSM(pGpu,
+                                acpiFunction,
+                                wantedRtnObjOffset,
+                                (NvU32 *)pRtnObj,
+                                (NvU16 *)&rtnSize);
 
         *pRtnObjSize = rtnSize;
         *pWantedGlobSource = (NBSI_SOURCE_LOC) status;

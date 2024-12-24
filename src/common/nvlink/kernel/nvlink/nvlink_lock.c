@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2020 NVidia Corporation
+    Copyright (c) 2020-2023 NVidia Corporation
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
     deal in the Software without restriction, including without limitation the
@@ -213,10 +213,6 @@ nvlink_lib_top_lock_acquire(void)
     //
     nvlink_acquireLock(nvlinkLibCtx.topLevelLock);
 
-    NVLINK_PRINT((DBG_MODULE_NVLINK_CORE, NVLINK_DBG_LEVEL_INFO,
-        "%s: Acquired top-level lock\n",
-        __FUNCTION__));
-
     return NVL_SUCCESS;
 }
 
@@ -247,10 +243,6 @@ nvlink_lib_top_lock_release(void)
     // Currently the nvlink_releaseLock function doesn't report failures
     //
     nvlink_releaseLock(nvlinkLibCtx.topLevelLock);
-
-    NVLINK_PRINT((DBG_MODULE_NVLINK_CORE, NVLINK_DBG_LEVEL_INFO,
-        "%s: Released top-level lock\n",
-        __FUNCTION__));
 
     return NVL_SUCCESS;
 }

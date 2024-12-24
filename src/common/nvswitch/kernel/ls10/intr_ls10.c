@@ -24,6 +24,7 @@
 #include "common_nvswitch.h"
 #include "intr_nvswitch.h"
 #include "regkey_nvswitch.h"
+#include "soe/soe_nvswitch.h"
 
 #include "ls10/ls10.h"
 #include "ls10/minion_ls10.h"
@@ -59,6 +60,8 @@
 #include "nvswitch/ls10/dev_nxbar_tileout_ip.h"
 
 #include "nvswitch/ls10/dev_ctrl_ip_addendum.h"
+
+static void _nvswitch_create_deferred_link_errors_task_ls10(nvswitch_device *device, NvU32 nvlipt_instance, NvU32 link);
 
 static void
 _nvswitch_construct_ecc_error_event_ls10
@@ -5113,7 +5116,7 @@ _nvswitch_service_nvltlc_fatal_ls10
         // as the IP's registers are off
         //
         if (nvswitch_is_link_in_reset(device, link) ||
-            !nvswitch_are_link_clocks_on_ls10(device, link,NVSWITCH_PER_LINK_CLOCK_SET(NCISOCCLK)));
+            !nvswitch_are_link_clocks_on_ls10(device, link,NVSWITCH_PER_LINK_CLOCK_SET(NCISOCCLK)))
         {
             continue;
         }
@@ -5542,6 +5545,8 @@ _nvswitch_emit_link_errors_nvldl_fatal_link_ls10
     if (nvswitch_test_flags(pending, bit))
     {
         NVSWITCH_REPORT_FATAL(_HW_DLPL_LTSSM_FAULT_DOWN, "LTSSM Fault Down", NV_FALSE);
+        error_event.error = INFOROM_NVLINK_DL_LTSSM_FAULT_DOWN_FATAL;
+        nvswitch_inforom_nvlink_log_error_event(device, &error_event);
     }
 }
 
@@ -5667,7 +5672,7 @@ _nvswitch_emit_link_errors_nvldl_nonfatal_link_ls10
 {
     ls10_device *chip_device = NVSWITCH_GET_CHIP_DEVICE_LS10(device);
     NVSWITCH_INTERRUPT_LOG_TYPE report = { 0 };
-    NvU32 pending, bit;
+    NvU32 pending, bit, reg;
 
     // Only enabled link errors are deffered
     pending = chip_device->deferredLinkErrors[link].data.nonFatalIntrMask.dl;
@@ -5680,9 +5685,20 @@ _nvswitch_emit_link_errors_nvldl_nonfatal_link_ls10
     {
         // Disable further interrupts
         nvlink_link *nvlink = nvswitch_get_link(device, link);
-        nvlink->errorThreshold.bInterruptTrigerred = NV_TRUE;
-        nvswitch_configure_error_rate_threshold_interrupt_ls10(nvlink, NV_FALSE);
-        NVSWITCH_REPORT_NONFATAL(_HW_DLPL_RX_SHORT_ERROR_RATE, "RX Short Error Rate");
+        if (nvlink == NULL)
+        {
+            // If we get here, it is a bug. Disable interrupt and assert.
+            reg = NVSWITCH_LINK_RD32_LS10(device, link, NVLDL, _NVLDL_TOP, _INTR_NONSTALL_EN);
+            reg = FLD_SET_DRF_NUM(_NVLDL_TOP, _INTR_NONSTALL_EN, _RX_SHORT_ERROR_RATE, 0, reg);
+            NVSWITCH_LINK_WR32_LS10(device, link, NVLDL, _NVLDL_TOP, _INTR_NONSTALL_EN, reg);
+            NVSWITCH_ASSERT(nvlink != NULL);
+        }
+        else
+        {
+            nvlink->errorThreshold.bInterruptTrigerred = NV_TRUE;
+            nvswitch_configure_error_rate_threshold_interrupt_ls10(nvlink, NV_FALSE);
+            NVSWITCH_REPORT_NONFATAL(_HW_DLPL_RX_SHORT_ERROR_RATE, "RX Short Error Rate");
+        }
     }
 
     bit = DRF_NUM(_NVLDL_TOP, _INTR, _RX_CRC_COUNTER, 1);
@@ -6637,6 +6653,13 @@ _nvswitch_service_nvlipt_lnk_status_ls10
     bit = DRF_NUM(_NVLIPT_LNK, _INTR_STATUS, _LINKSTATEREQUESTREADYSET, 1);
     if (nvswitch_test_flags(pending, bit))
     {
+        link = nvswitch_get_link(device, link_id);
+        if (link == NULL)
+        {
+            // If we get here, it's a bug. Assert, then let callers detect unhandled IRQ.
+            NVSWITCH_ASSERT(link != NULL);
+        }
+
         nvswitch_clear_flags(&unhandled, bit);
         if(nvswitch_corelib_get_dl_link_mode_ls10(link, &mode) != NVL_SUCCESS)
         {
@@ -6661,6 +6684,7 @@ _nvswitch_service_nvlipt_lnk_status_ls10
             //
             nvswitch_corelib_training_complete_ls10(link);
             nvswitch_init_buffer_ready(device, link, NV_TRUE);
+            link->bRxDetected = NV_TRUE;
 
             //
             // Clear out any cached interrupts for the link and update the last link up timestamp
@@ -6993,7 +7017,6 @@ _nvswitch_service_nvlw_nonfatal_ls10
     return NVL_SUCCESS;
 }
 
-#if 0
 static NvlStatus
 _nvswitch_service_soe_fatal_ls10
 (
@@ -7001,14 +7024,13 @@ _nvswitch_service_soe_fatal_ls10
 )
 {
     // We only support 1 SOE as of LS10.
-    if (soeService_HAL(device, (PSOE)device->pSoe) != 0)
+    if (soeService_HAL(device, (PSOE)device->pSoe) != NVL_SUCCESS)
     {
         return -NVL_MORE_PROCESSING_REQUIRED;
     }
 
     return NVL_SUCCESS;
 }
-#endif  //0
 
 static NvlStatus
 _nvswitch_service_nvlipt_lnk_fatal_ls10
@@ -7226,6 +7248,7 @@ nvswitch_lib_enable_interrupts_ls10
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PMGR_HOST, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PTIMER, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PTIMER_ALARM, 1) |
+        DRF_NUM(_CTRL, _CPU_INTR_UNITS, _SEC0_INTR0_0, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _XTL_CPU, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _XAL_EP, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PRIV_RING, 1));
@@ -7260,6 +7283,7 @@ nvswitch_lib_disable_interrupts_ls10
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PMGR_HOST, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PTIMER, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PTIMER_ALARM, 1) |
+        DRF_NUM(_CTRL, _CPU_INTR_UNITS, _SEC0_INTR0_0, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _XTL_CPU, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _XAL_EP, 1) |
         DRF_NUM(_CTRL, _CPU_INTR_UNITS, _PRIV_RING, 1));
@@ -7487,7 +7511,7 @@ nvswitch_lib_service_interrupts_ls10
     val = NVSWITCH_ENG_RD32(device, GIN, , 0, _CTRL, _CPU_INTR_UNITS);
     if (val != 0)
     {
-        NVSWITCH_PRINT(device, INFO, "%s: UNIT interrupts pending = 0x%x\n",
+        NVSWITCH_PRINT(device, MMIO, "%s: UNIT interrupts pending = 0x%x\n",
             __FUNCTION__, val);
 
         NVSWITCH_ENG_WR32(device, GIN, , 0, _CTRL, _CPU_INTR_LEAF(NV_CTRL_CPU_INTR_UNITS_IDX), val);
@@ -7531,6 +7555,19 @@ nvswitch_lib_service_interrupts_ls10
                 return_status = status;
             }
         }
+        if (!IS_RTLSIM(device) && !IS_FMODEL(device))
+        {
+            if (FLD_TEST_DRF_NUM(_CTRL, _CPU_INTR_UNITS, _SEC0_INTR0_0, 1, val))
+            {
+                status = _nvswitch_service_soe_fatal_ls10(device);
+                if (status != NVL_SUCCESS)
+                {
+                    NVSWITCH_PRINT(device, ERROR, "%s: Problem servicing SOE",
+                        __FUNCTION__);
+                    return_status = status;
+    }
+            }
+    }
     }
 
     // step 4 -- retrigger engine interrupts
@@ -7673,15 +7710,6 @@ nvswitch_service_nvldl_fatal_link_ls10
         nvswitch_inforom_nvlink_log_error_event(device, &error_event);
     }
 
-    bit = DRF_NUM(_NVLDL_TOP, _INTR, _LTSSM_FAULT_DOWN, 1);
-    if (nvswitch_test_flags(pending, bit))
-    {
-        NVSWITCH_REPORT_FATAL(_HW_DLPL_LTSSM_FAULT_DOWN, "LTSSM Fault Down", NV_FALSE);
-        nvswitch_clear_flags(&unhandled, bit);
-        error_event.error = INFOROM_NVLINK_DL_LTSSM_FAULT_DOWN_FATAL;
-        nvswitch_inforom_nvlink_log_error_event(device, &error_event);
-    }
-
     bit = DRF_NUM(_NVLDL_TOP, _INTR, _LTSSM_PROTOCOL, 1);
     if (nvswitch_test_flags(pending, bit))
     {
@@ -7730,8 +7758,8 @@ nvswitch_service_nvldl_fatal_link_ls10
     bit = DRF_NUM(_NVLDL_TOP, _INTR, _LTSSM_FAULT_DOWN, 1);
     if (nvswitch_test_flags(pending, bit))
     {
+        {
         dlDeferredIntrLinkMask |= bit;
-        nvswitch_clear_flags(&unhandled, bit);
 
         //
         // Since reset and drain will reset the link, including clearing
@@ -7741,12 +7769,14 @@ nvswitch_service_nvldl_fatal_link_ls10
         //
         bRequireResetAndDrain = NV_TRUE;
     }
+        nvswitch_clear_flags(&unhandled, bit);
+    }
 
     bit = DRF_NUM(_NVLDL_TOP, _INTR, _LTSSM_FAULT_UP, 1);
     if (nvswitch_test_flags(pending, bit))
     {
+        {
         dlDeferredIntrLinkMask |= bit;
-        nvswitch_clear_flags(&unhandled, bit);
 
         //
         // Since reset and drain will reset the link, including clearing
@@ -7755,6 +7785,8 @@ nvswitch_service_nvldl_fatal_link_ls10
         // maybe PRI errors on writing to the register
         //
         bRequireResetAndDrain = NV_TRUE;
+    }
+        nvswitch_clear_flags(&unhandled, bit);
     }
 
     if (bRequireResetAndDrain)
@@ -7800,8 +7832,8 @@ nvswitch_service_minion_link_ls10
     NVSWITCH_INTERRUPT_LOG_TYPE report = { 0 };
     NvU32 pending, unhandled, minionIntr, linkIntr, reg, enabledLinks, bit;
     NvU32 localLinkIdx, link;
-    ls10_device *chip_device = NVSWITCH_GET_CHIP_DEVICE_LS10(device);
     MINION_LINK_INTR minionLinkIntr = { 0 };
+    ls10_device *chip_device = NVSWITCH_GET_CHIP_DEVICE_LS10(device);
 
     //
     // _MINION_MINION_INTR shows all interrupts currently at the host on this minion

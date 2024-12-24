@@ -124,7 +124,7 @@ nvswitch_inforom_bbx_get_sxid
     status = device->hal.nvswitch_bbx_get_sxid(device, params);
     if (status != NVL_SUCCESS)
     {
-        NVSWITCH_PRINT(device, ERROR, "nvswitch_bbx_get_sxid failed, status=%d\n", status);
+        NVSWITCH_PRINT(device, ERROR, "nvswitch_inforom_bbx_load failed, status=%d\n", status);
     }
 
     return status;

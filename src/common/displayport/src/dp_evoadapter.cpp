@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -40,7 +40,6 @@
 #include <ctrl/ctrl0073/ctrl0073specific.h>
 #include <ctrl/ctrl0073/ctrl0073system.h>
 #include <ctrl/ctrl5070/ctrl5070or.h>
-
 using namespace DisplayPort;
 
 //
@@ -94,10 +93,11 @@ const struct
     {NV_DP_REGKEY_KEEP_OPT_LINK_ALIVE_SST,          &dpRegkeyDatabase.bOptLinkKeptAliveSst,            DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_FORCE_EDP_ILR,                    &dpRegkeyDatabase.bBypassEDPRevCheck,              DP_REG_VAL_BOOL},
     {NV_DP_DSC_MST_CAP_BUG_3143315,                 &dpRegkeyDatabase.bDscMstCapBug3143315,            DP_REG_VAL_BOOL},
-    {NV_DP_REGKEY_ENABLE_OUI_RESTORING,             &dpRegkeyDatabase.bEnableOuiRestoring,             DP_REG_VAL_BOOL},
     {NV_DP_CHECK_FEC_FOR_DDS_DSC_PANEL,             &dpRegkeyDatabase.bCheckFECForDynamicMuxDSCPanel,  DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_POWER_DOWN_PHY,                   &dpRegkeyDatabase.bPowerDownPhyBeforeD3,           DP_REG_VAL_BOOL},
-    {NV_DP_REGKEY_REASSESS_MAX_LINK,                &dpRegkeyDatabase.bReassessMaxLink,                DP_REG_VAL_BOOL}
+    {NV_DP_REGKEY_REASSESS_MAX_LINK,                &dpRegkeyDatabase.bReassessMaxLink,                DP_REG_VAL_BOOL},
+    {NV_DP_REGKEY_MST_PCON_CAPS_READ_DISABLED,      &dpRegkeyDatabase.bMSTPCONCapsReadDisabled,        DP_REG_VAL_BOOL},
+    {NV_DP_REGKEY_FLUSH_TIMESLOT_INFO_WHEN_DIRTY,   &dpRegkeyDatabase.bFlushTimeslotWhenDirty,         DP_REG_VAL_BOOL}
 };
 
 EvoMainLink::EvoMainLink(EvoInterface * provider, Timer * timer) :
@@ -119,9 +119,6 @@ EvoMainLink::EvoMainLink(EvoInterface * provider, Timer * timer) :
      _isLTPhyRepeaterSupported  = true;
      _rmPhyRepeaterCount        = 0;
      dpMemZero(&_DSC, sizeof(_DSC));
-    queryGPUCapability();
-
-    queryAndUpdateDfpParams();
 
     //
     //  Tell RM to hands off on the DisplayPort hardware
@@ -899,6 +896,7 @@ void EvoMainLink::applyRegkeyOverrides()
     _applyLinkBwOverrideWarRegVal        = dpRegkeyDatabase.bLinkBwOverrideWarApplied;
     _enableMSAOverrideOverMST            = dpRegkeyDatabase.bMsaOverMstEnabled;
     _enableFecCheckForDDS                = dpRegkeyDatabase.bCheckFECForDynamicMuxDSCPanel;
+    _isMSTPCONCapsReadDisabled           = dpRegkeyDatabase.bMSTPCONCapsReadDisabled;
 }
 
 NvU32 EvoMainLink::getRegkeyValue(const char *key)
@@ -1050,7 +1048,6 @@ bool EvoMainLink::train(const LinkConfiguration & link, bool force,
             case EDP_3_24GHZ:
             case EDP_4_32GHZ:
             case HBR2:
-            case EDP_6_75GHZ:
             case HBR3:
                 linkBw = linkrate / DP_LINK_BW_FREQ_MULTI_MBPS;
                 dpCtrlData = FLD_SET_DRF_NUM(0073_CTRL, _DP_DATA, _SET_LINK_BW,
@@ -1167,7 +1164,7 @@ bool EvoMainLink::train(const LinkConfiguration & link, bool force,
                 //
                 if (!requestRmLC.lowerConfig())
                 {
-                    // If no valid link config could be found, break here. 
+                    // If no valid link config could be found, break here.
                     break;
                 }
                 fallback = true;
@@ -1516,6 +1513,10 @@ bool EvoMainLink::skipPowerdownEdpPanelWhenHeadDetach()
     return _skipPowerdownEDPPanelWhenHeadDetach;
 }
 
+bool EvoMainLink::isMSTPCONCapsReadDisabled()
+{
+    return _isMSTPCONCapsReadDisabled;
+}
 
 bool EvoMainLink::isActive()
 {
@@ -1814,7 +1815,6 @@ bool EvoMainLink::configureLinkRateTable
                 case linkBW_3_24Gbps:
                 case linkBW_4_32Gbps:
                 case linkBW_5_40Gbps:
-                case linkBW_6_75Gbps:
                 case linkBW_8_10Gbps:
                     pLinkRates->import(params.linkBwTbl[i]);
                     break;

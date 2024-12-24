@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2016-2022 NVIDIA Corporation
+    Copyright (c) 2016-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -208,7 +208,6 @@ static uvm_va_space_t *tools_event_tracker_va_space(uvm_tools_event_tracker_t *e
     uvm_va_space_t *va_space;
     UVM_ASSERT(event_tracker->uvm_file);
     va_space = uvm_va_space_get(event_tracker->uvm_file);
-    UVM_ASSERT(uvm_va_space_initialized(va_space) == NV_OK);
     return va_space;
 }
 
@@ -230,6 +229,24 @@ static void unmap_user_pages(struct page **pages, void *addr, NvU64 size)
     uvm_kvfree(pages);
 }
 
+// This must be called with the mmap_lock held in read mode or better.
+static NV_STATUS check_vmas(struct mm_struct *mm, NvU64 start_va, NvU64 size)
+{
+    struct vm_area_struct *vma;
+    NvU64 addr = start_va;
+    NvU64 region_end = start_va + size;
+
+    do {
+        vma = find_vma(mm, addr);
+        if (!vma || !(addr >= vma->vm_start) || uvm_file_is_nvidia_uvm(vma->vm_file))
+            return NV_ERR_INVALID_ARGUMENT;
+
+        addr = vma->vm_end;
+    } while (addr < region_end);
+
+    return NV_OK;
+}
+
 // Map virtual memory of data from [user_va, user_va + size) of current process into kernel.
 // Sets *addr to kernel mapping and *pages to the array of struct pages that contain the memory.
 static NV_STATUS map_user_pages(NvU64 user_va, NvU64 size, void **addr, struct page ***pages)
@@ -238,7 +255,6 @@ static NV_STATUS map_user_pages(NvU64 user_va, NvU64 size, void **addr, struct p
     long ret = 0;
     long num_pages;
     long i;
-    struct vm_area_struct **vmas = NULL;
 
     *addr = NULL;
     *pages = NULL;
@@ -255,22 +271,30 @@ static NV_STATUS map_user_pages(NvU64 user_va, NvU64 size, void **addr, struct p
         goto fail;
     }
 
-    vmas = uvm_kvmalloc(sizeof(struct vm_area_struct *) * num_pages);
-    if (vmas == NULL) {
-        status = NV_ERR_NO_MEMORY;
+    // Although uvm_down_read_mmap_lock() is preferable due to its participation
+    // in the UVM lock dependency tracker, it cannot be used here. That's
+    // because pin_user_pages() may fault in HMM pages which are GPU-resident.
+    // When that happens, the UVM page fault handler would record another
+    // mmap_read_lock() on the same thread as this one, leading to a false
+    // positive lock dependency report.
+    //
+    // Therefore, use the lower level nv_mmap_read_lock() here.
+    nv_mmap_read_lock(current->mm);
+    status = check_vmas(current->mm, user_va, size);
+    if (status != NV_OK) {
+        nv_mmap_read_unlock(current->mm);
         goto fail;
     }
-
-    nv_mmap_read_lock(current->mm);
-    ret = NV_PIN_USER_PAGES(user_va, num_pages, FOLL_WRITE, *pages, vmas);
+    ret = NV_PIN_USER_PAGES(user_va, num_pages, FOLL_WRITE, *pages, NULL);
     nv_mmap_read_unlock(current->mm);
+
     if (ret != num_pages) {
         status = NV_ERR_INVALID_ARGUMENT;
         goto fail;
     }
 
     for (i = 0; i < num_pages; i++) {
-        if (page_count((*pages)[i]) > MAX_PAGE_COUNT || uvm_file_is_nvidia_uvm(vmas[i]->vm_file)) {
+        if (page_count((*pages)[i]) > MAX_PAGE_COUNT) {
             status = NV_ERR_INVALID_ARGUMENT;
             goto fail;
         }
@@ -280,14 +304,11 @@ static NV_STATUS map_user_pages(NvU64 user_va, NvU64 size, void **addr, struct p
     if (*addr == NULL)
         goto fail;
 
-    uvm_kvfree(vmas);
     return NV_OK;
 
 fail:
     if (*pages == NULL)
         return status;
-
-    uvm_kvfree(vmas);
 
     if (ret > 0)
         uvm_put_user_pages_dirty(*pages, ret);
@@ -1061,25 +1082,19 @@ void uvm_tools_broadcast_replay(uvm_gpu_t *gpu,
 }
 
 
-void uvm_tools_broadcast_replay_sync(uvm_gpu_t *gpu,
-                                     NvU32 batch_id,
-                                     uvm_fault_client_type_t client_type)
+void uvm_tools_broadcast_replay_sync(uvm_gpu_t *gpu, NvU32 batch_id, uvm_fault_client_type_t client_type)
 {
     UVM_ASSERT(!gpu->parent->has_clear_faulted_channel_method);
 
     if (!tools_is_event_enabled_in_any_va_space(UvmEventTypeGpuFaultReplay))
         return;
 
-    record_replay_event_helper(gpu->id,
-                               batch_id,
-                               client_type,
-                               NV_GETTIME(),
-                               gpu->parent->host_hal->get_time(gpu));
+    record_replay_event_helper(gpu->id, batch_id, client_type, NV_GETTIME(), gpu->parent->host_hal->get_time(gpu));
 }
 
 void uvm_tools_broadcast_access_counter(uvm_gpu_t *gpu,
                                         const uvm_access_counter_buffer_entry_t *buffer_entry,
-                                        bool on_managed)
+                                        bool on_managed_phys)
 {
     UvmEventEntry entry;
     UvmEventTestAccessCounterInfo *info = &entry.testEventData.accessCounter;
@@ -1098,6 +1113,7 @@ void uvm_tools_broadcast_access_counter(uvm_gpu_t *gpu,
     info->srcIndex            = uvm_id_value(gpu->id);
     info->address             = buffer_entry->address.address;
     info->isVirtual           = buffer_entry->address.is_virtual? 1: 0;
+
     if (buffer_entry->address.is_virtual) {
         info->instancePtr         = buffer_entry->virtual_info.instance_ptr.address;
         info->instancePtrAperture = g_hal_to_tools_aperture_table[buffer_entry->virtual_info.instance_ptr.aperture];
@@ -1105,9 +1121,10 @@ void uvm_tools_broadcast_access_counter(uvm_gpu_t *gpu,
     }
     else {
         info->aperture            = g_hal_to_tools_aperture_table[buffer_entry->address.aperture];
+        info->physOnManaged       = on_managed_phys? 1 : 0;
     }
+
     info->isFromCpu           = buffer_entry->counter_type == UVM_ACCESS_COUNTER_TYPE_MOMC? 1: 0;
-    info->onManaged           = on_managed? 1 : 0;
     info->value               = buffer_entry->counter_value;
     info->subGranularity      = buffer_entry->sub_granularity;
     info->bank                = buffer_entry->bank;
@@ -1614,10 +1631,12 @@ NV_STATUS uvm_api_tools_init_event_tracker(UVM_TOOLS_INIT_EVENT_TRACKER_PARAMS *
         goto fail;
     }
 
-    status = uvm_va_space_initialized(uvm_va_space_get(event_tracker->uvm_file));
-    if (status != NV_OK) {
+    // We don't use uvm_fd_va_space() here because tools can work
+    // without an associated va_space_mm.
+    if (!uvm_fd_get_type(event_tracker->uvm_file, UVM_FD_VA_SPACE)) {
         fput(event_tracker->uvm_file);
         event_tracker->uvm_file = NULL;
+        status = NV_ERR_ILLEGAL_ACTION;
         goto fail;
     }
 
@@ -1758,7 +1777,6 @@ static NV_STATUS tools_update_status(uvm_va_space_t *va_space)
     uvm_assert_rwsem_locked_write(&g_tools_va_space_list_lock);
     uvm_assert_rwsem_locked_write(&va_space->perf_events.lock);
     uvm_assert_rwsem_locked_write(&va_space->tools.lock);
-    UVM_ASSERT(uvm_va_space_initialized(va_space) == NV_OK);
 
     status = tools_update_perf_events_callbacks(va_space);
     if (status != NV_OK)
@@ -2016,12 +2034,10 @@ static NV_STATUS tools_access_process_memory(uvm_va_space_t *va_space,
     if (status != NV_OK)
         goto exit;
 
-    if (is_write) {
-        block_context = uvm_va_block_context_alloc(mm);
-        if (!block_context) {
-            status = NV_ERR_NO_MEMORY;
-            goto exit;
-        }
+    block_context = uvm_va_block_context_alloc(mm);
+    if (!block_context) {
+        status = NV_ERR_NO_MEMORY;
+        goto exit;
     }
 
     stage_addr = uvm_mem_get_cpu_addr_kernel(stage_mem);
@@ -2044,17 +2060,32 @@ static NV_STATUS tools_access_process_memory(uvm_va_space_t *va_space,
             }
         }
 
+        if (mm)
+            uvm_down_read_mmap_lock(mm);
+
         // The RM flavor of the lock is needed to perform ECC checks.
         uvm_va_space_down_read_rm(va_space);
-        status = uvm_va_block_find_create_managed(va_space, target_va_start, &block);
-        if (status != NV_OK) {
-            uvm_va_space_up_read_rm(va_space);
-            goto exit;
-        }
+        if (mm)
+            status = uvm_va_block_find_create(va_space, UVM_PAGE_ALIGN_DOWN(target_va_start), &block_context->hmm.vma, &block);
+        else
+            status = uvm_va_block_find_create_managed(va_space, UVM_PAGE_ALIGN_DOWN(target_va_start), &block);
+
+        if (status != NV_OK)
+            goto unlock_and_exit;
 
         uvm_va_space_global_gpus(va_space, global_gpus);
 
         for_each_global_gpu_in_mask(gpu, global_gpus) {
+
+            // When CC is enabled, the staging memory cannot be mapped on the
+            // GPU (it is protected sysmem), but it is still used to store the
+            // unencrypted version of the page contents when the page is
+            // resident on vidmem.
+            if (uvm_conf_computing_mode_enabled(gpu)) {
+                UVM_ASSERT(uvm_global_processor_mask_empty(retained_global_gpus));
+
+                break;
+            }
             if (uvm_global_processor_mask_test_and_set(retained_global_gpus, gpu->global_id))
                 continue;
 
@@ -2068,10 +2099,15 @@ static NV_STATUS tools_access_process_memory(uvm_va_space_t *va_space,
             // (even if those mappings may never be used) as tools read/write is
             // not on a performance critical path.
             status = uvm_mem_map_gpu_kernel(stage_mem, gpu);
-            if (status != NV_OK) {
-                uvm_va_space_up_read_rm(va_space);
-                goto exit;
-            }
+            if (status != NV_OK)
+                goto unlock_and_exit;
+        }
+
+        // Make sure a CPU resident page has an up to date struct page pointer.
+        if (uvm_va_block_is_hmm(block)) {
+            status = uvm_hmm_va_block_update_residency_info(block, mm, UVM_PAGE_ALIGN_DOWN(target_va_start), true);
+            if (status != NV_OK)
+                goto unlock_and_exit;
         }
 
         status = tools_access_va_block(block, block_context, target_va_start, bytes_now, is_write, stage_mem);
@@ -2082,6 +2118,9 @@ static NV_STATUS tools_access_process_memory(uvm_va_space_t *va_space,
             status = uvm_global_mask_check_ecc_error(global_gpus);
 
         uvm_va_space_up_read_rm(va_space);
+        if (mm)
+            uvm_up_read_mmap_lock(mm);
+
         if (status != NV_OK)
             goto exit;
 
@@ -2105,6 +2144,13 @@ static NV_STATUS tools_access_process_memory(uvm_va_space_t *va_space,
         }
 
         *bytes += bytes_now;
+    }
+
+unlock_and_exit:
+    if (status != NV_OK) {
+        uvm_va_space_up_read_rm(va_space);
+        if (mm)
+            uvm_up_read_mmap_lock(mm);
     }
 
 exit:
