@@ -37,7 +37,7 @@ do
 	fi
 done
 
-for psrc in "$ngd/debian/patches/module"/*.patch
+for psrc in "$ngd/debian/patches/module"/*.patch "$ngd/debian/patches/module"/series*
 do
 	pdst=${psrc#$ngd/}
 	if ! cmp -s "$psrc" "$pdst" ; then

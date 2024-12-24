@@ -1,3 +1,33 @@
+nvidia-open-gpu-kernel-modules (535.216.01-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 20 Nov 2024 10:22:33 +0100
+
+nvidia-open-gpu-kernel-modules (535.216.01-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.216.01 (2024-10-22).
+    * Fixed CVE-2024-0126.  (Closes: #1085976)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5586
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 13 Nov 2024 20:39:29 +0100
+
+nvidia-open-gpu-kernel-modules (535.183.06-2) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 01 Nov 2024 21:03:38 +0100
+
+nvidia-open-gpu-kernel-modules (535.183.06-1) unstable; urgency=medium
+
+  * New upstream Tesla branch release 535.183.06 (2024-07-09).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+  * Bump Standards-Version to 4.7.0. No changes needed.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 12 Aug 2024 10:55:57 +0200
+
 nvidia-open-gpu-kernel-modules (535.183.01-1~deb12u1) bookworm; urgency=medium
 
   * Rebuild for bookworm.
