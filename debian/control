@@ -7,7 +7,6 @@ XSBC-Pexip-Original-Uploaders:
  Andreas Beckmann <anbe@debian.org>,
 Build-Depends:
  debhelper-compat (= 13),
- quilt,
 Build-Depends-Arch:
  dh-sequence-dkms,
  quilt,
@@ -26,7 +25,7 @@ Package: nvidia-open-kernel-support
 Architecture: amd64 arm64
 Multi-Arch: foreign
 Depends:
- ${nvidia}-alternative-${nvidia:Version} | nvidia-alternative-${nvidia:Version},
+ ${nvidia}-alternative-${nvidia:Version} | nvidia-alternative-${nvidia:Version} | nvidia-tesla-alternative-${nvidia:Version},
  nvidia-kernel-common (>= 20151021),
  nvidia-modprobe (>= ${nvidia:Version:major}),
  ${misc:Depends}
@@ -73,9 +72,6 @@ Description: NVIDIA open kernel module DKMS source${nvidia:VariantDesc}
  ${nvidia:Models}
  .
  Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
- .
- Note: The new 'non-free-firmware' archive area has to be enabled in apt's
- sources.list(.d/) in order to install firmware-${nvidia}-gsp.
 
 #Package: ${nvidia-kernel}-source
 Package: nvidia-open-kernel-source
@@ -130,7 +126,7 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
 Package: nvidia-open-kernel-prebuilt-amd64
 Architecture: amd64 arm64
 Depends:
- nvidia-open-kernel-@KABI@,
+ nvidia-open-kernel-6.6.48+pexip-amd64,
  ${misc:Depends}
 Provides:
  nvidia-open-kernel-prebuilt
