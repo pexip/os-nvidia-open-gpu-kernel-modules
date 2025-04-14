@@ -48,7 +48,7 @@ License: Zlib
 Files:
  debian/*
 Copyright:
- © 2022-2024 Andreas Beckmann <anbe@debian.org>
+ © 2022-2025 Andreas Beckmann <anbe@debian.org>
 License: Expat
 
 License: Expat
