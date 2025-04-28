@@ -1,0 +1,25 @@
+Author: Andreas Beckmann <anbe@debian.org>
+Description: move -Werror=implicit-function-declaration to CC_ONLY_CFLAGS
+ avoid warning on C++ compilation since upstream build system uses CFLAGS for C++, too:
+   cc1plus: warning: ‘-Werror=’ argument ‘-Werror=implicit-function-declaration’ is not valid for C++
+
+--- a/src/nvidia-modeset/Makefile
++++ b/src/nvidia-modeset/Makefile
+@@ -151,6 +151,7 @@ CFLAGS += $(CONDITIONAL_CFLAGS)
+ CC_ONLY_CFLAGS += -Wimplicit
+ CC_ONLY_CFLAGS += -Wstrict-prototypes
+ CC_ONLY_CFLAGS += -Wmissing-prototypes
++CC_ONLY_CFLAGS += -Werror=implicit-function-declaration
+ CC_ONLY_CFLAGS += -std=gnu11
+ 
+ CXX_ONLY_CFLAGS += -std=gnu++11
+--- a/src/nvidia/Makefile
++++ b/src/nvidia/Makefile
+@@ -182,6 +182,7 @@ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)
+ 
++CC_ONLY_CFLAGS += -Werror=implicit-function-declaration
+ CC_ONLY_CFLAGS += --std=gnu11
+ CXX_ONLY_CFLAGS += --std=gnu++11
+ 

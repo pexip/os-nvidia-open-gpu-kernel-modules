@@ -8,6 +8,9 @@ export HOSTNAME	 = debian
 # The generated object files are linked into kernel modules.
 export DEB_BUILD_MAINT_OPTIONS = hardening=-stackprotector
 
+# Avoid warnings on C++ compilation
+export DEB_CFLAGS_MAINT_STRIP	 = -Werror=implicit-function-declaration
+
 include /usr/share/dpkg/pkg-info.mk
 
 NVIDIA_RELEASE		 = $(DEB_VERSION_UPSTREAM)
@@ -20,13 +23,8 @@ ARCH_LIST		?= amd64
 
 version			 = $(NVIDIA_RELEASE)
 version_major		 = $(NVIDIA_MAJOR)
-ifeq (yes,$(NVIDIA_TESLA))
-variant			 = $(if $(NVIDIA_TESLA),tesla)
-variant_description	 = $(if $(NVIDIA_TESLA), (Tesla version))
-else
 variant			 = $(if $(NVIDIA_TESLA),tesla-$(NVIDIA_TESLA))
 variant_description	 = $(if $(NVIDIA_TESLA), (Tesla $(NVIDIA_TESLA) version))
-endif
 -variant		 = $(if $(variant),-$(variant))
 nvidia			 = nvidia$(-variant)
 current			 = $(if $(variant),$(variant),current)
@@ -53,7 +51,6 @@ RENAMED_CONTROL	 = $(foreach f,$(RENAME_CONTROL),$(call applyprefixrenamelist,$f
 
 TEMPLATE_DIRS	 = debian
 TEMPLATE_DIRS	+= debian/module/debian
-TEMPLATE_DIRS	+= debian/patches/module
 TEMPLATE_DIRS	+= debian/tests
 TEMPLATES	:= $(filter-out %.modules.in,$(wildcard $(addsuffix /*.in,$(TEMPLATE_DIRS))))
 
@@ -76,6 +73,7 @@ binary binary-arch binary-indep build build-arch build-indep clean install:
 
 .PHONY: prepare
 prepare: $(AUTOGEN)
+	QUILT_PATCHES=debian/patches QUILT_SERIES=series-manual quilt --quiltrc /dev/null push -a || test $$? = 2
 	cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null push -a || test $$? = 2
 
 .PHONY: control-file
@@ -111,8 +109,10 @@ override_dh_auto_clean: control-file
 	$(RM) -r module-build
 
 execute_after_dh_clean:
-	if [ -f debian/patches/module/series ]; then cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null pop -a || test $$? = 2 ; fi
+	cd kernel-open && QUILT_PATCHES=../debian/patches/module quilt --quiltrc /dev/null pop -a || test $$? = 2
 	$(RM) -r kernel-open/.pc/
+	test ! -s .pc/applied-patches || quilt --quiltrc /dev/null pop -a || test $$? = 2
+	$(RM) -r .pc/
 	$(RM) $(filter-out $(AUTOKEEP),$(AUTOGEN))
 	$(if $(AUTOKEEP),$(MAKE) -f debian/rules $(AUTOKEEP))
 
@@ -141,18 +141,19 @@ debian/substvars:
 
 module_source_pkg	 = debian/$(nvidia-kernel)-source
 module_source_txz	 = $(module_source_pkg)/usr/src/$(nvidia-kernel).tar.xz
+
 pack-module-source:
 	find $(module_source_pkg) \( -name '*.binary' -o -name '*.in' -not -name '*.modules.in' \) -print -delete
 	tar c \
 		-C $(module_source_pkg)/usr/src \
-		--owner=root --group=root \
+		--numeric-owner --owner=0 --group=0 \
 		--mode=a=rX,u+w \
 		--sort=name \
 		--mtime='@$(SOURCE_DATE_EPOCH)' \
 		--clamp-mtime \
+		--remove-files \
 		modules | xz -T1 -9 > $(module_source_txz)
 	tar tfv $(module_source_txz)
-	$(RM) -r $(module_source_pkg)/usr/src/modules
 
 ############################################################################
 

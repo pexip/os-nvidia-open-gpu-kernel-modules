@@ -1,3 +1,37 @@
+nvidia-open-gpu-kernel-modules (535.216.03-4) unstable; urgency=medium
+
+  * Do not add -mfunction-return=thunk-extern flag, breaks backwards
+    compatibility with kernels built without this flag.
+  * Apply both patch sets manually.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 14 Apr 2025 21:06:39 +0200
+
+nvidia-open-gpu-kernel-modules (535.216.03-3) unstable; urgency=medium
+
+  * Backport NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL and
+    NV_CRYPTO_AKCIPHER_VERIFY_PRESENT changes from 550.144.03 and
+    NV_FOLIO_TEST_SWAPCACHE_PRESENT changes from 565.57.01 to fix open kernel
+    module build for Linux 6.13.
+  * Let pahole ignore language c++11 for BTF generation.  (Closes: #1098812)
+  * Fix warnings during open module build.
+  * Build with more kernel hardening flags.
+  * Sync with src:nvidia-graphics-drivers.
+  * Bump Standards-Version to 4.7.2. No changes needed.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 02 Apr 2025 22:07:13 +0200
+
+nvidia-open-gpu-kernel-modules (535.216.03-2) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.  (Closes: #1090361)
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Feb 2025 02:32:44 +0100
+
+nvidia-open-gpu-kernel-modules (535.216.03-1) unstable; urgency=medium
+
+  * New upstream Tesla branch release 535.216.03 (2024-11-19).
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 27 Nov 2024 09:38:37 +0100
+
 nvidia-open-gpu-kernel-modules (535.216.01-1~deb12u1+pexip24u2) pexip; urgency=medium
 
   * Update for kernel ABI change

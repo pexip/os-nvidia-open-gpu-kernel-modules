@@ -1,0 +1,166 @@
+Author: Andreas Beckmann <anbe@debian.org>
+Description: fix warnings during open module build
+
+--- a/kernel-open/nvidia/libspdm_ec.c
++++ b/kernel-open/nvidia/libspdm_ec.c
+@@ -33,6 +33,7 @@ static bool lkca_ecdsa_sign(void *ec_con
+     return false;
+ }
+ 
++static
+ bool libspdm_ec_set_pub_key(void *ec_context, const uint8_t *public_key,
+                             size_t public_key_size)
+ {
+@@ -43,6 +44,7 @@ bool libspdm_ec_set_pub_key(void *ec_con
+     return lkca_ec_set_pub_key(ec_context, public_key, public_key_size);
+ }
+ 
++static
+ bool libspdm_ec_get_pub_key(void *ec_context, uint8_t *public_key,
+                             size_t *public_key_size)
+ {
+@@ -57,6 +59,7 @@ bool libspdm_ec_get_pub_key(void *ec_con
+     return lkca_ec_get_pub_key(ec_context, public_key, public_key_size);
+ }
+ 
++static
+ bool libspdm_ec_check_key(const void *ec_context)
+ {
+     /* TBD*/
+--- a/kernel-open/nvidia/libspdm_hkdf_sha.c
++++ b/kernel-open/nvidia/libspdm_hkdf_sha.c
+@@ -26,6 +26,7 @@
+ 
+ #include "internal_crypt_lib.h"
+ 
++static
+ bool libspdm_hkdf_sha256_extract_and_expand(const uint8_t *key, size_t key_size,
+                                             const uint8_t *salt, size_t salt_size,
+                                             const uint8_t *info, size_t info_size,
+@@ -54,6 +55,7 @@ bool libspdm_hkdf_sha256_expand(const ui
+                           out, out_size);
+ }
+ 
++static
+ bool libspdm_hkdf_sha384_extract_and_expand(const uint8_t *key, size_t key_size,
+                                             const uint8_t *salt, size_t salt_size,
+                                             const uint8_t *info, size_t info_size,
+@@ -82,6 +84,7 @@ bool libspdm_hkdf_sha384_expand(const ui
+                           out, out_size);
+ }
+ 
++static
+ bool libspdm_hkdf_sha512_extract_and_expand(const uint8_t *key, size_t key_size,
+                                             const uint8_t *salt, size_t salt_size,
+                                             const uint8_t *info, size_t info_size,
+--- a/kernel-open/nvidia/libspdm_rand.c
++++ b/kernel-open/nvidia/libspdm_rand.c
+@@ -31,6 +31,7 @@ bool libspdm_random_bytes(uint8_t *outpu
+ }
+ 
+ // This is specifically allowed by spdm
++static
+ bool libspdm_random_seed(const uint8_t *seed, size_t seed_size)
+ {
+     return true;
+--- a/kernel-open/nvidia/libspdm_x509.c
++++ b/kernel-open/nvidia/libspdm_x509.c
+@@ -32,6 +32,7 @@
+ #include <keys/asymmetric-type.h>
+ #endif
+ 
++static
+ bool libspdm_x509_construct_certificate(const uint8_t *cert, size_t cert_size,
+                                         uint8_t **single_x509_cert)
+ {
+@@ -39,17 +40,20 @@ bool libspdm_x509_construct_certificate(
+     return false;
+ }
+ 
++static
+ bool libspdm_x509_construct_certificate_stack(uint8_t **x509_stack, ...)
+ {
+     LIBSPDM_ASSERT(false);
+     return false;
+ }
+ 
++static
+ void libspdm_x509_free(void *x509_cert)
+ {
+     LIBSPDM_ASSERT(false);
+ }
+ 
++static
+ void libspdm_x509_stack_free(void *x509_stack)
+ {
+     LIBSPDM_ASSERT(false);
+@@ -108,6 +112,7 @@ bool libspdm_x509_get_subject_name(const
+     return false;
+ }
+ 
++static
+ bool libspdm_x509_get_common_name(const uint8_t *cert, size_t cert_size,
+                                   char *common_name,
+                                   size_t *common_name_size)
+@@ -116,6 +121,7 @@ bool libspdm_x509_get_common_name(const
+     return false;
+ }
+ 
++static
+ bool
+ libspdm_x509_get_organization_name(const uint8_t *cert, size_t cert_size,
+                                    char *name_buffer,
+@@ -337,6 +343,7 @@ bool libspdm_x509_get_cert_from_cert_cha
+     return false;
+ }
+ 
++static
+ bool libspdm_x509_get_tbs_cert(const uint8_t *cert, size_t cert_size,
+                                uint8_t **tbs_cert, size_t *tbs_cert_size)
+ {
+@@ -367,6 +374,7 @@ bool libspdm_x509_get_issuer_name(const
+     return false;
+ }
+ 
++static
+ bool
+ libspdm_x509_get_issuer_common_name(const uint8_t *cert, size_t cert_size,
+                                     char *common_name,
+@@ -376,6 +384,7 @@ libspdm_x509_get_issuer_common_name(cons
+     return false;
+ }
+ 
++static
+ bool
+ libspdm_x509_get_issuer_orgnization_name(const uint8_t *cert, size_t cert_size,
+                                          char *name_buffer,
+@@ -385,6 +394,7 @@ libspdm_x509_get_issuer_orgnization_name
+     return false;
+ }
+ 
++static
+ bool libspdm_x509_get_signature_algorithm(const uint8_t *cert,
+                                           size_t cert_size, uint8_t *oid,
+                                           size_t *oid_size)
+--- a/src/common/unix/nvidia-push/interface/nvidia-push-utils.h
++++ b/src/common/unix/nvidia-push/interface/nvidia-push-utils.h
+@@ -67,7 +67,7 @@ void nvPushAcquireTimelineSemaphore(
+     NvU64 val);
+ 
+ NvBool nvPushDecodeMethod(NvU32 header, NvU32 *count);
+-void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 object[NV_MAX_SUBDEVICES]);
++void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 *object);
+ void nvPushSetSubdeviceMask(NvPushChannelPtr p, NvU32 mask);
+ void __nvPushMakeRoom(NvPushChannelPtr, NvU32 count);
+ 
+--- a/src/common/unix/nvidia-push/src/nvidia-push.c
++++ b/src/common/unix/nvidia-push/src/nvidia-push.c
+@@ -971,7 +971,7 @@ static NvU32 GetSetObjectHandle(NvPushCh
+ }
+ 
+ // Issue a SET_OBJECT method on the specified subchannel.
+-void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 object[NV_MAX_SUBDEVICES])
++void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 *object)
+ {
+     const NvPushDeviceRec *pDevice = p->pDevice;
+     const NvU32 oldSubDevMask = p->currentSubDevMask;

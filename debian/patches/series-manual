@@ -1,0 +1,9 @@
+0001-backport-NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL-ch.patch
+0002-backport-NV_FOLIO_TEST_SWAPCACHE_PRESENT-changes-fro.patch
+0003-backport-NV_CRYPTO_AKCIPHER_VERIFY_PRESENT-changes-f.patch
+hardening.patch
+typos.patch
+hmm.patch
+fix-warnings.patch
+implicit-function-declaration.patch
+#kernel-flags.patch
