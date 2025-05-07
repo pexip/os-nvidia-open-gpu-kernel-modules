@@ -1285,6 +1285,10 @@ static const struct file_operations nv_drm_fops = {
     .read           = drm_read,
 
     .llseek         = noop_llseek,
+
+#if defined(NV_FILE_OPERATIONS_FOP_UNSIGNED_OFFSET_PRESENT)
+    .fop_flags   = FOP_UNSIGNED_OFFSET,
+#endif
 };
 
 static const struct drm_ioctl_desc nv_drm_ioctls[] = {
@@ -1435,7 +1439,10 @@ static struct drm_driver nv_drm_driver = {
     .name                   = "nvidia-drm",
 
     .desc                   = "NVIDIA DRM driver",
+
+#if defined(NV_DRM_DRIVER_HAS_DATE)
     .date                   = "20160202",
+#endif
 
 #if defined(NV_DRM_DRIVER_HAS_DEVICE_LIST)
     .device_list            = LIST_HEAD_INIT(nv_drm_driver.device_list),

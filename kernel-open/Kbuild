@@ -57,6 +57,20 @@ ifeq ($(NV_UNDEF_BEHAVIOR_SANITIZER),1)
  UBSAN_SANITIZE := y
 endif
 
+#
+# Command to create a symbolic link, explicitly resolving the symlink target
+# to an absolute path to abstract away the difference between Linux < 6.13,
+# where the CWD is the Linux kernel source tree for Kbuild extmod builds, and
+# Linux >= 6.13, where the CWD is the external module source tree.
+#
+# This is used to create the nv*-kernel.o -> nv*-kernel.o_binary symlinks for
+# kernel modules which use precompiled binary object files.
+#
+
+quiet_cmd_symlink = SYMLINK $@
+ cmd_symlink = ln -sf $(abspath $<) $@
+
+
 $(foreach _module, $(NV_KERNEL_MODULES), \
  $(eval include $(src)/$(_module)/$(_module).Kbuild))
 
@@ -72,7 +86,7 @@ EXTRA_CFLAGS += -I$(src)/common/inc
 EXTRA_CFLAGS += -I$(src)
 EXTRA_CFLAGS += -Wall $(DEFINES) $(INCLUDES) -Wno-cast-qual -Wno-error -Wno-format-extra-args
 EXTRA_CFLAGS += -D__KERNEL__ -DMODULE -DNVRM
-EXTRA_CFLAGS += -DNV_VERSION_STRING=\"535.216.03\"
+EXTRA_CFLAGS += -DNV_VERSION_STRING=\"535.247.01\"
 
 ifneq ($(SYSSRCHOST1X),)
  EXTRA_CFLAGS += -I$(SYSSRCHOST1X)
@@ -242,10 +256,12 @@ NV_HEADER_PRESENCE_TESTS = \
  drm/drm_device.h \
  drm/drm_mode_config.h \
  drm/drm_modeset_lock.h \
+ drm/drm_client_setup.h \
  dt-bindings/interconnect/tegra_icc_id.h \
  generated/autoconf.h \
  generated/compile.h \
  generated/utsrelease.h \
+ linux/aperture.h \
  linux/efi.h \
  linux/kconfig.h \
  linux/platform/tegra/mc_utils.h \
@@ -308,7 +324,8 @@ NV_HEADER_PRESENCE_TESTS = \
  soc/tegra/bpmp-abi.h \
  soc/tegra/bpmp.h \
  linux/cc_platform.h \
- asm/cpufeature.h
+ asm/cpufeature.h \
+ crypto/sig.h
 
 # Filename to store the define for the header in $(1); this is only consumed by
 # the rule below that concatenates all of these together.
