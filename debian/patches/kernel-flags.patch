@@ -1,0 +1,40 @@
+Author: Andreas Beckmann <anbe@debian.org>
+Description: build with more kernel hardening flags
+ fixes objtool warning "'naked' return found in MITIGATION_RETHUNK build"
+
+--- a/src/nvidia-modeset/Makefile
++++ b/src/nvidia-modeset/Makefile
+@@ -90,6 +90,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CFLAGS += -mno-sse
+   CFLAGS += -mno-sse2
+   CFLAGS += -mno-3dnow
++  CFLAGS += -mno-avx
+ endif
+ 
+ ifeq ($(TARGET_ARCH),aarch64)
+@@ -144,6 +145,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -fno-jump-tables)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch=thunk-extern)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch-register)
++  CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mfunction-return=thunk-extern)
+ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)
+--- a/src/nvidia/Makefile
++++ b/src/nvidia/Makefile
+@@ -85,6 +85,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CFLAGS += -mno-sse
+   CFLAGS += -mno-sse2
+   CFLAGS += -mno-3dnow
++  CFLAGS += -mno-avx
+ endif
+ 
+ ifeq ($(TARGET_ARCH),aarch64)
+@@ -178,6 +179,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -fno-jump-tables)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch-register)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch=thunk-extern)
++  CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mfunction-return=thunk-extern)
+ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)

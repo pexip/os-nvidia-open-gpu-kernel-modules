@@ -7,20 +7,21 @@ Description: let Kbuild set the compiler version
 
 --- a/Makefile
 +++ b/Makefile
-@@ -83,8 +83,8 @@ else
+@@ -134,9 +134,9 @@ else
  
    .PHONY: modules module clean clean_conftest modules_install
    modules clean modules_install:
--	@$(MAKE) "LD=$(LD)" "CC=$(CC)" "OBJDUMP=$(OBJDUMP)" $(KBUILD_PARAMS) $@
+-	@$(MAKE) "LD=$(LD)" "CC=$(CC)" "OBJDUMP=$(OBJDUMP)" \
++	$(MAKE) \
+ 	  $(PAHOLE_VARIABLES) $(KBUILD_PARAMS) $@
 -	@if [ "$@" = "modules" ]; then \
-+	$(MAKE) $(KBUILD_PARAMS) $@
 +	@set -x; if [ "$@" = "modules" ]; then \
  	  for module in $(NV_KERNEL_MODULES); do \
  	    if [ -x split-object-file.sh ]; then \
  	      ./split-object-file.sh $$module.ko; \
 --- a/Kbuild
 +++ b/Kbuild
-@@ -147,7 +147,7 @@ NV_CONFTEST_SCRIPT := $(src)/conftest.sh
+@@ -161,7 +161,7 @@ NV_CONFTEST_SCRIPT := $(src)/conftest.sh
  NV_CONFTEST_HEADER := $(obj)/conftest/headers.h
  
  NV_CONFTEST_CMD := /bin/sh $(NV_CONFTEST_SCRIPT) \

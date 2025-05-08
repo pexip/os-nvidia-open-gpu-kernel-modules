@@ -40,9 +40,6 @@ NV_KERNEL_MODULE_TARGETS += $(NVIDIA_MODESET_KO)
 NVIDIA_MODESET_BINARY_OBJECT := $(src)/nvidia-modeset/nv-modeset-kernel.o_binary
 NVIDIA_MODESET_BINARY_OBJECT_O := nvidia-modeset/nv-modeset-kernel.o
 
-quiet_cmd_symlink = SYMLINK $@
-cmd_symlink = ln -sf $< $@
-
 targets += $(NVIDIA_MODESET_BINARY_OBJECT_O)
 
 $(obj)/$(NVIDIA_MODESET_BINARY_OBJECT_O): $(NVIDIA_MODESET_BINARY_OBJECT) FORCE
@@ -93,3 +90,4 @@ NV_CONFTEST_FUNCTION_COMPILE_TESTS += list_is_first
 NV_CONFTEST_FUNCTION_COMPILE_TESTS += ktime_get_real_ts64
 NV_CONFTEST_FUNCTION_COMPILE_TESTS += ktime_get_raw_ts64
 NV_CONFTEST_FUNCTION_COMPILE_TESTS += acpi_video_backlight_use_native
+NV_CONFTEST_FUNCTION_COMPILE_TESTS += acpi_video_register_backlight
