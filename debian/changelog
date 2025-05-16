@@ -1,3 +1,22 @@
+nvidia-open-gpu-kernel-modules (535.247.01-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.247.01 (2025-04-17).
+    * Fixed CVE-2025-23244.  (Closes: #1104076)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5630
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 07 May 2025 21:25:12 +0200
+
+nvidia-open-gpu-kernel-modules (535.230.02-1) unstable; urgency=medium
+
+  * New upstream LTS and Tesla branch release 535.230.02 (2025-01-16).
+    * Fixed CVE-2024-0150, CVE-2024-0147, CVE-2024-53869, CVE-2024-0131,
+      CVE-2024-0149.  (Closes: #1093916)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5614
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 03 May 2025 20:16:34 +0200
+
 nvidia-open-gpu-kernel-modules (535.216.03-4+pexip25u1) pexip-trixie; urgency=medium
 
   * Initial trixie build
