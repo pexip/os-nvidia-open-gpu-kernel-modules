@@ -10,8 +10,8 @@ Build-Depends:
 Build-Depends-Arch:
  dh-sequence-dkms,
  quilt,
- linux-headers-6.6.77+pexip-amd64 (= 6.6.77-1+pexip24u1) [amd64] <!nocheck>,
- linux-headers-6.6.77+pexip-arm64 (= 6.6.77-1+pexip24u1) [arm64] <!nocheck>,
+ linux-headers-6.6.77+pexip-amd64 (= 6.6.77-1+pexip24u2) [amd64] <!nocheck>,
+ linux-headers-6.6.77+pexip-arm64 (= 6.6.77-1+pexip24u2) [arm64] <!nocheck>,
 Rules-Requires-Root: no
 Standards-Version: 4.7.0
 Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules

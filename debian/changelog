@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (535.216.01-1~deb12u1+pexip24u3) pexip; urgency=medium
+
+  * Bump kernel headers version to 6.6.77-1+pexip24u2
+
+ -- John-Mark Bell <jmb@pexip.com>  Wed, 18 Jun 2025 11:53:41 +0100
+
 nvidia-open-gpu-kernel-modules (535.216.01-1~deb12u1+pexip24u2) pexip; urgency=medium
 
   * Update for kernel ABI change
