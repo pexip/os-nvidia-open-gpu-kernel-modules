@@ -10,10 +10,10 @@ Build-Depends:
 Build-Depends-Arch:
  dh-sequence-dkms,
  quilt,
- linux-headers-6.6.77+pexip-amd64 (= 6.6.77-1+pexip24u3) [amd64] <!nocheck>,
- linux-headers-6.6.77+pexip-arm64 (= 6.6.77-1+pexip24u3) [arm64] <!nocheck>,
+ linux-headers-6.6.100+pexip-amd64 (= 6.6.100-1+pexip24u1) [amd64] <!nocheck>,
+ linux-headers-6.6.100+pexip-arm64 (= 6.6.100-1+pexip24u1) [arm64] <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.7.2
+Standards-Version: 4.7.0
 Homepage: https://github.com/NVIDIA/open-gpu-kernel-modules
 Vcs-Browser: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules
 Vcs-Git: https://salsa.debian.org/nvidia-team/nvidia-open-gpu-kernel-modules.git
@@ -101,7 +101,7 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
  Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
 
 #Package: ${nvidia-kernel}-prebuilt
-Package: nvidia-open-kernel-6.6.77+pexip-amd64
+Package: nvidia-open-kernel-6.6.100+pexip-amd64
 Architecture: amd64 arm64
 Depends:
  linux-image-${kernel:ABIVersion},
@@ -126,7 +126,7 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
 Package: nvidia-open-kernel-prebuilt-amd64
 Architecture: amd64 arm64
 Depends:
- nvidia-open-kernel-6.6.77+pexip-amd64,
+ nvidia-open-kernel-6.6.100+pexip-amd64,
  ${misc:Depends}
 Provides:
  nvidia-open-kernel-prebuilt

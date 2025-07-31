@@ -1,3 +1,10 @@
+nvidia-open-gpu-kernel-modules (535.247.01-1~deb12u1~pexip24u1) pexip; urgency=medium
+
+  * New upstream release
+  * Bump Pexip kernel headers to 6.6.100-1+pexip24u1
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 31 Jul 2025 10:02:03 +0100
+
 nvidia-open-gpu-kernel-modules (535.247.01-1~deb12u1) bookworm; urgency=medium
 
   * Rebuild for bookworm.
