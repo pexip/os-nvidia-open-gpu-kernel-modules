@@ -1,0 +1,36 @@
+From c673df2c0eea09ba213c5431b6dd3753b66edc21 Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Fri, 21 Feb 2025 11:18:37 +0100
+Subject: [PATCH] backport NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL changes
+ from 550.144.03
+
+---
+ kernel-open/nvidia/nv-frontend.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/kernel-open/nvidia/nv-frontend.c b/kernel-open/nvidia/nv-frontend.c
+index f5b871e6..b411a662 100644
+--- a/kernel-open/nvidia/nv-frontend.c
++++ b/kernel-open/nvidia/nv-frontend.c
+@@ -37,14 +37,16 @@ MODULE_ALIAS_CHARDEV_MAJOR(NV_MAJOR_DEVICE_NUMBER);
+  * ("module: add support for symbol namespaces") in 5.4
+  */
+ #if defined(MODULE_IMPORT_NS)
+-
+ /*
+  * DMA_BUF namespace is added by commit id 16b0314aa746
+  * ("dma-buf: move dma-buf symbols into the DMA_BUF module namespace") in 5.16
+  */
++#if defined(NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL)
++MODULE_IMPORT_NS("DMA_BUF");
++#else
+ MODULE_IMPORT_NS(DMA_BUF);
+-
+ #endif
++#endif  // defined(MODULE_IMPORT_NS)
+ 
+ static NvU32 nv_num_instances;
+ 
+-- 
+2.39.5
+
