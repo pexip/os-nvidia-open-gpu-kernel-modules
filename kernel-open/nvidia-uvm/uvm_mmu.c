@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2023 NVIDIA Corporation
+    Copyright (c) 2015-2024 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -24,6 +24,7 @@
 #include "uvm_common.h"
 #include "uvm_types.h"
 #include "uvm_forward_decl.h"
+#include "uvm_global.h"
 #include "uvm_gpu.h"
 #include "uvm_mmu.h"
 #include "uvm_hal.h"
@@ -49,18 +50,18 @@
 // because that type is normally associated with the LCE mapped to the most
 // PCEs. The higher bandwidth is beneficial when doing bulk operations such as
 // clearing PTEs, or initializing a page directory/table.
-#define page_tree_begin_acquire(tree, tracker, push, format, ...) ({                                                        \
-    NV_STATUS status;                                                                                                       \
-    uvm_channel_manager_t *manager = (tree)->gpu->channel_manager;                                                          \
-                                                                                                                            \
-    if (manager == NULL)                                                                                                    \
-        status = uvm_push_begin_fake((tree)->gpu, (push));                                                                  \
-    else if (uvm_gpu_is_virt_mode_sriov_heavy((tree)->gpu))                                                                 \
-        status = uvm_push_begin_acquire(manager, UVM_CHANNEL_TYPE_MEMOPS, (tracker), (push), (format), ##__VA_ARGS__);      \
-    else                                                                                                                    \
-        status = uvm_push_begin_acquire(manager, UVM_CHANNEL_TYPE_GPU_INTERNAL, (tracker), (push), (format), ##__VA_ARGS__);\
-                                                                                                                            \
-    status;                                                                                                                 \
+#define page_tree_begin_acquire(tree, tracker, push, format, ...) ({                                                            \
+    NV_STATUS __status;                                                                                                         \
+    uvm_channel_manager_t *__manager = (tree)->gpu->channel_manager;                                                            \
+                                                                                                                                \
+    if (__manager == NULL)                                                                                                      \
+        __status = uvm_push_begin_fake((tree)->gpu, (push));                                                                    \
+    else if (uvm_parent_gpu_is_virt_mode_sriov_heavy((tree)->gpu->parent))                                                      \
+        __status = uvm_push_begin_acquire(__manager, UVM_CHANNEL_TYPE_MEMOPS, (tracker), (push), (format), ##__VA_ARGS__);      \
+    else                                                                                                                        \
+        __status = uvm_push_begin_acquire(__manager, UVM_CHANNEL_TYPE_GPU_INTERNAL, (tracker), (push), (format), ##__VA_ARGS__);\
+                                                                                                                                \
+    __status;                                                                                                                   \
 })
 
 // Default location of page table allocations
@@ -133,7 +134,7 @@ static NV_STATUS phys_mem_allocate_sysmem(uvm_page_tree_t *tree, NvLength size, 
 
     // Check for fake GPUs from the unit test
     if (tree->gpu->parent->pci_dev)
-        status = uvm_gpu_map_cpu_pages(tree->gpu->parent, out->handle.page, UVM_PAGE_ALIGN_UP(size), &dma_addr);
+        status = uvm_parent_gpu_map_cpu_pages(tree->gpu->parent, out->handle.page, UVM_PAGE_ALIGN_UP(size), &dma_addr);
     else
         dma_addr = page_to_phys(out->handle.page);
 
@@ -146,6 +147,26 @@ static NV_STATUS phys_mem_allocate_sysmem(uvm_page_tree_t *tree, NvLength size, 
     out->size = size;
 
     return NV_OK;
+}
+
+// The aperture may filter the biggest page size:
+// - UVM_APERTURE_VID       biggest page size on vidmem mappings
+// - UVM_APERTURE_SYS       biggest page size on sysmem mappings
+// - UVM_APERTURE_PEER_0-7  biggest page size on peer mappings
+static NvU32 mmu_biggest_page_size(uvm_page_tree_t *tree, uvm_aperture_t aperture)
+{
+    UVM_ASSERT(aperture < UVM_APERTURE_DEFAULT);
+
+    // There may be scenarios where the GMMU must use a subset of the supported
+    // page sizes, e.g., to comply with the vMMU supported page sizes due to
+    // segmentation sizes.
+    if (aperture == UVM_APERTURE_VID) {
+        UVM_ASSERT(tree->gpu->mem_info.max_vidmem_page_size <= NV_U32_MAX);
+        return (NvU32) tree->gpu->mem_info.max_vidmem_page_size;
+    }
+    else {
+        return 1 << __fls(tree->hal->page_sizes());
+    }
 }
 
 static NV_STATUS phys_mem_allocate_vidmem(uvm_page_tree_t *tree,
@@ -218,7 +239,7 @@ static void phys_mem_deallocate_sysmem(uvm_page_tree_t *tree, uvm_mmu_page_table
 
     UVM_ASSERT(ptr->addr.aperture == UVM_APERTURE_SYS);
     if (tree->gpu->parent->pci_dev)
-        uvm_gpu_unmap_cpu_pages(tree->gpu->parent, ptr->addr.address, UVM_PAGE_ALIGN_UP(ptr->size));
+        uvm_parent_gpu_unmap_cpu_pages(tree->gpu->parent, ptr->addr.address, UVM_PAGE_ALIGN_UP(ptr->size));
     __free_pages(ptr->handle.page, get_order(ptr->size));
 }
 
@@ -855,7 +876,7 @@ static NV_STATUS page_tree_ats_init(uvm_page_tree_t *tree)
     if (!page_tree_ats_init_required(tree))
         return NV_OK;
 
-    page_size = uvm_mmu_biggest_page_size(tree);
+    page_size = mmu_biggest_page_size(tree, UVM_APERTURE_VID);
 
     uvm_cpu_get_unaddressable_range(&max_va_lower, &min_va_upper);
 
@@ -1044,9 +1065,9 @@ static void page_tree_set_location(uvm_page_tree_t *tree, uvm_aperture_t locatio
     // be identified by having no channel manager.
     if (tree->gpu->channel_manager != NULL) {
 
-        if (uvm_gpu_is_virt_mode_sriov_heavy(tree->gpu))
+        if (uvm_parent_gpu_is_virt_mode_sriov_heavy(tree->gpu->parent))
             UVM_ASSERT(location == UVM_APERTURE_VID);
-        else if (uvm_conf_computing_mode_enabled(tree->gpu))
+        else if (g_uvm_global.conf_computing_enabled)
             UVM_ASSERT(location == UVM_APERTURE_VID);
     }
 
@@ -1088,6 +1109,8 @@ NV_STATUS uvm_page_tree_init(uvm_gpu_t *gpu,
     tree->type = type;
     tree->gpu_va_space = gpu_va_space;
     tree->big_page_size = big_page_size;
+
+    UVM_ASSERT(gpu->mem_info.max_vidmem_page_size & tree->hal->page_sizes());
 
     page_tree_set_location(tree, location);
 
@@ -2272,19 +2295,19 @@ static void destroy_identity_mapping(uvm_gpu_identity_mapping_t *mapping)
     mapping->range_vec = NULL;
 }
 
-bool uvm_mmu_gpu_needs_static_vidmem_mapping(uvm_gpu_t *gpu)
+bool uvm_mmu_parent_gpu_needs_static_vidmem_mapping(uvm_parent_gpu_t *parent_gpu)
 {
-    return !gpu->parent->ce_phys_vidmem_write_supported;
+    return !parent_gpu->ce_phys_vidmem_write_supported;
 }
 
-bool uvm_mmu_gpu_needs_dynamic_vidmem_mapping(uvm_gpu_t *gpu)
+bool uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(uvm_parent_gpu_t *parent_gpu)
 {
-    return uvm_gpu_is_virt_mode_sriov_heavy(gpu);
+    return uvm_parent_gpu_is_virt_mode_sriov_heavy(parent_gpu);
 }
 
-bool uvm_mmu_gpu_needs_dynamic_sysmem_mapping(uvm_gpu_t *gpu)
+bool uvm_mmu_parent_gpu_needs_dynamic_sysmem_mapping(uvm_parent_gpu_t *parent_gpu)
 {
-    return uvm_gpu_is_virt_mode_sriov_heavy(gpu);
+    return uvm_parent_gpu_is_virt_mode_sriov_heavy(parent_gpu);
 }
 
 NV_STATUS create_static_vidmem_mapping(uvm_gpu_t *gpu)
@@ -2295,12 +2318,12 @@ NV_STATUS create_static_vidmem_mapping(uvm_gpu_t *gpu)
     NvU64 phys_offset = 0;
     uvm_gpu_identity_mapping_t *flat_mapping = &gpu->static_flat_mapping;
 
-    if (!uvm_mmu_gpu_needs_static_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_static_vidmem_mapping(gpu->parent))
         return NV_OK;
 
-    UVM_ASSERT(!uvm_mmu_gpu_needs_dynamic_vidmem_mapping(gpu));
+    UVM_ASSERT(!uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(gpu->parent));
 
-    page_size = uvm_mmu_biggest_page_size(&gpu->address_space_tree);
+    page_size = mmu_biggest_page_size(&gpu->address_space_tree, UVM_APERTURE_VID);
     size = UVM_ALIGN_UP(gpu->mem_info.max_allocatable_address + 1, page_size);
 
     UVM_ASSERT(page_size);
@@ -2320,7 +2343,7 @@ NV_STATUS create_static_vidmem_mapping(uvm_gpu_t *gpu)
 
 static void destroy_static_vidmem_mapping(uvm_gpu_t *gpu)
 {
-    if (!uvm_mmu_gpu_needs_static_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_static_vidmem_mapping(gpu->parent))
         return;
 
     destroy_identity_mapping(&gpu->static_flat_mapping);
@@ -2334,12 +2357,14 @@ NV_STATUS uvm_mmu_create_peer_identity_mappings(uvm_gpu_t *gpu, uvm_gpu_t *peer)
     NvU64 phys_offset;
     uvm_gpu_identity_mapping_t *peer_mapping;
 
+    UVM_ASSERT(gpu->parent->peer_copy_mode < UVM_GPU_PEER_COPY_MODE_COUNT);
+
     if (gpu->parent->peer_copy_mode != UVM_GPU_PEER_COPY_MODE_VIRTUAL || peer->mem_info.size == 0)
         return NV_OK;
 
-    page_size = uvm_mmu_biggest_page_size(&gpu->address_space_tree);
-    size = UVM_ALIGN_UP(peer->mem_info.max_allocatable_address + 1, page_size);
     aperture = uvm_gpu_peer_aperture(gpu, peer);
+    page_size = mmu_biggest_page_size(&gpu->address_space_tree, aperture);
+    size = UVM_ALIGN_UP(peer->mem_info.max_allocatable_address + 1, page_size);
     peer_mapping = uvm_gpu_get_peer_mapping(gpu, peer->id);
     phys_offset = 0ULL;
 
@@ -2445,7 +2470,7 @@ static void destroy_dynamic_vidmem_mapping(uvm_gpu_t *gpu)
 {
     size_t i;
 
-    if (!uvm_mmu_gpu_needs_dynamic_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(gpu->parent))
         return;
 
     if (gpu->root_chunk_mappings.array == NULL)
@@ -2469,10 +2494,10 @@ static NV_STATUS create_dynamic_vidmem_mapping(uvm_gpu_t *gpu)
     NV_STATUS status;
     size_t count;
 
-    if (!uvm_mmu_gpu_needs_dynamic_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(gpu->parent))
         return NV_OK;
 
-    UVM_ASSERT(!uvm_mmu_gpu_needs_static_vidmem_mapping(gpu));
+    UVM_ASSERT(!uvm_mmu_parent_gpu_needs_static_vidmem_mapping(gpu->parent));
     BUILD_BUG_ON(UVM_PAGE_SIZE_2M != UVM_CHUNK_SIZE_MAX);
     UVM_ASSERT(uvm_mmu_page_size_supported(&gpu->address_space_tree, UVM_PAGE_SIZE_2M));
     UVM_ASSERT(gpu->pmm.initialized);
@@ -2618,7 +2643,7 @@ NV_STATUS uvm_mmu_chunk_map(uvm_gpu_chunk_t *chunk)
     NV_STATUS status = NV_OK;
     uvm_gpu_t *gpu = uvm_gpu_chunk_get_gpu(chunk);
 
-    if (!uvm_mmu_gpu_needs_dynamic_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(gpu->parent))
         return NV_OK;
 
     chunk_size = uvm_gpu_chunk_get_size(chunk);
@@ -2671,7 +2696,7 @@ void uvm_mmu_chunk_unmap(uvm_gpu_chunk_t *chunk, uvm_tracker_t *tracker)
         return;
 
     gpu = uvm_gpu_chunk_get_gpu(chunk);
-    if (!uvm_mmu_gpu_needs_dynamic_vidmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(gpu->parent))
         return;
 
     if (tracker != NULL)
@@ -2735,7 +2760,7 @@ static void destroy_dynamic_sysmem_mapping(uvm_gpu_t *gpu)
 {
     size_t i;
 
-    if (!uvm_mmu_gpu_needs_dynamic_sysmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_sysmem_mapping(gpu->parent))
         return;
 
     if (gpu->sysmem_mappings.array == NULL)
@@ -2757,7 +2782,7 @@ static NV_STATUS create_dynamic_sysmem_mapping(uvm_gpu_t *gpu)
     NvU64 mapping_size;
     NvU64 flat_sysmem_va_size;
 
-    if (!uvm_mmu_gpu_needs_dynamic_sysmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_sysmem_mapping(gpu->parent))
         return NV_OK;
 
     UVM_ASSERT(gpu->parent->flat_sysmem_va_base != 0);
@@ -2782,7 +2807,7 @@ static NV_STATUS create_dynamic_sysmem_mapping(uvm_gpu_t *gpu)
     // sysmem mappings with 128K entries.
     UVM_ASSERT(is_power_of_2(mapping_size));
     UVM_ASSERT(mapping_size >= UVM_SIZE_1GB);
-    UVM_ASSERT(mapping_size >= uvm_mmu_biggest_page_size(&gpu->address_space_tree));
+    UVM_ASSERT(mapping_size >= mmu_biggest_page_size(&gpu->address_space_tree, UVM_APERTURE_SYS));
     UVM_ASSERT(mapping_size <= flat_sysmem_va_size);
 
     flat_sysmem_va_size = UVM_ALIGN_UP(flat_sysmem_va_size, mapping_size);
@@ -2813,7 +2838,7 @@ NV_STATUS uvm_mmu_sysmem_map(uvm_gpu_t *gpu, NvU64 pa, NvU64 size)
 {
     NvU64 curr_pa;
 
-    if (!uvm_mmu_gpu_needs_dynamic_sysmem_mapping(gpu))
+    if (!uvm_mmu_parent_gpu_needs_dynamic_sysmem_mapping(gpu->parent))
         return NV_OK;
 
     curr_pa = UVM_ALIGN_DOWN(pa, gpu->sysmem_mappings.mapping_size);
@@ -2825,9 +2850,9 @@ NV_STATUS uvm_mmu_sysmem_map(uvm_gpu_t *gpu, NvU64 pa, NvU64 size)
         sysmem_mapping_lock(gpu, sysmem_mapping);
 
         if (sysmem_mapping->range_vec == NULL) {
-            uvm_gpu_address_t virtual_address = uvm_gpu_address_virtual_from_sysmem_phys(gpu, curr_pa);
+            uvm_gpu_address_t virtual_address = uvm_parent_gpu_address_virtual_from_sysmem_phys(gpu->parent, curr_pa);
             NvU64 phys_offset = curr_pa;
-            NvU32 page_size = uvm_mmu_biggest_page_size(&gpu->address_space_tree);
+            NvU32 page_size = mmu_biggest_page_size(&gpu->address_space_tree, UVM_APERTURE_SYS);
             uvm_pmm_alloc_flags_t pmm_flags;
 
             // No eviction is requested when allocating the page tree storage,

@@ -189,6 +189,7 @@ typedef struct
     // sysmem was originally allocated under. For the allocation to remain valid
     // we need to prevent the GPU from going away, similarly to P2P mapped
     // memory.
+    // Similarly for EGM memory.
     //
     // This field is not used for sparse mappings as they don't have an
     // allocation and, hence, owning GPU.
@@ -208,6 +209,9 @@ typedef struct
     // backing.
     bool is_sysmem;
 
+    // EGM memory. If true is_sysmem also has to be true and owning_gpu
+    // has to be valid.
+    bool is_egm;
     // GPU page tables mapping the allocation
     uvm_page_table_range_vec_t pt_range_vec;
 
@@ -248,6 +252,10 @@ typedef struct
     // range because each GPU is able to map a completely different set of
     // allocations to the same VA range.
     uvm_ext_gpu_range_tree_t gpu_ranges[UVM_ID_MAX_GPUS];
+
+    // Dynamically allocated page mask allocated in
+    // uvm_va_range_create_external() and used and freed in uvm_free().
+    uvm_processor_mask_t *retained_mask;
 } uvm_va_range_external_t;
 
 // va_range state when va_range.type == UVM_VA_RANGE_TYPE_CHANNEL. This
@@ -807,6 +815,7 @@ uvm_va_block_t *uvm_va_range_block_next(uvm_va_range_t *va_range, uvm_va_block_t
 //          mode.
 NV_STATUS uvm_va_range_set_preferred_location(uvm_va_range_t *va_range,
                                               uvm_processor_id_t preferred_location,
+                                              int preferred_cpu_nid,
                                               struct mm_struct *mm,
                                               uvm_tracker_t *out_tracker);
 

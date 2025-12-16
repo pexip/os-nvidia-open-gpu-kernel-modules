@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -23,6 +23,7 @@
 
 #ifndef _DISPLAYPORT_H_
 #define _DISPLAYPORT_H_
+#include "nvcfg_sdk.h"
 
 #include "nvmisc.h"
 #include "dpcd.h"
@@ -35,6 +36,12 @@
 *       Defines DISPLAYPORT V1.2                                            *
 *                                                                           *
 \***************************************************************************/
+
+//
+// 4 Legacy Link Rates: RBR, HBR, HBR2, HBR3
+// 4 ILRs: 2.16G, 2.43G, 3.24G, 4.32G
+//
+#define NV_SUPPORTED_DP1X_LINK_RATES__SIZE        8
 
 // Displayport interoperability with HDMI dongle i2c addr
 #define DP2HDMI_DONGLE_I2C_ADDR                         0x80
@@ -155,7 +162,7 @@ typedef enum
     trainingPattern_1               = 0x1,
     trainingPattern_2               = 0x2,
     trainingPattern_3               = 0x3,
-    trainingPattern_4               = 0xB
+    trainingPattern_4               = 0xB,
 } DP_TRAININGPATTERN;
 
 typedef enum
@@ -239,6 +246,8 @@ typedef struct DscCaps
 {
     NvBool bDSCSupported;
     NvBool bDSCDecompressionSupported;
+    NvBool bDynamicPPSSupported;
+    NvBool bDynamicDscToggleSupported;
     NvBool bDSCPassThroughSupported;
     unsigned versionMajor, versionMinor;
     unsigned rcBufferBlockSize;
@@ -466,6 +475,21 @@ typedef enum
     PanelReplay_DisplayFromRfb      = 2,
     PanelReplay_Undefined           = 7
 } PanelReplayState;
+
+// PR Sink debug info
+typedef struct PanelReplaySinkDebugInfo
+{
+    NvU8 activeFrameCrcError : 1;
+    NvU8 rfbStorageError : 1;
+    NvU8 vscSdpUncorrectableError: 1;
+    NvU8 adaptiveSyncSdpMissing : 1;
+    NvU8 sinkPrStatus : 3;
+    NvU8 sinkFramelocked : 2;
+    NvU8 sinkFrameLockedValid : 1;
+    NvU8 currentPrState : 1;
+    NvU8 crcValid: 1;
+    NvU8 suCoordinatesValid: 1;
+} panelReplaySinkDebugInfo;
 
 typedef struct
 {

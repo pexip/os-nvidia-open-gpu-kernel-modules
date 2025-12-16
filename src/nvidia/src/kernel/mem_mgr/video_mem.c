@@ -32,9 +32,11 @@
 #include "core/locks.h"
 #include "kernel/gpu/rc/kernel_rc.h"
 #include "diagnostics/gpu_acct.h"
+#include "gpu/device/device.h"
 #include "Nvcm.h"
 #include "gpu/bus/third_party_p2p.h"
 #include "gpu/bus/kern_bus.h"
+#include "platform/sli/sli.h"
 
 #include "class/cl0040.h" // NV01_MEMORY_LOCAL_USER
 
@@ -133,10 +135,6 @@ _vidmemPmaAllocate
     PMA_ALLOCATION_OPTIONS       allocOptions = {0};
     NvBool                       bContig;
     NvU32                        subdevInst   = gpumgrGetSubDeviceInstanceFromGpu(pGpu);
-    NvBool                       bCompressed  = !FLD_TEST_DRF(OS32, _ATTR, _COMPR,
-                                                  _NONE, pAllocData->attr);
-    KernelBus                   *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
-    NvU32                        gfid;
     NvU32                        pmaConfig    = PMA_QUERY_NUMA_ENABLED;
 
     status = pmaQueryConfigs(pPma, &pmaConfig);
@@ -161,22 +159,6 @@ _vidmemPmaAllocate
         bContig = !FLD_TEST_DRF(OS32, _ATTR,
                                 _PHYSICALITY, _NONCONTIGUOUS,
                                 pAllocData->attr);
-    }
-
-    // LOCK: acquire device lock
-    status = rmDeviceGpuLocksAcquire(pGpu, GPUS_LOCK_FLAGS_NONE,
-                                     RM_LOCK_MODULES_MEM_PMA);
-    NV_ASSERT_OR_RETURN(status == NV_OK, status);
-
-    if (bCompressed &&
-        (vgpuGetCallingContextGfid(pGpu, &gfid) == NV_OK) &&
-        pKernelBus->bar1[gfid].bStaticBar1Enabled)
-    {
-        // Override the attr to use 2MB page size
-        pAllocData->attr = FLD_SET_DRF(OS32, _ATTR, _PAGE_SIZE, _HUGE, pAllocData->attr);
-
-        NV_PRINTF(LEVEL_INFO,
-                  "Overrode the page size to 2MB on this compressed vidmem for the static bar1\n");
     }
 
     NV_PRINTF(LEVEL_INFO, "PMA input\n");
@@ -223,15 +205,10 @@ _vidmemPmaAllocate
     // Bug:2451834, gpuCheckPageRetirementSupport should not be called outside
     // RM lock.
     //
-    if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALLOW_PAGE_RETIREMENT) &&
-           gpuCheckPageRetirementSupport_HAL(pGpu) &&
-           FLD_TEST_DRF(OS32, _ATTR2, _BLACKLIST, _OFF, pAllocData->attr2))
+    if (FLD_TEST_DRF(OS32, _ATTR2, _BLACKLIST, _OFF, pAllocData->attr2))
     {
         allocOptions.flags |= PMA_ALLOCATE_TURN_BLACKLIST_OFF;
     }
-
-    // UNLOCK: release device lock
-    rmDeviceGpuLocksRelease(pGpu, GPUS_LOCK_FLAGS_NONE, NULL);
 
     NV_ASSERT_OR_RETURN(NV_OK == status, status);
 
@@ -428,7 +405,8 @@ vidmemGetHeap
 (
     OBJGPU  *pGpu,
     Device  *pDevice,
-    NvBool   bSubheap
+    NvBool   bSubheap,
+    NvBool   bForceGlobalHeap
 )
 {
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
@@ -442,7 +420,7 @@ vidmemGetHeap
         return pHeap;
     }
 
-    if (IS_MIG_IN_USE(pGpu))
+    if (IS_MIG_IN_USE(pGpu) && !bForceGlobalHeap)
     {
         KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
         Heap *pMemoryPartitionHeap = NULL;
@@ -531,6 +509,7 @@ vidmemConstruct_IMPL
     MemoryManager               *pMemoryManager        = GPU_GET_MEMORY_MANAGER(pGpu);
     Heap                        *pHeap;
     NvBool                       bSubheap              = NV_FALSE;
+    NvBool                       bRsvdHeap             = NV_FALSE;
     MEMORY_DESCRIPTOR           *pTopLevelMemDesc      = NULL;
     MEMORY_DESCRIPTOR           *pTempMemDesc          = NULL;
     HWRESOURCE_INFO              hwResource;
@@ -549,6 +528,8 @@ vidmemConstruct_IMPL
     FB_ALLOC_INFO               *pFbAllocInfo          = NULL;
     FB_ALLOC_PAGE_FORMAT        *pFbAllocPageFormat    = NULL;
     NV_STATUS                    rmStatus              = NV_OK;
+    KernelBus                   *pKernelBus            = GPU_GET_KERNEL_BUS(pGpu);
+    NvBool                       bUpdatePteKind        = NV_FALSE;
 
     NV_ASSERT_OK_OR_RETURN(
         refFindAncestorOfType(pResourceRef, classId(Device), &pDeviceRef));
@@ -570,6 +551,22 @@ vidmemConstruct_IMPL
         goto done;
     }
 
+    if (!FLD_TEST_DRF(OS32, _ATTR, _COMPR, _NONE, pAllocData->attr) &&
+        kbusIsStaticBar1Enabled(pGpu, pKernelBus))
+    {
+        if (!FLD_TEST_DRF(OS32, _ATTR, _PAGE_SIZE, _HUGE, pAllocData->attr))
+        {
+            // Override the attr to use 2MB page size
+            pAllocData->attr = FLD_SET_DRF(OS32, _ATTR, _PAGE_SIZE, _HUGE, pAllocData->attr);
+            pAllocData->attr2 = FLD_SET_DRF(OS32, _ATTR2, _PAGE_SIZE_HUGE, _DEFAULT, pAllocData->attr2);
+
+            NV_PRINTF(LEVEL_INFO,
+                      "Overrode the page size to 2MB on this compressed vidmem for the static bar1\n");
+        }
+
+        bUpdatePteKind = NV_TRUE;
+    }
+
     if (FLD_TEST_DRF(OS32, _ATTR, _PHYSICALITY, _DEFAULT, pAllocData->attr))
     {
         pAllocData->attr =
@@ -586,9 +583,17 @@ vidmemConstruct_IMPL
 
     stdmemDumpInputAllocParams(pAllocData, pCallContext);
 
+    if (pCallContext->secInfo.privLevel >= RS_PRIV_LEVEL_KERNEL)
+    {
+        bRsvdHeap = FLD_TEST_DRF(OS32, _ATTR, _ALLOCATE_FROM_RESERVED_HEAP, _YES, pAllocData->attr);
+    }
+
     bSubheap = FLD_TEST_DRF(OS32, _ATTR2, _ALLOCATE_FROM_SUBHEAP, _YES, pAllocData->attr2);
-    pHeap = vidmemGetHeap(pGpu, pDevice, bSubheap);
+    pHeap = vidmemGetHeap(pGpu, pDevice, bSubheap, bRsvdHeap);
     NV_CHECK_OR_RETURN(LEVEL_INFO, pHeap != NULL, NV_ERR_INVALID_STATE);
+
+    attr  = pAllocData->attr;
+    attr2 = pAllocData->attr2;
 
     if (gpuIsCCorApmFeatureEnabled(pGpu) &&
         !FLD_TEST_DRF(OS32, _ATTR2, _MEMORY_PROTECTION, _UNPROTECTED, pAllocData->attr2))
@@ -624,6 +629,7 @@ vidmemConstruct_IMPL
 
     bIsPmaAlloc = memmgrIsPmaInitialized(pMemoryManager) &&
                   !bSubheap &&
+                  !bRsvdHeap &&
                   !(pAllocData->flags & NVOS32_ALLOC_FLAGS_WPR1) &&
                   !(pAllocData->flags & NVOS32_ALLOC_FLAGS_WPR2) &&
                   (!(pAllocData->flags & NVOS32_ALLOC_FLAGS_FIXED_ADDRESS_ALLOCATE) ||
@@ -631,7 +637,7 @@ vidmemConstruct_IMPL
 
     // Scrub-on-free is not supported by heap. Make sure clients don't get unscrubbed allocations
     NV_CHECK_OR_RETURN(LEVEL_WARNING,
-        !memmgrIsScrubOnFreeEnabled(pMemoryManager) || bIsPmaAlloc || bSubheap,
+        !memmgrIsScrubOnFreeEnabled(pMemoryManager) || bIsPmaAlloc || bSubheap || bRsvdHeap,
         NV_ERR_INVALID_STATE);
 
     // Get the allocation from PMA if enabled.
@@ -639,7 +645,7 @@ vidmemConstruct_IMPL
     {
         SLI_LOOP_START(SLI_LOOP_FLAGS_BC_ONLY | SLI_LOOP_FLAGS_IGNORE_REENTRANCY)
         pAllocRequest->pGpu = pGpu;
-        rmStatus = _vidmemPmaAllocate(vidmemGetHeap(pGpu, pDevice, NV_FALSE), pAllocRequest);
+        rmStatus = _vidmemPmaAllocate(vidmemGetHeap(pGpu, pDevice, NV_FALSE, NV_FALSE), pAllocRequest);
         if (NV_OK != rmStatus)
             SLI_LOOP_GOTO(done);
         SLI_LOOP_END;
@@ -707,8 +713,9 @@ vidmemConstruct_IMPL
     {
         MEMORY_DESCRIPTOR *pPrev = NULL;
 
-        // VGPU won't run in SLI. So no need to set subheap flags in memdesc.
+        // VGPU won't run in SLI. So no need to set subheap and bRsvdHeap flags in memdesc.
         NV_ASSERT(!bSubheap);
+        NV_ASSERT(!bRsvdHeap);
 
         // Create dummy top level memdesc
         rmStatus = memdescCreate(&pTopLevelMemDesc, pGpu, RM_PAGE_SIZE, 0,
@@ -741,7 +748,7 @@ vidmemConstruct_IMPL
                 SLI_LOOP_GOTO(done);
 
             rmStatus = vidmemAllocResources(pGpu, pMemoryManager, pAllocRequest, pFbAllocInfo,
-                                            vidmemGetHeap(pGpu, pDevice, NV_FALSE));
+                                            vidmemGetHeap(pGpu, pDevice, NV_FALSE, NV_FALSE));
             if (rmStatus != NV_OK)
                 SLI_LOOP_GOTO(done);
 
@@ -907,6 +914,13 @@ vidmemConstruct_IMPL
     // XXX: This is a hack for now. No Hw resources are assumed to be used in the call.
     // The host is only requested to make an alias to the allocated heap.
 
+    //
+    // Heap alloc may allocate non-contiguous pages when it is not able to
+    // find contiguous pages. Replace this field before passing to RPC.
+    //
+    attr = (pAllocData->attr &  DRF_SHIFTMASK(NVOS32_ATTR_PHYSICALITY)) |
+           (attr             & ~DRF_SHIFTMASK(NVOS32_ATTR_PHYSICALITY));
+
     if (!IS_GSP_CLIENT(pGpu))
     {
         NV_RM_RPC_ALLOC_VIDMEM(pGpu,
@@ -992,6 +1006,32 @@ vidmemConstruct_IMPL
         }
     }
 
+    if (bUpdatePteKind)
+    {
+        rmStatus = kbusUpdateStaticBar1VAMapping_HAL(pGpu, pKernelBus,
+                         pMemory->pMemDesc, 0,
+                         memdescGetSize(pMemory->pMemDesc), NV_FALSE);
+
+        if (rmStatus != NV_OK)
+        {
+            if (pMemory->bRpcAlloc)
+            {
+                NV_STATUS status = NV_OK;
+                NV_RM_RPC_FREE(pGpu, hClient, hParent,
+                               pAllocRequest->hMemory, status);
+                NV_ASSERT(status == NV_OK);
+            }
+            memDestructCommon(pMemory);
+            memdescFree(pTopLevelMemDesc);
+            memdescDestroy(pTopLevelMemDesc);
+            pTopLevelMemDesc = NULL;
+            goto done;
+        }
+
+        memdescSetFlag(pMemory->pMemDesc,
+                       MEMDESC_FLAGS_RESTORE_PTE_KIND_ON_FREE, NV_TRUE);
+    }
+
     pAllocData->size = sizeOut;
     pAllocData->offset = offsetOut;
 
@@ -1015,7 +1055,7 @@ done:
         SLI_LOOP_START(SLI_LOOP_FLAGS_BC_ONLY | SLI_LOOP_FLAGS_IGNORE_REENTRANCY)
 
         if (pAllocRequest->pPmaAllocInfo[gpumgrGetSubDeviceInstanceFromGpu(pGpu)])
-            vidmemPmaFree(pGpu, vidmemGetHeap(pGpu, pDevice, NV_FALSE),
+            vidmemPmaFree(pGpu, vidmemGetHeap(pGpu, pDevice, NV_FALSE, NV_FALSE),
                           pAllocRequest->pPmaAllocInfo[gpumgrGetSubDeviceInstanceFromGpu(pGpu)], 0);
         SLI_LOOP_END;
     }
@@ -1271,6 +1311,11 @@ vidmemAllocResources
         }
 
         bAllocedMemory = NV_TRUE;
+
+        if (pVidHeapAlloc->flags & NVOS32_ALLOC_FLAGS_PERSISTENT_VIDMEM)
+        {
+            memdescSetFlag(pMemDesc, MEMDESC_FLAGS_PRESERVE_CONTENT_ON_SUSPEND, NV_TRUE);
+        }
     }
 
     if (!bIsPmaOwned && (pVidHeapAlloc->type != NVOS32_TYPE_PMA))

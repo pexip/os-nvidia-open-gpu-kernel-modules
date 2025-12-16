@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2015-2023, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,8 +21,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/err.h>
 
 #include "nvidia-drm-os-interface.h"
 #include "nvidia-drm.h"
@@ -31,134 +29,17 @@
 
 #if defined(NV_DRM_AVAILABLE)
 
-#if defined(NV_DRM_DRMP_H_PRESENT)
-#include <drm/drmP.h>
-#endif
-
-#include <linux/vmalloc.h>
-
-#include "nv-mm.h"
-
 MODULE_PARM_DESC(
     modeset,
     "Enable atomic kernel modesetting (1 = enable, 0 = disable (default))");
-bool nv_drm_modeset_module_param = false;
 module_param_named(modeset, nv_drm_modeset_module_param, bool, 0400);
 
-void *nv_drm_calloc(size_t nmemb, size_t size)
-{
-    size_t total_size = nmemb * size;
-    //
-    // Check for overflow.
-    //
-    if ((nmemb != 0) && ((total_size / nmemb) != size))
-    {
-        return NULL;
-    }
-    return kzalloc(nmemb * size, GFP_KERNEL);
-}
-
-void nv_drm_free(void *ptr)
-{
-    if (IS_ERR(ptr)) {
-        return;
-    }
-
-    kfree(ptr);
-}
-
-char *nv_drm_asprintf(const char *fmt, ...)
-{
-    va_list ap;
-    char *p;
-
-    va_start(ap, fmt);
-    p = kvasprintf(GFP_KERNEL, fmt, ap);
-    va_end(ap);
-
-    return p;
-}
-
-#if defined(NVCPU_X86) || defined(NVCPU_X86_64)
-  #define WRITE_COMBINE_FLUSH()    asm volatile("sfence":::"memory")
-#elif defined(NVCPU_FAMILY_ARM)
-  #if defined(NVCPU_ARM)
-    #define WRITE_COMBINE_FLUSH()  { dsb(); outer_sync(); }
-  #elif defined(NVCPU_AARCH64)
-    #define WRITE_COMBINE_FLUSH()  mb()
-  #endif
-#elif defined(NVCPU_PPC64LE)
-  #define WRITE_COMBINE_FLUSH()    asm volatile("sync":::"memory")
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+MODULE_PARM_DESC(
+    fbdev,
+    "Create a framebuffer device (1 = enable, 0 = disable (default)) (EXPERIMENTAL)");
+module_param_named(fbdev, nv_drm_fbdev_module_param, bool, 0400);
 #endif
-
-void nv_drm_write_combine_flush(void)
-{
-    WRITE_COMBINE_FLUSH();
-}
-
-int nv_drm_lock_user_pages(unsigned long address,
-                           unsigned long pages_count, struct page ***pages)
-{
-    struct mm_struct *mm = current->mm;
-    struct page **user_pages;
-    int pages_pinned;
-
-    user_pages = nv_drm_calloc(pages_count, sizeof(*user_pages));
-
-    if (user_pages == NULL) {
-        return -ENOMEM;
-    }
-
-    nv_mmap_read_lock(mm);
-
-    pages_pinned = NV_PIN_USER_PAGES(address, pages_count, FOLL_WRITE,
-                                     user_pages, NULL);
-    nv_mmap_read_unlock(mm);
-
-    if (pages_pinned < 0 || (unsigned)pages_pinned < pages_count) {
-        goto failed;
-    }
-
-    *pages = user_pages;
-
-    return 0;
-
-failed:
-
-    if (pages_pinned > 0) {
-        int i;
-
-        for (i = 0; i < pages_pinned; i++) {
-           NV_UNPIN_USER_PAGE(user_pages[i]);
-        }
-    }
-
-    nv_drm_free(user_pages);
-
-    return (pages_pinned < 0) ? pages_pinned : -EINVAL;
-}
-
-void nv_drm_unlock_user_pages(unsigned long  pages_count, struct page **pages)
-{
-    unsigned long i;
-
-    for (i = 0; i < pages_count; i++) {
-        set_page_dirty_lock(pages[i]);
-        NV_UNPIN_USER_PAGE(pages[i]);
-    }
-
-    nv_drm_free(pages);
-}
-
-void *nv_drm_vmap(struct page **pages, unsigned long pages_count)
-{
-    return vmap(pages, pages_count, VM_USERMAP, PAGE_KERNEL);
-}
-
-void nv_drm_vunmap(void *address)
-{
-    vunmap(address);
-}
 
 #endif /* NV_DRM_AVAILABLE */
 

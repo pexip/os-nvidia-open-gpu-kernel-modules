@@ -120,6 +120,7 @@
 #include "mem_mgr/vaspace.h"
 #include "mem_mgr/fabric_vaspace.h"
 #include "mem_mgr/virt_mem_mgr.h"
+#include "platform/sli/sli.h"
 
 #include "mem_mgr/fla_mem.h"
 
@@ -147,7 +148,10 @@
 // no trace output
 #define _MMUXLATEVADDR_FLAG_XLATE_ONLY          _MMUXLATEVADDR_FLAG_VALIDATE_TERSELY
 
-static NV_STATUS _dmaGetFabricAddress(OBJGPU *pGpu, NvU32 aperture, NvU32 kind, NvU64 *fabricAddr);
+static NV_STATUS _dmaGetFabricAddress(OBJGPU *pGpu, NvU32 aperture, NvU32 kind,
+                                        NvU64 *fabricAddr);
+static NV_STATUS _dmaGetFabricEgmAddress(OBJGPU *pGpu, NvU32 aperture, NvU32 kind,
+                                        NvU64 *fabricEgmAddr);
 
 static NV_STATUS
 _dmaApplyWarForBug2720120
@@ -206,6 +210,7 @@ dmaAllocMapping_GM107
 {
     NV_STATUS           status            = NV_OK;
     MemoryManager      *pMemoryManager    = GPU_GET_MEMORY_MANAGER(pGpu);
+    KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
     KernelMIGManager   *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
     OBJEHEAP           *pVASpaceHeap      = NULL;
     KernelGmmu         *pKernelGmmu       = GPU_GET_KERNEL_GMMU(pGpu);
@@ -216,7 +221,7 @@ dmaAllocMapping_GM107
     NvU32               gfid;
     NvBool              bCallingContextPlugin;
     const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
-        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
+        kmemsysGetStaticConfig(pGpu, pKernelMemorySystem);
     OBJGVASPACE        *pGVAS             = NULL;
 
     struct
@@ -266,6 +271,7 @@ dmaAllocMapping_GM107
         NvU32              pageArrayGranularity;
         NvU8               pageShift;
         NvU64              physPageSize;
+        NvU64              pageArrayFlags;
     } *pLocals = portMemAllocNonPaged(sizeof(*pLocals));
     // Heap Allocate to avoid stack overflow
 
@@ -428,10 +434,13 @@ dmaAllocMapping_GM107
     // RM allocating one comptagline per 64KB allocation (From Pascal to Turing).
     // See bug 3909010
     //
+    // Skipping it for Raw mode, See bug 4036809
+    //
     if ((pLocals->pageSize == RM_PAGE_SIZE) &&
-        memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, pLocals->kind))
+        memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, pLocals->kind) &&
+        !(pMemorySystemConfig->bUseRawModeComptaglineAllocation))
     {
-        NV_PRINTF(LEVEL_WARNING, "Requested 4K mapping on compressible sufrace. Overriding to physical page granularity...");
+        NV_PRINTF(LEVEL_WARNING, "Requested 4K mapping on compressible sufrace. Overriding to physical page granularity...\n");
         pLocals->pageSize = pLocals->physPageSize;
     }
 
@@ -488,7 +497,7 @@ dmaAllocMapping_GM107
 
     // Disable PLC Compression for FLA->PA Mapping because of the HW Bug: 3046774
     if (pMemorySystemConfig->bUseRawModeComptaglineAllocation &&
-        pMemorySystemConfig->bDisablePlcForCertainOffsetsBug3046774)
+        pKernelMemorySystem->bDisablePlcForCertainOffsetsBug3046774)
     {
         MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
 
@@ -882,7 +891,9 @@ dmaAllocMapping_GM107
 
         // Commit the mapping update
         pLocals->pPteArray = memdescGetPteArray(pLocals->pTempMemDesc, addressTranslation);
-        dmaPageArrayInit(&pLocals->pageArray, pLocals->pPteArray, pLocals->pteCount);
+
+        dmaPageArrayInitWithFlags(&pLocals->pageArray, pLocals->pPteArray, pLocals->pteCount,
+                                  pLocals->pageArrayFlags);
 
         // Get pLocals->aperture
         if (memdescGetAddressSpace(pLocals->pTempMemDesc) == ADDR_FBMEM)
@@ -971,10 +982,8 @@ dmaAllocMapping_GM107
                 SLI_LOOP_BREAK;
             }
         }
-        else if ((memdescGetAddressSpace(pLocals->pTempMemDesc) == ADDR_EGM))
+        else if (memdescIsEgm(pLocals->pTempMemDesc))
         {
-            NV_ASSERT(memdescGetFlag(pLocals->pTempMemDesc, MEMDESC_FLAGS_ALLOC_FROM_EGM));
-
             pLocals->aperture = NV_MMU_PTE_APERTURE_PEER_MEMORY;
 
             if (pLocals->p2p)
@@ -1042,15 +1051,30 @@ dmaAllocMapping_GM107
         // Fabric memory descriptors are pre-encoded with the fabric base address
         // use NVLINK_INVALID_FABRIC_ADDR to avoid encoding twice
         //
+        // Skip fabric base address for Local EGM as it uses peer aperture but
+        // doesn't require fabric address
+        //
         if (pLocals->bFlaImport ||
             (memdescGetAddressSpace(pLocals->pTempMemDesc) == ADDR_FABRIC_MC) ||
-            (memdescGetAddressSpace(pLocals->pTempMemDesc) == ADDR_FABRIC_V2))
+            (memdescGetAddressSpace(pLocals->pTempMemDesc) == ADDR_FABRIC_V2) ||
+            (memdescIsEgm(pLocals->pTempMemDesc) && (pGpu == pLocals->pSrcGpu)))
         {
             pLocals->fabricAddr = NVLINK_INVALID_FABRIC_ADDR;
         }
         else
         {
-            status = _dmaGetFabricAddress(pLocals->pSrcGpu, pLocals->aperture,  pLocals->kind, &pLocals->fabricAddr);
+            // Get EGM fabric address for Remote EGM
+            if (memdescIsEgm(pLocals->pTempMemDesc))
+            {
+                status = _dmaGetFabricEgmAddress(pLocals->pSrcGpu, pLocals->aperture,
+                                                pLocals->kind, &pLocals->fabricAddr);
+            }
+            else
+            {
+                status = _dmaGetFabricAddress(pLocals->pSrcGpu, pLocals->aperture,
+                                                pLocals->kind, &pLocals->fabricAddr);
+            }
+
             if (status != NV_OK)
             {
                 DBG_BREAKPOINT();
@@ -1524,7 +1548,7 @@ _gmmuWalkCBMapNextEntries_Direct
                         kmemsysGetStaticConfig(pGpu, pKernelMemorySystem);
 
                     if (pMemorySystemConfig->bUseRawModeComptaglineAllocation &&
-                        pMemorySystemConfig->bDisablePlcForCertainOffsetsBug3046774 &&
+                        pKernelMemorySystem->bDisablePlcForCertainOffsetsBug3046774 &&
                         !memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_DISALLOW_PLC, pIter->comprInfo.kind) &&
                         !kmemsysIsPagePLCable_HAL(pGpu, pKernelMemorySystem, (pIter->surfaceOffset + pIter->currIdx * pTarget->pageArrayGranularity), pageSize))
                     {
@@ -1656,8 +1680,51 @@ static NV_STATUS _dmaGetFabricAddress
     // Fabric address should be available for NVSwitch connected GPUs,
     // otherwise it is a NOP.
     //
-    *fabricAddr =  knvlinkGetUniqueFabricBaseAddress(pGpu, pKernelNvlink);
+    *fabricAddr = knvlinkGetUniqueFabricBaseAddress(pGpu, pKernelNvlink);
     if (*fabricAddr == NVLINK_INVALID_FABRIC_ADDR)
+    {
+        return NV_OK;
+    }
+
+    if (memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, kind))
+    {
+        NV_PRINTF(LEVEL_ERROR,
+                  "Nvswitch systems don't support compression.\n");
+        return NV_ERR_NOT_SUPPORTED;
+    }
+
+    return NV_OK;
+}
+
+static NV_STATUS _dmaGetFabricEgmAddress
+(
+    OBJGPU         *pGpu,
+    NvU32           aperture,
+    NvU32           kind,
+    NvU64           *fabricEgmAddr
+)
+{
+    MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+    KernelNvlink  *pKernelNvlink  = GPU_GET_KERNEL_NVLINK(pGpu);
+
+    *fabricEgmAddr = NVLINK_INVALID_FABRIC_ADDR;
+
+    if (pKernelNvlink == NULL)
+    {
+        return NV_OK;
+    }
+
+    if (aperture != NV_MMU_PTE_APERTURE_PEER_MEMORY)
+    {
+        return NV_OK;
+    }
+
+    //
+    // Fabric address should be available for NVSwitch connected GPUs,
+    // otherwise it is a NOP.
+    //
+    *fabricEgmAddr = knvlinkGetUniqueFabricEgmBaseAddress(pGpu, pKernelNvlink);
+    if (*fabricEgmAddr == NVLINK_INVALID_FABRIC_ADDR)
     {
         return NV_OK;
     }
@@ -1721,6 +1788,17 @@ dmaUpdateVASpace_GF100
     NvBool      bIsIndirectPeer;
     VAS_PTE_UPDATE_TYPE update_type;
 
+    {
+        OBJGVASPACE *pGVAS = dynamicCast(pVAS, OBJGVASPACE);
+        if (bFillPteMem &&
+            (pGVAS->flags & VASPACE_FLAGS_BAR_BAR1) &&
+            (flags & DMA_UPDATE_VASPACE_FLAGS_UPDATE_VALID) &&
+            (SF_VAL(_MMU, _PTE_VALID, valid) == NV_MMU_PTE_VALID_FALSE))
+        {
+            bSparse = NV_TRUE;
+        }
+    }
+
     priv = (flags & DMA_UPDATE_VASPACE_FLAGS_PRIV) ? NV_MMU_PTE_PRIVILEGE_TRUE : NV_MMU_PTE_PRIVILEGE_FALSE;
     tlbLock = (flags & DMA_UPDATE_VASPACE_FLAGS_TLB_LOCK) ? NV_MMU_PTE_LOCK_TRUE : NV_MMU_PTE_LOCK_FALSE;
     readOnly = (flags & DMA_UPDATE_VASPACE_FLAGS_READ_ONLY) ? NV_MMU_PTE_READ_ONLY_TRUE : NV_MMU_PTE_READ_ONLY_FALSE;
@@ -1734,18 +1812,6 @@ dmaUpdateVASpace_GF100
     if ((pageSize == RM_PAGE_SIZE_64K) || (pageSize == RM_PAGE_SIZE_128K))
     {
         NV_ASSERT_OR_RETURN(pageSize == vaSpaceBigPageSize, NV_ERR_INVALID_STATE);
-    }
-
-   if (pGpu->bEnableBar1SparseForFillPteMemUnmap)
-    {
-        OBJGVASPACE *pGVAS = dynamicCast(pVAS, OBJGVASPACE);
-        if (bFillPteMem &&
-            (pGVAS->flags & VASPACE_FLAGS_BAR_BAR1) &&
-            (flags & DMA_UPDATE_VASPACE_FLAGS_UPDATE_VALID) &&
-            (SF_VAL(_MMU, _PTE_VALID, valid) == NV_MMU_PTE_VALID_FALSE))
-        {
-            bSparse = NV_TRUE;
-        }
     }
 
     //
@@ -1903,7 +1969,7 @@ dmaUpdateVASpace_GF100
             kindNoCompression = kind;
         }
 
-        if (!RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM &&
+        if (!RMCFG_FEATURE_PLATFORM_WINDOWS &&
             memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, pComprInfo->kind) &&
             ((vAddr & (alignSize-1)) != 0) &&
             !(flags & DMA_UPDATE_VASPACE_FLAGS_UNALIGNED_COMP))
@@ -2118,8 +2184,7 @@ dmaUpdateVASpace_GF100
     if ((NULL == pTgtPteMem) && DMA_TLB_INVALIDATE == deferInvalidate)
     {
         kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY |
-                                        BUS_FLUSH_SYSTEM_MEMORY |
-                                        BUS_FLUSH_USE_PCIE_READ);
+                                        BUS_FLUSH_SYSTEM_MEMORY);
         gvaspaceInvalidateTlb(pGVAS, pGpu, update_type);
     }
 
@@ -2560,8 +2625,7 @@ _dmaApplyWarForBug2720120
 
     // Flush PTE writes to vidmem and issue TLB invalidate
     kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY |
-                                    BUS_FLUSH_SYSTEM_MEMORY |
-                                    BUS_FLUSH_USE_PCIE_READ);
+                                    BUS_FLUSH_SYSTEM_MEMORY);
     gvaspaceInvalidateTlb(pGVAS, pGpu, PTE_UPGRADE);
 
     return NV_OK;

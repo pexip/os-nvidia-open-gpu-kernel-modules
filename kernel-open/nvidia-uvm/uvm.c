@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2022 NVIDIA Corporation
+    Copyright (c) 2015-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -127,9 +127,9 @@ static NV_STATUS uvm_api_mm_initialize(UVM_MM_INITIALIZE_PARAMS *params, struct 
         goto err;
     }
 
-    old_fd_type = nv_atomic_long_cmpxchg((atomic_long_t *)&filp->private_data,
-                                         UVM_FD_UNINITIALIZED,
-                                         UVM_FD_INITIALIZING);
+    old_fd_type = atomic_long_cmpxchg((atomic_long_t *)&filp->private_data,
+                                      UVM_FD_UNINITIALIZED,
+                                      UVM_FD_INITIALIZING);
     old_fd_type &= UVM_FD_TYPE_MASK;
     if (old_fd_type != UVM_FD_UNINITIALIZED) {
         status = NV_ERR_IN_USE;
@@ -917,8 +917,9 @@ static NV_STATUS uvm_api_initialize(UVM_INITIALIZE_PARAMS *params, struct file *
     // attempt to be made. This is safe because other threads will have only had
     // a chance to observe UVM_FD_INITIALIZING and not UVM_FD_VA_SPACE in this
     // case.
-    old_fd_type = nv_atomic_long_cmpxchg((atomic_long_t *)&filp->private_data,
-                                         UVM_FD_UNINITIALIZED, UVM_FD_INITIALIZING);
+    old_fd_type = atomic_long_cmpxchg((atomic_long_t *)&filp->private_data,
+                                      UVM_FD_UNINITIALIZED,
+                                      UVM_FD_INITIALIZING);
     old_fd_type &= UVM_FD_TYPE_MASK;
     if (old_fd_type == UVM_FD_UNINITIALIZED) {
         status = uvm_va_space_create(filp->f_mapping, &va_space, params->flags);
@@ -1056,7 +1057,7 @@ NV_STATUS uvm_test_register_unload_state_buffer(UVM_TEST_REGISTER_UNLOAD_STATE_B
     // are not used because unload_state_buf may be a managed memory pointer and
     // therefore a locking assertion from the CPU fault handler could be fired.
     nv_mmap_read_lock(current->mm);
-    ret = NV_PIN_USER_PAGES(params->unload_state_buf, 1, FOLL_WRITE, &page, NULL);
+    ret = NV_PIN_USER_PAGES(params->unload_state_buf, 1, FOLL_WRITE, &page);
     nv_mmap_read_unlock(current->mm);
 
     if (ret < 0)

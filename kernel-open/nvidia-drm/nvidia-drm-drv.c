@@ -44,6 +44,10 @@
 #include <drm/drmP.h>
 #endif
 
+#if defined(NV_DRM_DRM_ATOMIC_UAPI_H_PRESENT)
+#include <drm/drm_atomic_uapi.h>
+#endif
+
 #if defined(NV_DRM_DRM_VBLANK_H_PRESENT)
 #include <drm/drm_vblank.h>
 #endif
@@ -60,7 +64,30 @@
 #include <drm/drm_ioctl.h>
 #endif
 
+#if defined(NV_LINUX_APERTURE_H_PRESENT)
+#include <linux/aperture.h>
+#endif
+
+#if defined(NV_DRM_DRM_APERTURE_H_PRESENT)
+#include <drm/drm_aperture.h>
+#endif
+
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+#include <drm/drm_fb_helper.h>
+#endif
+
+#if defined(NV_DRM_DRM_CLIENT_SETUP_H_PRESENT)
+#include <drm/drm_client_setup.h>
+#endif
+
+#if defined(NV_DRM_DRM_FBDEV_TTM_H_PRESENT)
+#include <drm/drm_fbdev_ttm.h>
+#elif defined(NV_DRM_DRM_FBDEV_GENERIC_H_PRESENT)
+#include <drm/drm_fbdev_generic.h>
+#endif
+
 #include <linux/pci.h>
+#include <linux/workqueue.h>
 
 /*
  * Commit fcd70cd36b9b ("drm: Split out drm_probe_helper.h")
@@ -83,6 +110,11 @@
 #if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
 #include <drm/drm_atomic_helper.h>
 #endif
+
+static int nv_drm_revoke_modeset_permission(struct drm_device *dev,
+                                            struct drm_file *filep,
+                                            NvU32 dpyId);
+static int nv_drm_revoke_sub_ownership(struct drm_device *dev);
 
 static struct nv_drm_device *dev_list = NULL;
 
@@ -391,6 +423,27 @@ static int nv_drm_create_properties(struct nv_drm_device *nv_dev)
     return 0;
 }
 
+#if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
+/*
+ * We can't just call drm_kms_helper_hotplug_event directly because
+ * fbdev_generic may attempt to set a mode from inside the hotplug event
+ * handler. Because kapi event handling runs on nvkms_kthread_q, this blocks
+ * other event processing including the flip completion notifier expected by
+ * nv_drm_atomic_commit.
+ *
+ * Defer hotplug event handling to a work item so that nvkms_kthread_q can
+ * continue processing events while a DRM modeset is in progress.
+ */
+static void nv_drm_handle_hotplug_event(struct work_struct *work)
+{
+    struct delayed_work *dwork = to_delayed_work(work);
+    struct nv_drm_device *nv_dev =
+        container_of(dwork, struct nv_drm_device, hotplug_event_work);
+
+    drm_kms_helper_hotplug_event(nv_dev->dev);
+}
+#endif
+
 static int nv_drm_load(struct drm_device *dev, unsigned long flags)
 {
 #if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
@@ -444,6 +497,22 @@ static int nv_drm_load(struct drm_device *dev, unsigned long flags)
         return -ENODEV;
     }
 
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+    /*
+     * If fbdev is enabled, take modeset ownership now before other DRM clients
+     * can take master (and thus NVKMS ownership).
+     */
+    if (nv_drm_fbdev_module_param) {
+        if (!nvKms->grabOwnership(pDevice)) {
+            nvKms->freeDevice(pDevice);
+            NV_DRM_DEV_LOG_ERR(nv_dev, "Failed to grab NVKMS modeset ownership");
+            return -EBUSY;
+        }
+
+        nv_dev->hasFramebufferConsole = NV_TRUE;
+    }
+#endif
+
     mutex_lock(&nv_dev->lock);
 
     /* Set NvKmsKapiDevice */
@@ -463,6 +532,11 @@ static int nv_drm_load(struct drm_device *dev, unsigned long flags)
     nv_dev->sectorLayout = 1;
 
     nv_dev->supportsSyncpts = resInfo.caps.supportsSyncpts;
+
+    nv_dev->semsurf_stride = resInfo.caps.semsurf.stride;
+
+    nv_dev->semsurf_max_submitted_offset =
+        resInfo.caps.semsurf.maxSubmittedOffset;
 
 #if defined(NV_DRM_FORMAT_MODIFIERS_PRESENT)
     gen = nv_dev->pageKindGeneration;
@@ -521,6 +595,7 @@ static int nv_drm_load(struct drm_device *dev, unsigned long flags)
 
     /* Enable event handling */
 
+    INIT_DELAYED_WORK(&nv_dev->hotplug_event_work, nv_drm_handle_hotplug_event);
     atomic_set(&nv_dev->enable_event_handling, true);
 
     init_waitqueue_head(&nv_dev->flip_event_wq);
@@ -548,7 +623,19 @@ static void __nv_drm_unload(struct drm_device *dev)
         return;
     }
 
+    /* Release modeset ownership if fbdev is enabled */
+
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+    if (nv_dev->hasFramebufferConsole) {
+        drm_atomic_helper_shutdown(dev);
+        nvKms->releaseOwnership(nv_dev->pDevice);
+    }
+#endif
+
+    cancel_delayed_work_sync(&nv_dev->hotplug_event_work);
     mutex_lock(&nv_dev->lock);
+
+    WARN_ON(nv_dev->subOwnershipGranted);
 
     /* Disable event handling */
 
@@ -599,9 +686,15 @@ static int __nv_drm_master_set(struct drm_device *dev,
 {
     struct nv_drm_device *nv_dev = to_nv_device(dev);
 
-    if (!nvKms->grabOwnership(nv_dev->pDevice)) {
+    /*
+     * If this device is driving a framebuffer, then nvidia-drm already has
+     * modeset ownership. Otherwise, grab ownership now.
+     */
+    if (!nv_dev->hasFramebufferConsole &&
+        !nvKms->grabOwnership(nv_dev->pDevice)) {
         return -EINVAL;
     }
+    nv_dev->drmMasterChangedSinceLastAtomicCommit = NV_TRUE;
 
     return 0;
 }
@@ -635,6 +728,9 @@ void nv_drm_master_drop(struct drm_device *dev, struct drm_file *file_priv)
     struct nv_drm_device *nv_dev = to_nv_device(dev);
     int err;
 
+    nv_drm_revoke_modeset_permission(dev, file_priv, 0);
+    nv_drm_revoke_sub_ownership(dev);
+
     /*
      * After dropping nvkms modeset onwership, it is not guaranteed that
      * drm and nvkms modeset state will remain in sync.  Therefore, disable
@@ -659,7 +755,9 @@ void nv_drm_master_drop(struct drm_device *dev, struct drm_file *file_priv)
 
     drm_modeset_unlock_all(dev);
 
-    nvKms->releaseOwnership(nv_dev->pDevice);
+    if (!nv_dev->hasFramebufferConsole) {
+        nvKms->releaseOwnership(nv_dev->pDevice);
+    }
 }
 #endif /* NV_DRM_ATOMIC_MODESET_AVAILABLE */
 
@@ -697,15 +795,30 @@ static int nv_drm_get_dev_info_ioctl(struct drm_device *dev,
 
     params->gpu_id = nv_dev->gpu_info.gpu_id;
     params->primary_index = dev->primary->index;
-#if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
-    params->generic_page_kind = nv_dev->genericPageKind;
-    params->page_kind_generation = nv_dev->pageKindGeneration;
-    params->sector_layout = nv_dev->sectorLayout;
-#else
+    params->supports_alloc = false;
     params->generic_page_kind = 0;
     params->page_kind_generation = 0;
     params->sector_layout = 0;
-#endif
+    params->supports_sync_fd = false;
+    params->supports_semsurf = false;
+
+#if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
+    /* Memory allocation and semaphore surfaces are only supported
+     * if the modeset = 1 parameter is set */
+    if (nv_dev->pDevice != NULL) {
+        params->supports_alloc = true;
+        params->generic_page_kind = nv_dev->genericPageKind;
+        params->page_kind_generation = nv_dev->pageKindGeneration;
+        params->sector_layout = nv_dev->sectorLayout;
+
+        if (nv_dev->semsurf_stride != 0) {
+            params->supports_semsurf = true;
+#if defined(NV_SYNC_FILE_GET_FENCE_PRESENT)
+            params->supports_sync_fd = true;
+#endif /* defined(NV_SYNC_FILE_GET_FENCE_PRESENT) */
+        }
+    }
+#endif /* defined(NV_DRM_ATOMIC_MODESET_AVAILABLE) */
 
     return 0;
 }
@@ -763,13 +876,18 @@ static int nv_drm_get_dpy_id_for_connector_id_ioctl(struct drm_device *dev,
                                                     struct drm_file *filep)
 {
     struct drm_nvidia_get_dpy_id_for_connector_id_params *params = data;
+    struct drm_connector *connector;
+    struct nv_drm_connector *nv_connector;
+    int ret = 0;
+
+    if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
+        return -EOPNOTSUPP;
+    }
+
     // Importantly, drm_connector_lookup (with filep) will only return the
     // connector if we are master, a lessee with the connector, or not master at
     // all. It will return NULL if we are a lessee with other connectors.
-    struct drm_connector *connector =
-        nv_drm_connector_lookup(dev, filep, params->connectorId);
-    struct nv_drm_connector *nv_connector;
-    int ret = 0;
+    connector = nv_drm_connector_lookup(dev, filep, params->connectorId);
 
     if (!connector) {
         return -EINVAL;
@@ -802,6 +920,11 @@ static int nv_drm_get_connector_id_for_dpy_id_ioctl(struct drm_device *dev,
     int ret = -EINVAL;
 #if defined(NV_DRM_CONNECTOR_LIST_ITER_PRESENT)
     struct drm_connector_list_iter conn_iter;
+#endif
+    if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
+        return -EOPNOTSUPP;
+    }
+#if defined(NV_DRM_CONNECTOR_LIST_ITER_PRESENT)
     nv_drm_connector_list_iter_begin(dev, &conn_iter);
 #endif
 
@@ -837,10 +960,10 @@ static NvU32 nv_drm_get_head_bit_from_connector(struct drm_connector *connector)
     return 0;
 }
 
-static int nv_drm_grant_permission_ioctl(struct drm_device *dev, void *data,
-                                         struct drm_file *filep)
+static int nv_drm_grant_modeset_permission(struct drm_device *dev,
+                                           struct drm_nvidia_grant_permissions_params *params,
+                                           struct drm_file *filep)
 {
-    struct drm_nvidia_grant_permissions_params *params = data;
     struct nv_drm_device *nv_dev = to_nv_device(dev);
     struct nv_drm_connector *target_nv_connector = NULL;
     struct nv_drm_crtc *target_nv_crtc = NULL;
@@ -962,26 +1085,106 @@ done:
     return ret;
 }
 
-static bool nv_drm_revoke_connector(struct nv_drm_device *nv_dev,
-                                    struct nv_drm_connector *nv_connector)
+static int nv_drm_grant_sub_ownership(struct drm_device *dev,
+                                      struct drm_nvidia_grant_permissions_params *params)
 {
-    bool ret = true;
-    if (nv_connector->modeset_permission_crtc) {
-        if (nv_connector->nv_detected_encoder) {
-            ret = nvKms->revokePermissions(
-                nv_dev->pDevice, nv_connector->modeset_permission_crtc->head,
-                nv_connector->nv_detected_encoder->hDisplay);
-        }
-        nv_connector->modeset_permission_crtc->modeset_permission_filep = NULL;
-        nv_connector->modeset_permission_crtc = NULL;
+    int ret = -EINVAL;
+    struct nv_drm_device *nv_dev = to_nv_device(dev);
+    struct drm_modeset_acquire_ctx *pctx;
+#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
+    struct drm_modeset_acquire_ctx ctx;
+    DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
+                                ret);
+    pctx = &ctx;
+#else
+    mutex_lock(&dev->mode_config.mutex);
+    pctx = dev->mode_config.acquire_ctx;
+#endif
+
+    if (nv_dev->subOwnershipGranted ||
+        !nvKms->grantSubOwnership(params->fd, nv_dev->pDevice)) {
+        goto done;
     }
-    nv_connector->modeset_permission_filep = NULL;
-    return ret;
+
+    /*
+     * When creating an ownership grant, shut down all heads and disable flip
+     * notifications.
+     */
+    ret = nv_drm_atomic_helper_disable_all(dev, pctx);
+    if (ret != 0) {
+        NV_DRM_DEV_LOG_ERR(
+            nv_dev,
+            "nv_drm_atomic_helper_disable_all failed with error code %d!",
+            ret);
+    }
+
+    atomic_set(&nv_dev->enable_event_handling, false);
+    nv_dev->subOwnershipGranted = NV_TRUE;
+
+    ret = 0;
+
+done:
+#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
+    DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+#else
+    mutex_unlock(&dev->mode_config.mutex);
+#endif
+    return 0;
 }
 
-static int nv_drm_revoke_permission(struct drm_device *dev,
-                                    struct drm_file *filep, NvU32 dpyId)
+static int nv_drm_grant_permission_ioctl(struct drm_device *dev, void *data,
+                                         struct drm_file *filep)
 {
+    struct drm_nvidia_grant_permissions_params *params = data;
+
+    if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
+        return -EOPNOTSUPP;
+    }
+
+    if (params->type == NV_DRM_PERMISSIONS_TYPE_MODESET) {
+        return nv_drm_grant_modeset_permission(dev, params, filep);
+    } else if (params->type == NV_DRM_PERMISSIONS_TYPE_SUB_OWNER) {
+        return nv_drm_grant_sub_ownership(dev, params);
+    }
+
+    return -EINVAL;
+}
+
+static int
+nv_drm_atomic_disable_connector(struct drm_atomic_state *state,
+                                struct nv_drm_connector *nv_connector)
+{
+    struct drm_crtc_state *crtc_state;
+    struct drm_connector_state *connector_state;
+    int ret = 0;
+
+    if (nv_connector->modeset_permission_crtc) {
+        crtc_state = drm_atomic_get_crtc_state(
+            state, &nv_connector->modeset_permission_crtc->base);
+        if (!crtc_state) {
+            return -EINVAL;
+        }
+
+        crtc_state->active = false;
+        ret = drm_atomic_set_mode_prop_for_crtc(crtc_state, NULL);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    connector_state = drm_atomic_get_connector_state(state, &nv_connector->base);
+    if (!connector_state) {
+        return -EINVAL;
+    }
+
+    return drm_atomic_set_crtc_for_connector(connector_state, NULL);
+}
+
+static int nv_drm_revoke_modeset_permission(struct drm_device *dev,
+                                            struct drm_file *filep, NvU32 dpyId)
+{
+    struct drm_modeset_acquire_ctx *pctx;
+    struct drm_atomic_state *state;
     struct drm_connector *connector;
     struct drm_crtc *crtc;
     int ret = 0;
@@ -992,9 +1195,18 @@ static int nv_drm_revoke_permission(struct drm_device *dev,
     struct drm_modeset_acquire_ctx ctx;
     DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
                                ret);
+    pctx = &ctx;
 #else
     mutex_lock(&dev->mode_config.mutex);
+    pctx = dev->mode_config.acquire_ctx;
 #endif
+
+    state = drm_atomic_state_alloc(dev);
+    if (!state) {
+        ret = -ENOMEM;
+        goto done;
+    }
+    state->acquire_ctx = pctx;
 
     /*
      * If dpyId is set, only revoke those specific resources. Otherwise,
@@ -1007,10 +1219,13 @@ static int nv_drm_revoke_permission(struct drm_device *dev,
         struct nv_drm_connector *nv_connector = to_nv_connector(connector);
         if (nv_connector->modeset_permission_filep == filep &&
             (!dpyId || nv_drm_connector_is_dpy_id(connector, dpyId))) {
-            if (!nv_drm_connector_revoke_permissions(dev, nv_connector)) {
-                ret = -EINVAL;
-                // Continue trying to revoke as much as possible.
+            ret = nv_drm_atomic_disable_connector(state, nv_connector);
+            if (ret < 0) {
+                goto done;
             }
+
+            // Continue trying to revoke as much as possible.
+            nv_drm_connector_revoke_permissions(dev, nv_connector);
         }
     }
 #if defined(NV_DRM_CONNECTOR_LIST_ITER_PRESENT)
@@ -1024,6 +1239,25 @@ static int nv_drm_revoke_permission(struct drm_device *dev,
         }
     }
 
+    ret = drm_atomic_commit(state);
+done:
+#if defined(NV_DRM_ATOMIC_STATE_REF_COUNTING_PRESENT)
+    drm_atomic_state_put(state);
+#else
+    if (ret != 0) {
+        drm_atomic_state_free(state);
+    } else {
+        /*
+         * In case of success, drm_atomic_commit() takes care to cleanup and
+         * free @state.
+         *
+         * Comment placed above drm_atomic_commit() says: The caller must not
+         * free or in any other way access @state. If the function fails then
+         * the caller must clean up @state itself.
+         */
+    }
+#endif
+
 #if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
     DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
 #else
@@ -1033,14 +1267,59 @@ static int nv_drm_revoke_permission(struct drm_device *dev,
     return ret;
 }
 
+static int nv_drm_revoke_sub_ownership(struct drm_device *dev)
+{
+    int ret = -EINVAL;
+    struct nv_drm_device *nv_dev = to_nv_device(dev);
+#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
+    struct drm_modeset_acquire_ctx ctx;
+    DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
+                               ret);
+#else
+    mutex_lock(&dev->mode_config.mutex);
+#endif
+
+    if (!nv_dev->subOwnershipGranted) {
+        goto done;
+    }
+
+    if (!nvKms->revokeSubOwnership(nv_dev->pDevice)) {
+        NV_DRM_DEV_LOG_ERR(nv_dev, "Failed to revoke sub-ownership from NVKMS");
+        goto done;
+    }
+
+    nv_dev->subOwnershipGranted = NV_FALSE;
+    atomic_set(&nv_dev->enable_event_handling, true);
+    ret = 0;
+
+done:
+#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
+    DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+#else
+    mutex_unlock(&dev->mode_config.mutex);
+#endif
+    return ret;
+}
+
 static int nv_drm_revoke_permission_ioctl(struct drm_device *dev, void *data,
                                           struct drm_file *filep)
 {
     struct drm_nvidia_revoke_permissions_params *params = data;
-    if (!params->dpyId) {
-        return -EINVAL;
+
+    if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
+        return -EOPNOTSUPP;
     }
-    return nv_drm_revoke_permission(dev, filep, params->dpyId);
+
+    if (params->type == NV_DRM_PERMISSIONS_TYPE_MODESET) {
+        if (!params->dpyId) {
+            return -EINVAL;
+        }
+        return nv_drm_revoke_modeset_permission(dev, filep, params->dpyId);
+    } else if (params->type == NV_DRM_PERMISSIONS_TYPE_SUB_OWNER) {
+        return nv_drm_revoke_sub_ownership(dev);
+    }
+
+    return -EINVAL;
 }
 
 static void nv_drm_postclose(struct drm_device *dev, struct drm_file *filep)
@@ -1055,7 +1334,7 @@ static void nv_drm_postclose(struct drm_device *dev, struct drm_file *filep)
         dev->mode_config.num_connector > 0 &&
         dev->mode_config.connector_list.next != NULL &&
         dev->mode_config.connector_list.prev != NULL) {
-        nv_drm_revoke_permission(dev, filep, 0);
+        nv_drm_revoke_modeset_permission(dev, filep, 0);
     }
 }
 #endif /* NV_DRM_ATOMIC_MODESET_AVAILABLE */
@@ -1318,6 +1597,18 @@ static const struct drm_ioctl_desc nv_drm_ioctls[] = {
     DRM_IOCTL_DEF_DRV(NVIDIA_GEM_PRIME_FENCE_ATTACH,
                       nv_drm_gem_prime_fence_attach_ioctl,
                       DRM_RENDER_ALLOW|DRM_UNLOCKED),
+    DRM_IOCTL_DEF_DRV(NVIDIA_SEMSURF_FENCE_CTX_CREATE,
+                      nv_drm_semsurf_fence_ctx_create_ioctl,
+                      DRM_RENDER_ALLOW|DRM_UNLOCKED),
+    DRM_IOCTL_DEF_DRV(NVIDIA_SEMSURF_FENCE_CREATE,
+                      nv_drm_semsurf_fence_create_ioctl,
+                      DRM_RENDER_ALLOW|DRM_UNLOCKED),
+    DRM_IOCTL_DEF_DRV(NVIDIA_SEMSURF_FENCE_WAIT,
+                      nv_drm_semsurf_fence_wait_ioctl,
+                      DRM_RENDER_ALLOW|DRM_UNLOCKED),
+    DRM_IOCTL_DEF_DRV(NVIDIA_SEMSURF_FENCE_ATTACH,
+                      nv_drm_semsurf_fence_attach_ioctl,
+                      DRM_RENDER_ALLOW|DRM_UNLOCKED),
 #endif
 
     /*
@@ -1449,6 +1740,10 @@ static struct drm_driver nv_drm_driver = {
 #elif defined(NV_DRM_DRIVER_HAS_LEGACY_DEV_LIST)
     .legacy_dev_list        = LIST_HEAD_INIT(nv_drm_driver.legacy_dev_list),
 #endif
+// XXX implement nvidia-drm's own .fbdev_probe callback that uses NVKMS kapi directly
+#if defined(NV_DRM_FBDEV_AVAILABLE) && defined(DRM_FBDEV_TTM_DRIVER_OPS)
+    DRM_FBDEV_TTM_DRIVER_OPS,
+#endif
 };
 
 
@@ -1459,7 +1754,7 @@ static struct drm_driver nv_drm_driver = {
  * kernel supports atomic modeset and the 'modeset' kernel module
  * parameter is true.
  */
-static void nv_drm_update_drm_driver_features(void)
+void nv_drm_update_drm_driver_features(void)
 {
 #if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
 
@@ -1485,7 +1780,7 @@ static void nv_drm_update_drm_driver_features(void)
 /*
  * Helper function for allocate/register DRM device for given NVIDIA GPU ID.
  */
-static void nv_drm_register_drm_device(const nv_gpu_info_t *gpu_info)
+void nv_drm_register_drm_device(const nv_gpu_info_t *gpu_info)
 {
     struct nv_drm_device *nv_dev = NULL;
     struct drm_device *dev = NULL;
@@ -1523,8 +1818,15 @@ static void nv_drm_register_drm_device(const nv_gpu_info_t *gpu_info)
     dev->dev_private = nv_dev;
     nv_dev->dev = dev;
 
+    bool bus_is_pci =
+#if defined(NV_LINUX)
+        device->bus == &pci_bus_type;
+#elif defined(NV_BSD)
+        devclass_find("pci");
+#endif
+
 #if defined(NV_DRM_DEVICE_HAS_PDEV)
-    if (device->bus == &pci_bus_type) {
+    if (bus_is_pci) {
         dev->pdev = to_pci_dev(device);
     }
 #endif
@@ -1535,6 +1837,35 @@ static void nv_drm_register_drm_device(const nv_gpu_info_t *gpu_info)
         NV_DRM_DEV_LOG_ERR(nv_dev, "Failed to register device");
         goto failed_drm_register;
     }
+
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+    if (nv_drm_fbdev_module_param &&
+        drm_core_check_feature(dev, DRIVER_MODESET)) {
+
+        if (bus_is_pci) {
+            struct pci_dev *pdev = to_pci_dev(device);
+
+#if defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT)
+
+#if defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_HAS_DRIVER_ARG)
+            drm_aperture_remove_conflicting_pci_framebuffers(pdev, &nv_drm_driver);
+#else
+            drm_aperture_remove_conflicting_pci_framebuffers(pdev, nv_drm_driver.name);
+#endif
+
+#elif defined(NV_APERTURE_REMOVE_CONFLICTING_PCI_DEVICES_PRESENT)
+            aperture_remove_conflicting_pci_devices(pdev, nv_drm_driver.name);
+#endif
+        }
+        #if defined(NV_DRM_CLIENT_AVAILABLE)
+	    drm_client_setup(dev, NULL);
+        #elif defined(NV_DRM_FBDEV_TTM_AVAILABLE)
+        drm_fbdev_ttm_setup(dev, 32);
+        #elif defined(NV_DRM_FBDEV_GENERIC_AVAILABLE)
+        drm_fbdev_generic_setup(dev, 32);
+        #endif
+    }
+#endif /* defined(NV_DRM_FBDEV_AVAILABLE) */
 
     /* Add NVIDIA-DRM device into list */
 
@@ -1555,6 +1886,7 @@ failed_drm_alloc:
 /*
  * Enumerate NVIDIA GPUs and allocate/register DRM device for each of them.
  */
+#if defined(NV_LINUX)
 int nv_drm_probe_devices(void)
 {
     nv_gpu_info_t *gpu_info = NULL;
@@ -1597,6 +1929,7 @@ done:
 
     return ret;
 }
+#endif
 
 /*
  * Unregister all NVIDIA DRM devices.
@@ -1605,14 +1938,90 @@ void nv_drm_remove_devices(void)
 {
     while (dev_list != NULL) {
         struct nv_drm_device *next = dev_list->next;
+        struct drm_device *dev = dev_list->dev;
 
-        drm_dev_unregister(dev_list->dev);
-        nv_drm_dev_free(dev_list->dev);
+        drm_dev_unregister(dev);
+        nv_drm_dev_free(dev);
 
         nv_drm_free(dev_list);
 
         dev_list = next;
     }
+}
+
+/*
+ * Handle system suspend and resume.
+ *
+ * Normally, a DRM driver would use drm_mode_config_helper_suspend() to save the
+ * current state on suspend and drm_mode_config_helper_resume() to restore it
+ * after resume. This works for upstream drivers because user-mode tasks are
+ * frozen before the suspend hook is called.
+ *
+ * In the case of nvidia-drm, the suspend hook is also called when 'suspend' is
+ * written to /proc/driver/nvidia/suspend, before user-mode tasks are frozen.
+ * However, we don't actually need to save and restore the display state because
+ * the driver requires a VT switch to an unused VT before suspending and a
+ * switch back to the application (or fbdev console) on resume. The DRM client
+ * (or fbdev helper functions) will restore the appropriate mode on resume.
+ *
+ */
+void nv_drm_suspend_resume(NvBool suspend)
+{
+    static DEFINE_MUTEX(nv_drm_suspend_mutex);
+    static NvU32 nv_drm_suspend_count = 0;
+    struct nv_drm_device *nv_dev;
+
+    mutex_lock(&nv_drm_suspend_mutex);
+
+    /*
+     * Count the number of times the driver is asked to suspend. Suspend all DRM
+     * devices on the first suspend call and resume them on the last resume
+     * call.  This is necessary because the kernel may call nvkms_suspend()
+     * simultaneously for each GPU, but NVKMS itself also suspends all GPUs on
+     * the first call.
+     */
+    if (suspend) {
+        if (nv_drm_suspend_count++ > 0) {
+            goto done;
+        }
+    } else {
+        BUG_ON(nv_drm_suspend_count == 0);
+
+        if (--nv_drm_suspend_count > 0) {
+            goto done;
+        }
+    }
+
+#if defined(NV_DRM_ATOMIC_MODESET_AVAILABLE)
+    nv_dev = dev_list;
+
+    /*
+     * NVKMS shuts down all heads on suspend. Update DRM state accordingly.
+     */
+    for (nv_dev = dev_list; nv_dev; nv_dev = nv_dev->next) {
+        struct drm_device *dev = nv_dev->dev;
+
+        if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
+            continue;
+        }
+
+        if (suspend) {
+            drm_kms_helper_poll_disable(dev);
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+            drm_fb_helper_set_suspend_unlocked(dev->fb_helper, 1);
+#endif
+            drm_mode_config_reset(dev);
+        } else {
+#if defined(NV_DRM_FBDEV_AVAILABLE)
+            drm_fb_helper_set_suspend_unlocked(dev->fb_helper, 0);
+#endif
+            drm_kms_helper_poll_enable(dev);
+        }
+    }
+#endif /* NV_DRM_ATOMIC_MODESET_AVAILABLE */
+
+done:
+    mutex_unlock(&nv_drm_suspend_mutex);
 }
 
 #endif /* NV_DRM_AVAILABLE */

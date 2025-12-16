@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2016-2021 NVidia Corporation
+    Copyright (c) 2016-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -168,7 +168,8 @@ static NV_STATUS test_get_rm_ptes_single_gpu(uvm_va_space_t *va_space, UVM_TEST_
     client = params->hClient;
     memory = params->hMemory;
 
-    // Note: This check is safe as single GPU test does not run on SLI enabled devices.
+    // Note: This check is safe as single GPU test does not run on SLI enabled
+    // devices.
     memory_mapping_gpu = uvm_va_space_get_gpu_by_uuid_with_gpu_va_space(va_space, &params->gpu_uuid);
     if (!memory_mapping_gpu)
         return NV_ERR_INVALID_DEVICE;
@@ -180,7 +181,7 @@ static NV_STATUS test_get_rm_ptes_single_gpu(uvm_va_space_t *va_space, UVM_TEST_
     if (status != NV_OK)
         return status;
 
-    TEST_CHECK_GOTO(uvm_processor_uuid_eq(&memory_info.uuid, &params->gpu_uuid), done);
+    TEST_CHECK_GOTO(uvm_uuid_eq(&memory_info.uuid, &params->gpu_uuid), done);
 
     TEST_CHECK_GOTO((memory_info.size == params->size), done);
 

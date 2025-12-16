@@ -25,6 +25,7 @@
 
 #include "mem_mgr/fla_mem.h"
 
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/disp/disp_objs.h"
@@ -34,6 +35,7 @@
 #include "gpu/device/device.h"
 #include "gpu/subdevice/subdevice.h"
 #include "vgpu/rpc.h"
+#include "platform/sli/sli.h"
 
 #include "class/cl0041.h" // NV04_MEMORY
 #include "class/cl003e.h" // NV01_MEMORY_SYSTEM
@@ -337,6 +339,9 @@ memConstructCommon_IMPL
 {
     OBJGPU            *pGpu           = NULL;
     NV_STATUS          status         = NV_OK;
+    NvHandle           hClient        = RES_GET_CLIENT_HANDLE(pMemory);
+    NvHandle           hParent        = RES_GET_PARENT_HANDLE(pMemory);
+    NvHandle           hMemory        = RES_GET_HANDLE(pMemory);
 
     if (pMemDesc == NULL)
         return NV_ERR_INVALID_ARGUMENT;
@@ -472,6 +477,14 @@ memConstructCommon_IMPL
     if (status != NV_OK)
         goto done;
 
+    // Make GSP-RM aware of the memory descriptor so it can be used there
+    if (FLD_TEST_DRF(OS32, _ATTR2, _REGISTER_MEMDESC_TO_PHYS_RM, _TRUE, attr2))
+    {
+        status = memdescRegisterToGSP(pGpu, hClient, hParent, hMemory);
+        if (status != NV_OK)
+            goto done;
+    }
+
     // Initialize the circular list item for tracking dup/sharing of pMemDesc
     pMemory->dupListItem.pNext = pMemory->dupListItem.pPrev = pMemory;
 
@@ -589,6 +602,8 @@ _memDestructCommonWithDevice
                 pFbAllocInfo->hwResId = memdescGetHwResId(pMemory->pMemDesc);
                 pFbAllocInfo->size = pMemory->Length;
                 pFbAllocInfo->format = memdescGetPteKind(pMemory->pMemDesc);
+                pFbAllocInfo->hClient = pRsClient->hClient;
+                pFbAllocInfo->hDevice = hDevice;
 
                 //
                 // Note that while freeing duped memory under a device, the
@@ -724,15 +739,25 @@ memGetByHandleAndGroupedGpu_IMPL
     Memory   **ppMemory
 )
 {
-    Device      *pDevice;
+    Memory      *pMemory;
     NV_STATUS    status;
+    Device      *pDevice;
 
-    // Get device handle
-    status = deviceGetByInstance(pClient, gpuGetDeviceInstance(pGpu), &pDevice);
+    status = memGetByHandle(pClient, hMemory, &pMemory);
     if (status != NV_OK)
-        return NV_ERR_INVALID_OBJECT_HANDLE;
+        return status;
 
-    return memGetByHandleAndDevice(pClient, hMemory, RES_GET_HANDLE(pDevice), ppMemory);
+    pDevice = pMemory->pDevice;
+
+    if ((pDevice == NULL) ||
+        (gpumgrGetParentGPU(pGpu) != GPU_RES_GET_GPU(pDevice)))
+    {
+        *ppMemory = NULL;
+        return NV_ERR_OBJECT_NOT_FOUND;
+    }
+
+    *ppMemory = pMemory;
+    return NV_OK;
 }
 
 NV_STATUS
@@ -765,8 +790,16 @@ memControl_IMPL
 
     if (REF_VAL(NVXXXX_CTRL_CMD_CLASS, pParams->cmd) == NV04_MEMORY)
     {
-        if (pMemory->categoryClassId == NV01_MEMORY_SYSTEM_OS_DESCRIPTOR)
+        //
+        // Tegra SOC import memory usecase uses NV01_MEMORY_SYSTEM_OS_DESCRIPTOR class for
+        // RM resource server registration of memory, RM can return the physical memory attributes
+        // for these imported buffers.
+        //
+        if ((pMemory->categoryClassId == NV01_MEMORY_SYSTEM_OS_DESCRIPTOR) &&
+            (pParams->cmd != NV0041_CTRL_CMD_GET_SURFACE_PHYS_ATTR))
+        {
             return NV_ERR_NOT_SUPPORTED;
+        }
     }
 
     pRmCtrlParams->pGpu = pMemory->pGpu;
@@ -833,7 +866,7 @@ memCopyConstruct_IMPL
 
     if (!!pSrcSubDevice != !!pDstSubDevice)
     {
-        NV_PRINTF(LEVEL_ERROR, "Parent type mismatch between Src and Dst objects"
+        NV_PRINTF(LEVEL_INFO, "Parent type mismatch between Src and Dst objects"
                                "Both should be either device or subDevice\n");
         return NV_ERR_INVALID_OBJECT_PARENT;
     }
@@ -995,19 +1028,6 @@ memGetMemInterMapParams_IMPL
     // device, but a unicast mapping was desired).
     //
     gpumgrSetBcEnabledStatus(pGpu, bcState);
-
-    //
-    // Mapping Guest allocated memory in PF is not supported
-    //
-    if (pSrcMemDesc->pGpu != pGpu && gpuIsSriovEnabled(pGpu) &&
-        !(memdescGetFlag(pSrcMemDesc, MEMDESC_FLAGS_GUEST_ALLOCATED)))
-    {
-        //
-        // Memory allocated by pSrcMemDesc->pGpu needs to be
-        // remapped for pGpu as requested by client.
-        //
-        pParams->bDmaMapNeeded = NV_TRUE;
-    }
 
     pParams->pSrcMemDesc = pSrcMemDesc;
 

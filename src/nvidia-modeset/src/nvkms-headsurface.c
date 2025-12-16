@@ -236,7 +236,7 @@ void nvHsFreeSurface(
 
 NVSurfaceEvoRec *nvHsGetNvKmsSurface(const NVDevEvoRec *pDevEvo,
                                      NvKmsSurfaceHandle surfaceHandle,
-                                     const NvBool requireCtxDma)
+                                     const NvBool requireDisplayHardwareAccess)
 {
     const NVEvoApiHandlesRec *pNvKmsOpenDevSurfaceHandles;
     NVSurfaceEvoRec *pKmsSurface;
@@ -247,11 +247,11 @@ NVSurfaceEvoRec *nvHsGetNvKmsSurface(const NVDevEvoRec *pDevEvo,
     nvAssert(pNvKmsOpenDevSurfaceHandles != NULL);
 
     pKmsSurface =
-        nvEvoGetSurfaceFromHandleNoCtxDmaOk(pDevEvo,
-                                            pNvKmsOpenDevSurfaceHandles,
-                                            surfaceHandle);
+        nvEvoGetSurfaceFromHandleNoDispHWAccessOk(pDevEvo,
+                                                  pNvKmsOpenDevSurfaceHandles,
+                                                  surfaceHandle);
     nvAssert(pKmsSurface != NULL);
-    nvAssert(pKmsSurface->requireCtxDma == requireCtxDma);
+    nvAssert(pKmsSurface->requireDisplayHardwareAccess == requireDisplayHardwareAccess);
 
     return pKmsSurface;
 }
@@ -265,18 +265,18 @@ NVSurfaceEvoRec *nvHsGetNvKmsSurface(const NVDevEvoRec *pDevEvo,
  * Note the video memory is not cleared here, because the corresponding graphics
  * channel may not be allocated, yet.
  *
- * \param[in]  pDevEvo         The device.
- * \param[in]  requireCtxDma   Whether display hardware requires access.
- * \param[in]  format          The format of the surface.
- * \param[in]  widthInPixels   The width of the surface, in pixels.
- * \param[in]  heightInPixels  The height of the surface, in pixels.
+ * \param[in]  pDevEvo                      The device.
+ * \param[in]  requireDisplayHardwareAccess Whether display hardware requires access.
+ * \param[in]  format                       The format of the surface.
+ * \param[in]  widthInPixels                The width of the surface, in pixels.
+ * \param[in]  heightInPixels               The height of the surface, in pixels.
  *
  * \return  On success, an allocate NVHsSurfaceRec structure is returned.
  *          On failure, NULL is returned.
  */
 NVHsSurfaceRec *nvHsAllocSurface(
     NVDevEvoRec *pDevEvo,
-    const NvBool requireCtxDma,
+    const NvBool requireDisplayHardwareAccess,
     const enum NvKmsSurfaceMemoryFormat format,
     const NvU32 widthInPixels,
     const NvU32 heightInPixels)
@@ -330,7 +330,7 @@ NVHsSurfaceRec *nvHsAllocSurface(
     nvKmsParams.request.heightInPixels = heightInPixels;
     nvKmsParams.request.layout = NvKmsSurfaceMemoryLayoutBlockLinear;
     nvKmsParams.request.format = format;
-    nvKmsParams.request.noDisplayHardwareAccess = !requireCtxDma;
+    nvKmsParams.request.noDisplayHardwareAccess = !requireDisplayHardwareAccess;
     nvKmsParams.request.log2GobsPerBlockY = log2GobsPerBlockY;
 
     nvKmsParams.request.planes[0].u.rmObject = pHsSurface->rmHandle;
@@ -347,7 +347,7 @@ NVHsSurfaceRec *nvHsAllocSurface(
     pHsSurface->nvKmsHandle = nvKmsParams.reply.surfaceHandle;
 
     pHsSurface->pSurfaceEvo =
-        nvHsGetNvKmsSurface(pDevEvo, pHsSurface->nvKmsHandle, requireCtxDma);
+        nvHsGetNvKmsSurface(pDevEvo, pHsSurface->nvKmsHandle, requireDisplayHardwareAccess);
 
     if (pHsSurface->pSurfaceEvo == NULL) {
         goto fail;
@@ -973,7 +973,7 @@ static NvBool RegisterNotifiersWithNvKms(NVHsDeviceEvoRec *pHsDevice)
     struct NvKmsRegisterSurfaceParams params = { };
     NVHsNotifiersRec *pNotifiers = &pHsDevice->notifiers;
     NVDevEvoRec *pDevEvo = pHsDevice->pDevEvo;
-    const NvBool requireCtxDma = TRUE;
+    const NvBool requireDisplayHardwareAccess = TRUE;
 
     params.request.useFd       = FALSE;
     params.request.rmClient    = nvEvoGlobal.clientHandle;
@@ -1000,7 +1000,7 @@ static NvBool RegisterNotifiersWithNvKms(NVHsDeviceEvoRec *pHsDevice)
     pHsDevice->notifiers.pSurfaceEvo =
         nvHsGetNvKmsSurface(pDevEvo,
                             pHsDevice->notifiers.nvKmsHandle,
-                            requireCtxDma);
+                            requireDisplayHardwareAccess);
 
     return (pHsDevice->notifiers.pSurfaceEvo != NULL);
 }
@@ -1250,10 +1250,12 @@ static void HsFlipHelper(
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].perEyeStereoFlip = perEyeStereoFlip;
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].minPresentInterval = 1;
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].csc.specified = TRUE;
+    pParamsOneHead->lut.input.specified = FALSE;
+    pParamsOneHead->lut.output.specified = FALSE;
 
     /*
      * XXX NVKMS HEADSURFACE TODO: Work out in which cases we should use the
-     * head's current CSC.
+     * head's current CSC or LUT.
      */
     pParamsOneHead->layer[NVKMS_MAIN_LAYER].csc.matrix = NVKMS_IDENTITY_CSC_MATRIX;
 

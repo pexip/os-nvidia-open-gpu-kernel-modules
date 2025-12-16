@@ -67,6 +67,7 @@ static NvBool DpySetBacklightBrightness(NVDpyEvoRec *pDpyEvo, NvS64 brightness)
     params.subDeviceInstance = pDispEvo->displayOwner;
     params.displayId = nvDpyEvoGetConnectorId(pDpyEvo);
     params.brightness = brightness;
+    params.brightnessType = NV0073_CTRL_SPECIFIC_BACKLIGHT_BRIGHTNESS_TYPE_PERCENT100;
 
     ret = nvRmApiControl(
             nvEvoGlobal.clientHandle,
@@ -97,6 +98,7 @@ static NvBool DpyGetBacklightBrightness(const NVDpyEvoRec *pDpyEvo,
 
     params.subDeviceInstance = pDispEvo->displayOwner;
     params.displayId = nvDpyEvoGetConnectorId(pDpyEvo);
+    params.brightnessType = NV0073_CTRL_SPECIFIC_BACKLIGHT_BRIGHTNESS_TYPE_PERCENT100;
 
     ret = nvRmApiControl(
             nvEvoGlobal.clientHandle,
@@ -430,18 +432,7 @@ static NvBool GetCurrentDitheringDepth(const NVDpyEvoRec *pDpyEvo,
 
 static NvBool DigitalVibranceAvailable(const NVDpyEvoRec *pDpyEvo)
 {
-    const NVDispEvoRec *pDispEvo = pDpyEvo->pDispEvo;
-    NVDevEvoPtr pDevEvo = pDispEvo->pDevEvo;
-
-    if (!nvDpyEvoIsActive(pDpyEvo)) {
-        return FALSE;
-    }
-
-    if (!pDevEvo->hal->caps.supportsDigitalVibrance) {
-        return FALSE;
-    }
-
-    return TRUE;
+    return nvDpyEvoIsActive(pDpyEvo);
 }
 
 /*!
@@ -619,9 +610,11 @@ static void DpyPostColorSpaceOrRangeSetEvo(NVDpyEvoPtr pDpyEvo)
     NVEvoUpdateState updateState = { };
     NVDispEvoRec *pDispEvo = pDpyEvo->pDispEvo;
     NVDispApiHeadStateEvoRec *pApiHeadState;
-    enum NvYuv420Mode yuv420Mode;
-    enum NvKmsOutputTf tf;
+    NvU8 hdmiFrlBpc;
     NvU32 head;
+#if defined(DEBUG)
+    NvU32 hwHead;
+#endif
 
     if (pDpyEvo->apiHead == NV_INVALID_HEAD) {
         return;
@@ -632,12 +625,11 @@ static void DpyPostColorSpaceOrRangeSetEvo(NVDpyEvoPtr pDpyEvo)
              (nvDpyIdIsInDpyIdList(pDpyEvo->id, pApiHeadState->activeDpys)));
 
     head = nvGetPrimaryHwHead(pDispEvo, pDpyEvo->apiHead);
-    yuv420Mode = pDispEvo->headState[head].timings.yuv420Mode;
-    tf = pDispEvo->headState[head].tf;
+    hdmiFrlBpc = pDispEvo->headState[head].hdmiFrlBpc;
 #if defined(DEBUG)
-    FOR_EACH_EVO_HW_HEAD_IN_MASK(pApiHeadState->hwHeadsMask, head) {
-        nvAssert(yuv420Mode == pDispEvo->headState[head].timings.yuv420Mode);
-        nvAssert(tf == pDispEvo->headState[head].tf);
+    FOR_EACH_EVO_HW_HEAD_IN_MASK(pApiHeadState->hwHeadsMask, hwHead) {
+        nvAssert(pDispEvo->headState[head].timings.yuv420Mode ==
+                 pDispEvo->headState[hwHead].timings.yuv420Mode);
     }
 #endif
 
@@ -646,8 +638,9 @@ static void DpyPostColorSpaceOrRangeSetEvo(NVDpyEvoPtr pDpyEvo)
      * timings and the requested color space and range.
      */
     if (!nvChooseCurrentColorSpaceAndRangeEvo(pDpyEvo,
-                                              yuv420Mode,
-                                              tf,
+                                              &pDispEvo->headState[head].timings,
+                                              hdmiFrlBpc,
+                                              pApiHeadState->colorimetry,
                                               pDpyEvo->requestedColorSpace,
                                               pDpyEvo->requestedColorRange,
                                               &colorSpace,
@@ -676,6 +669,7 @@ static void DpyPostColorSpaceOrRangeSetEvo(NVDpyEvoPtr pDpyEvo)
 
         nvUpdateCurrentHardwareColorSpaceAndRangeEvo(pDispEvo,
                                                      head,
+                                                     pApiHeadState->colorimetry,
                                                      pApiHeadState->attributes.colorSpace,
                                                      pApiHeadState->attributes.colorRange,
                                                      &updateState);

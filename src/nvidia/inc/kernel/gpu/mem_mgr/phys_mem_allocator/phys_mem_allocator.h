@@ -164,6 +164,11 @@ typedef enum
 } MEMORY_PROTECTION;
 
 /*!
+ * @brief Callback to update stats in RUSD
+ */
+typedef void (*pmaUpdateStatsCb_t)(void *pCtx, NvU64 freeFrames);
+
+/*!
  * @brief Callbacks to UVM for eviction
  */
 typedef NV_STATUS (*pmaEvictPagesCb_t)(void *ctxPtr, NvU64 pageSize, NvU64 *pPages,
@@ -177,8 +182,8 @@ typedef NV_STATUS (*pmaEvictRangeCb_t)(void *ctxPtr, NvU64 physBegin, NvU64 phys
  */
 typedef void *(*pmaMapInit_t)(NvU64 numFrames, NvU64 addrBase, PMA_STATS *pPmaStats, NvBool bProtected);
 typedef void  (*pmaMapDestroy_t)(void *pMap);
-typedef void  (*pmaMapChangeStateAttribEx_t)(void *pMap, NvU64 frameNum, PMA_PAGESTATUS newState, PMA_PAGESTATUS newStateMask);
-typedef void  (*pmaMapChangePageStateAttribEx_t)(void *pMap, NvU64 startFrame, NvU64 pageSize, PMA_PAGESTATUS newState, PMA_PAGESTATUS newStateMask);
+typedef void  (*pmaMapChangeStateAttrib_t)(void *pMap, NvU64 frameNum, PMA_PAGESTATUS newState, PMA_PAGESTATUS newStateMask);
+typedef void  (*pmaMapChangePageStateAttrib_t)(void *pMap, NvU64 startFrame, NvU64 pageSize, PMA_PAGESTATUS newState, PMA_PAGESTATUS newStateMask);
 typedef void  (*pmaMapChangeBlockStateAttrib_t)(void *pMap, NvU64 frameNum, NvU64 numFrames, PMA_PAGESTATUS newState, PMA_PAGESTATUS newStateMask);
 typedef PMA_PAGESTATUS (*pmaMapRead_t)(void *pMap, NvU64 frameNum, NvBool readAttrib);
 typedef NV_STATUS (*pmaMapScanContiguous_t)(void *pMap, NvU64 addrBase, NvU64 rangeStart, NvU64 rangeEnd,
@@ -199,8 +204,8 @@ struct _PMA_MAP_INFO
     NvU32                       mode;
     pmaMapInit_t                pmaMapInit;
     pmaMapDestroy_t             pmaMapDestroy;
-    pmaMapChangeStateAttribEx_t pmaMapChangeStateAttribEx;
-    pmaMapChangePageStateAttribEx_t pmaMapChangePageStateAttribEx;
+    pmaMapChangeStateAttrib_t      pmaMapChangeStateAttrib;
+    pmaMapChangePageStateAttrib_t  pmaMapChangePageStateAttrib;
     pmaMapChangeBlockStateAttrib_t pmaMapChangeBlockStateAttrib;
     pmaMapRead_t                pmaMapRead;
     pmaMapScanContiguous_t      pmaMapScanContiguous;
@@ -255,6 +260,10 @@ struct _PMA
     PMA_BLACKLIST_CHUNK    *pBlacklistChunks;                   // Tracking for blacklist pages
     NvU32                   blacklistCount;                     // Number of blacklist pages
     NvBool                  bClientManagedBlacklist;            // Blacklisted pages in PMA that will be taken over by Client
+
+    // RUSD Callback
+    pmaUpdateStatsCb_t      pStatsUpdateCb;                     // RUSD update free pages
+    void                   *pStatsUpdateCtx;                    // Context for RUSD update
 };
 
 /*!
@@ -473,33 +482,6 @@ NV_STATUS pmaAllocatePagesBroadcast(PMA **pPma, NvU32 pmaCount, NvLength allocat
  */
 NV_STATUS pmaPinPages(PMA *pPma, NvU64 *pPages, NvLength pageCount, NvU64 pageSize);
 
-
-/*!
- * @brief Marks previously pinned pages as unpinned.
- *
- * It will return an error and rollback any change if any page is not
- * previously marked "pinned". Behaviour is undefined is any blacklisted
- * pages are unpinned.
- *
- * @param[in] pPages
- *      Array of base addresses of pages to pin
- *
- * @param[in] pageCount
- *      Number of pages to pin
- *
- * @param[in] pageSize
- *      Page size of each page being unpinned
- *
- * @return
- *      NV_ERR_GENERIC:
- *          Unexpected error. We try hard to avoid returning this error
- *          code,because it is not very informative.
- *      TODO some error for rollback
- *
- */
-NV_STATUS pmaUnpinPages(PMA *pPma, NvU64 *pPages, NvLength pageCount, NvU64 pageSize);
-
-
 /*!
  * @brief Marks a list of pages as free.
  * This operation is also used by RM to mark pages as "scrubbed" for the
@@ -601,6 +583,22 @@ NV_STATUS pmaScrubComplete(PMA *pPma);
  *          Callbacks already registered.
  */
 NV_STATUS pmaRegisterEvictionCb(PMA *pPma, pmaEvictPagesCb_t evictPagesCb, pmaEvictRangeCb_t evictRangeCb, void *ctxPtr);
+
+/*!
+ * Register the stats update callback.
+ *
+ * Register callback to call when number of free pages changes. Currently only used for RUSD.
+ *
+ * @param[in] pma
+ *      PMA object
+ *
+ * @param[in] pUpdateCb
+ *      The callback to call when updating free page count
+ *
+ * @param[in] ctxPtr
+ *      The callback context pointer to be passed back on callback
+ */
+void pmaRegisterUpdateStatsCb(PMA *pPma, pmaUpdateStatsCb_t pUpdateCb, void *ctxPtr);
 
 
 /*!

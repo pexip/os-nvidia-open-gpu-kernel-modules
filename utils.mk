@@ -110,6 +110,7 @@ CHMOD                 ?= chmod
 OBJCOPY               ?= objcopy
 XZ                    ?= xz
 WHOAMI                ?= whoami
+PKG_CONFIG            ?= pkg-config
 
 ifndef HOSTNAME
   HOSTNAME             = $(shell hostname)
@@ -136,11 +137,16 @@ ifeq ($(TARGET_OS),SunOS)
 endif
 
 ifndef TARGET_ARCH
-  TARGET_ARCH         := $(shell uname -m)
+  ifneq ($(TARGET_OS),SunOS)
+    TARGET_ARCH       := $(shell uname -m)
+  else
+    TARGET_ARCH       := $(shell isainfo -n)
+  endif
   TARGET_ARCH         := $(subst i386,x86,$(TARGET_ARCH))
   TARGET_ARCH         := $(subst i486,x86,$(TARGET_ARCH))
   TARGET_ARCH         := $(subst i586,x86,$(TARGET_ARCH))
   TARGET_ARCH         := $(subst i686,x86,$(TARGET_ARCH))
+  TARGET_ARCH         := $(subst amd64,x86_64,$(TARGET_ARCH))
 endif
 
 ifeq ($(TARGET_ARCH),x86)
@@ -195,9 +201,6 @@ NV_KEEP_UNSTRIPPED_BINARIES ?=
 NV_QUIET_COMMAND_REMOVED_TARGET_PREFIX ?=
 
 NV_GENERATED_HEADERS ?=
-
-PCIACCESS_CFLAGS      ?=
-PCIACCESS_LDFLAGS     ?=
 
 ##############################################################################
 # This makefile uses the $(eval) builtin function, which was added in
@@ -404,8 +407,6 @@ BUILD_OBJECT_LIST_WITH_DIR = \
 BUILD_OBJECT_LIST = \
   $(call BUILD_OBJECT_LIST_WITH_DIR,$(1),$(OUTPUTDIR))
 
-$(call BUILD_OBJECT_LIST,nvpci-utils.c): CFLAGS += $(PCIACCESS_CFLAGS)
-
 ##############################################################################
 # function to generate a list of dependency files from their
 # corresponding source files using the specified path. The _WITH_DIR
@@ -565,13 +566,43 @@ endef
 #  $(1): Path to the file to convert
 ##############################################################################
 
+LD_TARGET_EMULATION_FLAG =
+LD_TARGET_EMULATION_FLAG_Linux_x86      = elf_i386
+LD_TARGET_EMULATION_FLAG_Linux_x86_64   = elf_x86_64
+LD_TARGET_EMULATION_FLAG_Linux_aarch64  = aarch64elf
+LD_TARGET_EMULATION_FLAG_Linux_ppc64le  = elf64lppc
+LD_TARGET_EMULATION_FLAG_SunOS_x86      = elf_i386_sol2
+LD_TARGET_EMULATION_FLAG_SunOS_x86_64   = elf_x86_64_sol2
+LD_TARGET_EMULATION_FLAG_FreeBSD_x86    = elf_i386_fbsd
+LD_TARGET_EMULATION_FLAG_FreeBSD_x86_64 = elf_x86_64_fbsd
+
+# Different linkers (GNU ld versus ld.lld versus ld.gold) expect different
+# target architecture values for '-m'.  Empirically, only ld.lld appears to
+# actually need it, so only add the option when linking with ld.lld.  Example
+# `ld.lld -v` output: "LLD 15.0.7 (compatible with GNU linkers)".
+LD_IS_LLD := $(if $(filter LLD,$(shell $(LD) -v)),1)
+
+ifdef LD_TARGET_EMULATION_FLAG_$(TARGET_OS)_$(TARGET_ARCH)
+  LD_TARGET_EMULATION_FLAG = $(if $(LD_IS_LLD), -m $(LD_TARGET_EMULATION_FLAG_$(TARGET_OS)_$(TARGET_ARCH)))
+endif
+
 define READ_ONLY_OBJECT_FROM_FILE_RULE
   $$(OUTPUTDIR)/$$(notdir $(1)).o: $(1)
 	$(at_if_quiet)$$(MKDIR) $$(OUTPUTDIR)
 	$(at_if_quiet)cd $$(dir $(1)); \
 	$$(call quiet_cmd_no_at,LD) -r -z noexecstack --format=binary \
+	    $$(LD_TARGET_EMULATION_FLAG) \
 	    $$(notdir $(1)) -o $$(OUTPUTDIR_ABSOLUTE)/$$(notdir $$@)
 	$$(call quiet_cmd,OBJCOPY) \
 	    --rename-section .data=.rodata,contents,alloc,load,data,readonly \
 	    $$@
+endef
+
+define BINARY_DATA_HEADER_RULE
+  $$(OUTPUTDIR)/$(notdir $(1)).h:
+	$(at_if_quiet)$(MKDIR) $$(OUTPUTDIR)
+	$(at_if_quiet){ \
+	  $$(PRINTF) "extern const char _binary_$(subst -,_,$(subst .,_,$(notdir $(1))))_start[];\n"; \
+	  $$(PRINTF) "extern const char _binary_$(subst -,_,$(subst .,_,$(notdir $(1))))_end[];\n"; \
+	} > $$@
 endef

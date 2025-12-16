@@ -135,8 +135,10 @@
 #define NV_MSGBOX_CMD_ARG1_PCIE_SPEED_V1                        0x00000012
 #define NV_MSGBOX_CMD_ARG1_PCIE_WIDTH_V1                        0x00000013
 #define NV_MSGBOX_CMD_ARG1_TGP_LIMIT_V1                         0x00000014
+#define NV_MSGBOX_CMD_ARG1_FRU_PART_NUMBER_V1                   0x00000015
 #define NV_MSGBOX_CMD_ARG1_MODULE_POWER_LIMIT_V1                0x00000016
-#define NV_MSGBOX_CMD_ARG1_SYS_ID_DATA_TYPE_MAX                 0x00000016    /* Adjust, when adding new types */
+#define NV_MSGBOX_CMD_ARG1_MAX_DRAM_CAPACITY_V1                 0x00000017
+#define NV_MSGBOX_CMD_ARG1_SYS_ID_DATA_TYPE_MAX                 0x00000017    /* Adjust, when adding new types */
 #define NV_MSGBOX_CMD_ARG1_REGISTER_ACCESS_WRITE                0x00000000
 #define NV_MSGBOX_CMD_ARG1_REGISTER_ACCESS_READ                 0x00000001
 #define NV_MSGBOX_CMD_ARG1_THERM_PARAM_TEMP_TARGET              0x00000000
@@ -236,6 +238,8 @@
                                                                 0x00000013
 #define NV_MSGBOX_CMD_ARG1_ASYNC_REQUEST_PMGR_PWR_MODULE_LIMIT_INFO_GET     \
                                                                 0x00000014
+#define NV_MSGBOX_CMD_ARG1_ASYNC_REQUEST_MEMORY_CAPACITY_UTILIZATION_GET    \
+                                                                0x00000015
 #define NV_MSGBOX_CMD_ARG1_ASYNC_REQUEST_POLL                   0x000000ff
 
 
@@ -773,9 +777,9 @@
 #define NV_MSGBOX_DATA_CAP_1_INFOROM_VER_V1                              14:14
 #define NV_MSGBOX_DATA_CAP_1_INFOROM_VER_V1_NOT_AVAILABLE           0x00000000
 #define NV_MSGBOX_DATA_CAP_1_INFOROM_VER_V1_AVAILABLE               0x00000001
-#define NV_MSGBOX_DATA_CAP_1_MODULE_LIMIT_V1                             15:15
-#define NV_MSGBOX_DATA_CAP_1_MODULE_LIMIT_V1_NOT_AVAILABLE          0x00000000
-#define NV_MSGBOX_DATA_CAP_1_MODULE_LIMIT_V1_AVAILABLE              0x00000001
+#define NV_MSGBOX_DATA_CAP_1_MODULE_POWER_LIMIT_V1                       15:15
+#define NV_MSGBOX_DATA_CAP_1_MODULE_POWER_LIMIT_V1_NOT_AVAILABLE    0x00000000
+#define NV_MSGBOX_DATA_CAP_1_MODULE_POWER_LIMIT_V1_AVAILABLE        0x00000001
 #define NV_MSGBOX_DATA_CAP_1_ECC_V1                                      16:16
 #define NV_MSGBOX_DATA_CAP_1_ECC_V1_NOT_AVAILABLE                   0x00000000
 #define NV_MSGBOX_DATA_CAP_1_ECC_V1_AVAILABLE                       0x00000001
@@ -903,6 +907,9 @@
 #define NV_MSGBOX_DATA_CAP_2_NVLINK_INFO_AVAILABILITY                       27:27
 #define NV_MSGBOX_DATA_CAP_2_NVLINK_INFO_AVAILABILITY_NOT_AVAILABLE    0x00000000
 #define NV_MSGBOX_DATA_CAP_2_NVLINK_INFO_AVAILABILITY_AVAILABLE        0x00000001
+#define NV_MSGBOX_DATA_CAP_2_FRU_PART_NUMBER_V1                             31:31
+#define NV_MSGBOX_DATA_CAP_2_FRU_PART_NUMBER_V1_NOT_AVAILABLE          0x00000000
+#define NV_MSGBOX_DATA_CAP_2_FRU_PART_NUMBER_V1_AVAILABLE              0x00000001
 
 #define NV_MSGBOX_DATA_CAP_4                                                     4
 #define NV_MSGBOX_DATA_CAP_4_HW_VIOLATION_TIME                                 0:0
@@ -947,9 +954,20 @@
 #define NV_MSGBOX_DATA_CAP_4_GPU_PERFORMANCE_MONITORING                                  24:24
 #define NV_MSGBOX_DATA_CAP_4_GPU_PERFORMANCE_MONITORING_NOT_AVAILABLE               0x00000000
 #define NV_MSGBOX_DATA_CAP_4_GPU_PERFORMANCE_MONITORING_AVAILABLE                   0x00000001
+#define NV_MSGBOX_DATA_CAP_4_DEM_BY_SEQNUM_TIMESTAMP                                     26:26
+#define NV_MSGBOX_DATA_CAP_4_DEM_BY_SEQNUM_TIMESTAMP_NOT_AVAILABLE                  0x00000000
+#define NV_MSGBOX_DATA_CAP_4_DEM_BY_SEQNUM_TIMESTAMP_AVAILABLE                      0x00000001
 #define NV_MSGBOX_DATA_CAP_4_CONFIGURE_PROGRAMMABLE_EDPP                                 30:30
 #define NV_MSGBOX_DATA_CAP_4_CONFIGURE_PROGRAMMABLE_EDPP_NOT_AVAILABLE              0x00000000
 #define NV_MSGBOX_DATA_CAP_4_CONFIGURE_PROGRAMMABLE_EDPP_AVAILABLE                  0x00000001
+#define NV_MSGBOX_DATA_CAP_4_MAX_DRAM_CAPACITY_V1                                        31:31
+#define NV_MSGBOX_DATA_CAP_4_MAX_DRAM_CAPACITY_V1_NOT_AVAILABLE                     0x00000000
+#define NV_MSGBOX_DATA_CAP_4_MAX_DRAM_CAPACITY_V1_AVAILABLE                         0x00000001
+
+#define NV_MSGBOX_DATA_CAP_5                                                                 5
+#define NV_MSGBOX_DATA_CAP_5_MEMORY_CAPACITY_UTILIZATION                                   6:6
+#define NV_MSGBOX_DATA_CAP_5_MEMORY_CAPACITY_UTILIZATION_NOT_AVAILABLE              0x00000000
+#define NV_MSGBOX_DATA_CAP_5_MEMORY_CAPACITY_UTILIZATION_AVAILABLE                  0x00000001
 
 #define NV_MSGBOX_DATA_CAP_5_SRAM_ERROR_THRESHOLD_EXCEEDED                                 9:9
 #define NV_MSGBOX_DATA_CAP_5_SRAM_ERROR_THRESHOLD_EXCEEDED_NOT_AVAILABLE            0x00000000
@@ -1405,6 +1423,10 @@
 #define NV_MSGBOX_SYSID_DATA_SIZE_PRODUCT_HEIGHT_V1              4
 #define NV_MSGBOX_SYSID_DATA_SIZE_PCIE_SPEED_V1                  1
 #define NV_MSGBOX_SYSID_DATA_SIZE_PCIE_WIDTH_V1                  1
+#define NV_MSGBOX_SYSID_DATA_SIZE_TGP_LIMIT_V1                   4
+#define NV_MSGBOX_SYSID_DATA_SIZE_FRU_PART_NUMBER_V1            20
+#define NV_MSGBOX_SYSID_DATA_SIZE_MODULE_POWER_LIMIT_V1          4
+#define NV_MSGBOX_SYSID_DATA_SIZE_MAX_DRAM_CAPACITY_V1           4
 
 /*!
  * Response to NV_MSGBOX_CMD_ARG1_GET_POWER_HINT_INFO_CLK
@@ -2031,6 +2053,16 @@ typedef struct
     NvU32 clkMinFreqMHz;
     NvU32 clkMaxFreqMHz;
 } NV_MSGBOX_OOB_CLOCK_LIMIT_CTRL_PARAMS;
+
+/*!
+ * This structure is used to hold parameters for
+ * NV_MSGBOX_CMD_ARG1_ASYNC_REQUEST_MEMORY_CAPACITY_UTILIZATION_GET
+ */
+typedef struct
+{
+    NvU32 capacityReservedMiB; //<! Device memory (in MiB) reserved for system use.
+    NvU32 capacityUsedMiB;     //<! Allocated device memory (in MiB).
+} NV_MSGBOX_MEMORY_CAPACITY_UTILIZATION_PARAMS;
 
 /*
  * Parameters for NV_MSGBOX_CMD_ARG1_ASYNC_REQUEST_TEST_MESSAGE_SEND

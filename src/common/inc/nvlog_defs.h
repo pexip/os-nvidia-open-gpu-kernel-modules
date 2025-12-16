@@ -104,14 +104,8 @@ struct _NVLOG_BUFFER
 #define NVLOG_MAX_BUFFERS_v12       256
 #define NVLOG_MAX_BUFFERS_v13       3840
 
-#if NVOS_IS_UNIX
 #define NVLOG_MAX_BUFFERS           NVLOG_MAX_BUFFERS_v13
 #define NVLOG_LOGGER_VERSION        13          // v1.3
-#else
-#define NVLOG_MAX_BUFFERS           NVLOG_MAX_BUFFERS_v11
-#define NVLOG_LOGGER_VERSION        11          // v1.1
-#endif // NVOS_IS_UNIX
-
 
 // Due to this file's peculiar location, NvPort may or may not be includable
 typedef struct PORT_SPINLOCK PORT_SPINLOCK;
@@ -152,7 +146,7 @@ extern NVLOG_LOGGER NvLogLogger;
  * from certain RmCtrl handlers.
  *
  * Historically in most contexts obtaining RMAPI lock would suffice, and mainLock would optionally
- * be used for certain buffers. Ioctl NV_ESC_RM_NVLOG_CTRL cannot touch RMAPI lock and needs
+ * be used for certain buffers. Ioctl NV_ESC_RM_LOCKLESS_DIAGNOSTIC cannot touch RMAPI lock and needs
  * to access NvLog. The latter operation might race if called at an inopportune time: e.g. if the
  * ioctl is called during RM init when KGSP creates/deletes GSP NvLog buffers. Using buffersLock is
  * thus necessary to resolve the potential race.

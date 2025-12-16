@@ -58,6 +58,7 @@ extern NvlStatus knvlinkCoreReadDiscoveryTokenCallback(struct nvlink_link *, NvU
 extern NvlStatus knvlinkCoreWriteDiscoveryTokenCallback(struct nvlink_link *, NvU64);
 extern void      knvlinkCoreTrainingCompleteCallback(struct nvlink_link *);
 extern void      knvlinkCoreGetUphyLoadCallback(struct nvlink_link *, NvBool*);
+extern NvlStatus knvlinkCoreGetCciLinkModeCallback(struct nvlink_link *, NvU64 *);
 
 /*!
  * @brief Helper to allocate an alternate stack from within core RM.
@@ -665,6 +666,15 @@ static NvlStatus NV_API_CALL rm_nvlink_ops_ali_training
     return status;
 }
 
+static NvlStatus NV_API_CALL rm_nvlink_ops_get_cci_link_mode
+(
+    struct nvlink_link *link,
+    NvU64 *mode
+)
+{
+    return NVL_SUCCESS;
+}
+
 #endif /* defined(INCLUDE_NVLINK_LIB) */
 
 const struct nvlink_link_handlers* osGetNvlinkLinkCallbacks(void)
@@ -691,6 +701,7 @@ const struct nvlink_link_handlers* osGetNvlinkLinkCallbacks(void)
         .read_discovery_token       = rm_nvlink_ops_read_link_discovery_token,
         .training_complete          = rm_nvlink_ops_training_complete,
         .get_uphy_load              = rm_nvlink_get_uphy_load,
+        .get_cci_link_mode          = rm_nvlink_ops_get_cci_link_mode,
         .ali_training               = rm_nvlink_ops_ali_training,
     };
 
@@ -723,28 +734,17 @@ osGetForcedNVLinkConnection
     int i, ret;
     NV_STATUS status;
     char path[64];
-    OBJSYS *pSys;
-    OBJOS *pOS;
 
     NV_ASSERT_OR_RETURN((pLinkConnection != NULL), NV_ERR_INVALID_POINTER);
     NV_ASSERT_OR_RETURN((maxLinks > 0), NV_ERR_NOT_SUPPORTED);
     NV_ASSERT_OR_RETURN((pGpu != NULL), NV_ERR_INVALID_ARGUMENT);
-
-    pSys = SYS_GET_INSTANCE();
-    pOS = SYS_GET_OS(pSys);
-    if (pOS == NULL || pOS->osSimEscapeRead == NULL)
-    {
-        NV_PRINTF(LEVEL_ERROR, "%s: escape reads not supported on platform\n",
-                  __FUNCTION__);
-        return NV_ERR_NOT_SUPPORTED;
-    }
 
     for (i = 0; i < maxLinks; i++)
     {
         ret = os_snprintf(path, sizeof(path), "CPU_MODEL|CM_ATS_ADDRESS|NVLink%u", i);
         NV_ASSERT((ret > 0) && (ret < (sizeof(path) - 1)));
 
-        status = pOS->osSimEscapeRead(pGpu, path, 0, 4, &pLinkConnection[i]);
+        status = gpuSimEscapeRead(pGpu, path, 0, 4, &pLinkConnection[i]);
         if (status == NV_OK)
         {
             NV_PRINTF(LEVEL_INFO, "%s: %s=0x%X\n", __FUNCTION__,
@@ -752,7 +752,7 @@ osGetForcedNVLinkConnection
         }
         else
         {
-            NV_PRINTF(LEVEL_INFO, "%s: osSimEscapeRead for '%s' failed (%u)\n",
+            NV_PRINTF(LEVEL_INFO, "%s: gpuSimEscapeRead for '%s' failed (%u)\n",
                       __FUNCTION__, path, status);
             return NV_ERR_NOT_SUPPORTED;
         }

@@ -127,6 +127,10 @@ static NV_STATUS __nvoc_thunk_Memory_vmrangeGetMapAddrSpace(struct VirtualMemory
     return memGetMapAddrSpace((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_VirtualMemoryRange_Memory.offset), pCallContext, mapFlags, pAddrSpace);
 }
 
+static NvBool __nvoc_thunk_Memory_vmrangeIsExportAllowed(struct VirtualMemoryRange *pMemory) {
+    return memIsExportAllowed((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_VirtualMemoryRange_Memory.offset));
+}
+
 static NvU32 __nvoc_thunk_RsResource_vmrangeGetRefCount(struct VirtualMemoryRange *pResource) {
     return resGetRefCount((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VirtualMemoryRange_RsResource.offset));
 }
@@ -149,10 +153,6 @@ static NV_STATUS __nvoc_thunk_VirtualMemory_vmrangeUnmapFrom(struct VirtualMemor
 
 static void __nvoc_thunk_RmResource_vmrangeControl_Epilogue(struct VirtualMemoryRange *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_VirtualMemoryRange_RmResource.offset), pCallContext, pParams);
-}
-
-static NV_STATUS __nvoc_thunk_RsResource_vmrangeControlLookup(struct VirtualMemoryRange *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VirtualMemoryRange_RsResource.offset), pParams, ppEntry);
 }
 
 static NV_STATUS __nvoc_thunk_Memory_vmrangeControl(struct VirtualMemoryRange *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
@@ -181,6 +181,10 @@ static NV_STATUS __nvoc_thunk_RmResource_vmrangeControlSerialization_Prologue(st
 
 static NvBool __nvoc_thunk_StandardMemory_vmrangeCanCopy(struct VirtualMemoryRange *pStandardMemory) {
     return stdmemCanCopy((struct StandardMemory *)(((unsigned char *)pStandardMemory) + __nvoc_rtti_VirtualMemoryRange_StandardMemory.offset));
+}
+
+static NvBool __nvoc_thunk_VirtualMemory_vmrangeIsPartialUnmapSupported(struct VirtualMemoryRange *pVirtualMemory) {
+    return virtmemIsPartialUnmapSupported((struct VirtualMemory *)(((unsigned char *)pVirtualMemory) + __nvoc_rtti_VirtualMemoryRange_VirtualMemory.offset));
 }
 
 static NV_STATUS __nvoc_thunk_Memory_vmrangeIsReady(struct VirtualMemoryRange *pMemory, NvBool bCopyConstructorContext) {
@@ -257,6 +261,8 @@ static void __nvoc_init_funcTable_VirtualMemoryRange_1(VirtualMemoryRange *pThis
 
     pThis->__vmrangeGetMapAddrSpace__ = &__nvoc_thunk_Memory_vmrangeGetMapAddrSpace;
 
+    pThis->__vmrangeIsExportAllowed__ = &__nvoc_thunk_Memory_vmrangeIsExportAllowed;
+
     pThis->__vmrangeGetRefCount__ = &__nvoc_thunk_RsResource_vmrangeGetRefCount;
 
     pThis->__vmrangeAddAdditionalDependants__ = &__nvoc_thunk_RsResource_vmrangeAddAdditionalDependants;
@@ -268,8 +274,6 @@ static void __nvoc_init_funcTable_VirtualMemoryRange_1(VirtualMemoryRange *pThis
     pThis->__vmrangeUnmapFrom__ = &__nvoc_thunk_VirtualMemory_vmrangeUnmapFrom;
 
     pThis->__vmrangeControl_Epilogue__ = &__nvoc_thunk_RmResource_vmrangeControl_Epilogue;
-
-    pThis->__vmrangeControlLookup__ = &__nvoc_thunk_RsResource_vmrangeControlLookup;
 
     pThis->__vmrangeControl__ = &__nvoc_thunk_Memory_vmrangeControl;
 
@@ -284,6 +288,8 @@ static void __nvoc_init_funcTable_VirtualMemoryRange_1(VirtualMemoryRange *pThis
     pThis->__vmrangeControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_vmrangeControlSerialization_Prologue;
 
     pThis->__vmrangeCanCopy__ = &__nvoc_thunk_StandardMemory_vmrangeCanCopy;
+
+    pThis->__vmrangeIsPartialUnmapSupported__ = &__nvoc_thunk_VirtualMemory_vmrangeIsPartialUnmapSupported;
 
     pThis->__vmrangeIsReady__ = &__nvoc_thunk_Memory_vmrangeIsReady;
 
@@ -318,21 +324,26 @@ void __nvoc_init_VirtualMemoryRange(VirtualMemoryRange *pThis) {
     __nvoc_init_funcTable_VirtualMemoryRange(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_VirtualMemoryRange(VirtualMemoryRange **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_VirtualMemoryRange(VirtualMemoryRange **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     VirtualMemoryRange *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(VirtualMemoryRange), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(VirtualMemoryRange));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_VirtualMemoryRange);
 
     pThis->__nvoc_base_VirtualMemory.__nvoc_base_StandardMemory.__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -347,16 +358,25 @@ NV_STATUS __nvoc_objCreate_VirtualMemoryRange(VirtualMemoryRange **ppThis, Dynam
     status = __nvoc_ctor_VirtualMemoryRange(pThis, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_VirtualMemoryRange_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_VirtualMemoryRange_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_VirtualMemory.__nvoc_base_StandardMemory.__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(VirtualMemoryRange));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

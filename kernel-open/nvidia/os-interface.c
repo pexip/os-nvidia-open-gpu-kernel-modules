@@ -25,19 +25,24 @@
 
 #include "os-interface.h"
 #include "nv-linux.h"
+#include "nv-caps-imex.h"
 
 #include "nv-time.h"
 
 #include <linux/mmzone.h>
 #include <linux/numa.h>
+#include <linux/cpuset.h>
 
 #include <linux/pid.h>
+#if defined(CONFIG_LOCKDEP)
+#include <linux/lockdep.h>
+#endif // CONFIG_LOCKDEP
 
 extern char *NVreg_TemporaryFilePath;
 
-#define MAX_ERROR_STRING 512
+#define MAX_ERROR_STRING 528
 static char nv_error_string[MAX_ERROR_STRING];
-nv_spinlock_t nv_error_string_lock;
+static NV_DEFINE_SPINLOCK(nv_error_string_lock);
 
 extern nv_linux_state_t nv_ctl_device;
 
@@ -47,6 +52,8 @@ NvU32 os_page_size  = PAGE_SIZE;
 NvU64 os_page_mask  = NV_PAGE_MASK;
 NvU8  os_page_shift = PAGE_SHIFT;
 NvBool os_cc_enabled = 0;
+NvBool os_cc_sev_snp_enabled = 0;
+NvBool os_cc_snp_vtom_enabled = 0;
 NvBool os_cc_tdx_enabled = 0;
 
 #if defined(CONFIG_DMA_SHARED_BUFFER)
@@ -54,6 +61,8 @@ NvBool os_dma_buf_enabled = NV_TRUE;
 #else
 NvBool os_dma_buf_enabled = NV_FALSE;
 #endif // CONFIG_DMA_SHARED_BUFFER
+
+NvBool os_imex_channel_is_supported = NV_TRUE;
 
 void NV_API_CALL os_disable_console_access(void)
 {
@@ -238,7 +247,20 @@ NV_STATUS NV_API_CALL os_release_semaphore
     return NV_OK;
 }
 
-typedef struct rw_semaphore os_rwlock_t;
+typedef struct
+{
+    struct rw_semaphore sem;
+
+#if defined(CONFIG_LOCKDEP)
+    /**
+     * A key of lock class. It would be registered to Lockdep validator so all
+     * instances' usages and dependencies will contribute to constructing correct
+     * locking rules and this lock will be tracked by the Lockdep validator.
+     *
+     */
+    struct lock_class_key key;
+#endif // CONFIG_LOCKDEP
+} os_rwlock_t;
 
 void* NV_API_CALL os_alloc_rwlock(void)
 {
@@ -247,11 +269,17 @@ void* NV_API_CALL os_alloc_rwlock(void)
     NV_STATUS rmStatus = os_alloc_mem((void *)&os_rwlock, sizeof(os_rwlock_t));
     if (rmStatus != NV_OK)
     {
-        nv_printf(NV_DBG_ERRORS, "NVRM: failed to allocate rw_semaphore!\n");
+        nv_printf(NV_DBG_ERRORS, "NVRM: failed to allocate a struct os_rwlock_t!\n");
         return NULL;
     }
 
-    init_rwsem(os_rwlock);
+    init_rwsem(&os_rwlock->sem);
+
+#if defined(CONFIG_LOCKDEP)
+    // Register the dynamically allocated key to Lockdep.
+    lockdep_register_key(&os_rwlock->key);
+    lockdep_set_class(&os_rwlock->sem, &os_rwlock->key);
+#endif // CONFIG_LOCKDEP
 
     return os_rwlock;
 }
@@ -259,6 +287,12 @@ void* NV_API_CALL os_alloc_rwlock(void)
 void NV_API_CALL os_free_rwlock(void *pRwLock)
 {
     os_rwlock_t *os_rwlock = (os_rwlock_t *)pRwLock;
+
+#if defined(CONFIG_LOCKDEP)
+    // Unregister the dynamically allocated key.
+    lockdep_unregister_key(&os_rwlock->key);
+#endif // CONFIG_LOCKDEP
+
     os_free_mem(os_rwlock);
 }
 
@@ -270,7 +304,7 @@ NV_STATUS NV_API_CALL os_acquire_rwlock_read(void *pRwLock)
     {
         return NV_ERR_INVALID_REQUEST;
     }
-    down_read(os_rwlock);
+    down_read(&os_rwlock->sem);
     return NV_OK;
 }
 
@@ -282,7 +316,7 @@ NV_STATUS NV_API_CALL os_acquire_rwlock_write(void *pRwLock)
     {
         return NV_ERR_INVALID_REQUEST;
     }
-    down_write(os_rwlock);
+    down_write(&os_rwlock->sem);
     return NV_OK;
 }
 
@@ -290,7 +324,7 @@ NV_STATUS NV_API_CALL os_cond_acquire_rwlock_read(void *pRwLock)
 {
     os_rwlock_t *os_rwlock = (os_rwlock_t *)pRwLock;
 
-    if (down_read_trylock(os_rwlock))
+    if (down_read_trylock(&os_rwlock->sem))
     {
         return NV_ERR_TIMEOUT_RETRY;
     }
@@ -302,7 +336,7 @@ NV_STATUS NV_API_CALL os_cond_acquire_rwlock_write(void *pRwLock)
 {
     os_rwlock_t *os_rwlock = (os_rwlock_t *)pRwLock;
 
-    if (down_write_trylock(os_rwlock))
+    if (down_write_trylock(&os_rwlock->sem))
     {
         return NV_ERR_TIMEOUT_RETRY;
     }
@@ -313,13 +347,13 @@ NV_STATUS NV_API_CALL os_cond_acquire_rwlock_write(void *pRwLock)
 void NV_API_CALL os_release_rwlock_read(void *pRwLock)
 {
     os_rwlock_t *os_rwlock = (os_rwlock_t *)pRwLock;
-    up_read(os_rwlock);
+    up_read(&os_rwlock->sem);
 }
 
 void NV_API_CALL os_release_rwlock_write(void *pRwLock)
 {
     os_rwlock_t *os_rwlock = (os_rwlock_t *)pRwLock;
-    up_write(os_rwlock);
+    up_write(&os_rwlock->sem);
 }
 
 NvBool NV_API_CALL os_semaphore_may_sleep(void)
@@ -341,11 +375,6 @@ NvBool NV_API_CALL os_is_administrator(void)
 NvBool NV_API_CALL os_allow_priority_override(void)
 {
     return capable(CAP_SYS_NICE);
-}
-
-NvU64 NV_API_CALL os_get_num_phys_pages(void)
-{
-    return (NvU64)NV_NUM_PHYSPAGES;
 }
 
 char* NV_API_CALL os_string_copy(
@@ -794,7 +823,7 @@ int NV_API_CALL nv_printf(NvU32 debuglevel, const char *printf_format, ...)
     if (debuglevel >= ((cur_debuglevel >> 4) & 0x3))
     {
         size_t length;
-        char *temp;
+        unsigned long flags;
 
         // When printk is called to extend the output of the previous line
         // (i.e. when the previous line did not end in \n), the printk call
@@ -818,20 +847,18 @@ int NV_API_CALL nv_printf(NvU32 debuglevel, const char *printf_format, ...)
         if (length < 1)
             return 0;
 
-        temp = kmalloc(length + sizeof(KERN_CONT), GFP_ATOMIC);
-        if (!temp)
-            return 0;
+        NV_SPIN_LOCK_IRQSAVE(&nv_error_string_lock, flags);
 
         // KERN_CONT changed in the 3.6 kernel, so we can't assume its
         // composition or size.
-        memcpy(temp, KERN_CONT, sizeof(KERN_CONT) - 1);
-        memcpy(temp + sizeof(KERN_CONT) - 1, printf_format, length + 1);
+        memcpy(nv_error_string, KERN_CONT, sizeof(KERN_CONT) - 1);
+        memcpy(nv_error_string + sizeof(KERN_CONT) - 1, printf_format, length + 1);
 
         va_start(arglist, printf_format);
-        chars_written = vprintk(temp, arglist);
+        chars_written = vprintk(nv_error_string, arglist);
         va_end(arglist);
 
-        kfree(temp);
+        NV_SPIN_UNLOCK_IRQRESTORE(&nv_error_string_lock, flags);
     }
 
     return chars_written;
@@ -983,26 +1010,29 @@ void NV_API_CALL os_unmap_kernel_space(
     nv_iounmap(addr, size_bytes);
 }
 
-// flush the cpu's cache, uni-processor version
-NV_STATUS NV_API_CALL os_flush_cpu_cache(void)
+#if NVCPU_IS_AARCH64
+
+static inline void nv_flush_cache_cpu(void *info)
 {
-    CACHE_FLUSH();
-    return NV_OK;
+    if (!nvos_is_chipset_io_coherent())
+    {
+#if defined(NV_FLUSH_CACHE_ALL_PRESENT)
+        flush_cache_all();
+#else
+        WARN_ONCE(0, "kernel does not provide flush_cache_all()\n");
+#endif
+    }
 }
 
 // flush the cache of all cpus
 NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void)
 {
-#if defined(NVCPU_AARCH64)
-    CACHE_FLUSH_ALL();
+    on_each_cpu(nv_flush_cache_cpu, NULL, 1);
     return NV_OK;
-#endif
-    return NV_ERR_NOT_SUPPORTED;
 }
 
 NV_STATUS NV_API_CALL os_flush_user_cache(void)
 {
-#if defined(NVCPU_AARCH64)
     if (!NV_MAY_SLEEP())
     {
         return NV_ERR_NOT_SUPPORTED;
@@ -1013,16 +1043,35 @@ NV_STATUS NV_API_CALL os_flush_user_cache(void)
     // although it is possible. For now, just flush the entire cache to be
     // safe.
     //
-    CACHE_FLUSH_ALL();
+    on_each_cpu(nv_flush_cache_cpu, NULL, 1);
     return NV_OK;
-#else
-    return NV_ERR_NOT_SUPPORTED;
-#endif
 }
+
+#else // NVCPU_IS_AARCH64
+
+NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void)
+{
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+NV_STATUS NV_API_CALL os_flush_user_cache(void)
+{
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+#endif
 
 void NV_API_CALL os_flush_cpu_write_combine_buffer(void)
 {
-    WRITE_COMBINE_FLUSH();
+#if defined(NVCPU_X86_64)
+    asm volatile("sfence" ::: "memory");
+#elif defined(NVCPU_PPC64LE)
+    __asm__ __volatile__ ("sync" : : : "memory");
+#elif defined(NVCPU_AARCH64)
+    asm volatile("dsb st" : : : "memory");
+#else
+    mb();
+#endif
 }
 
 // override initial debug level from registry
@@ -1030,8 +1079,6 @@ void NV_API_CALL os_dbg_init(void)
 {
     NvU32 new_debuglevel;
     nvidia_stack_t *sp = NULL;
-
-    NV_SPIN_LOCK_INIT(&nv_error_string_lock);
 
     if (nv_kmem_cache_alloc_stack(&sp) != 0)
     {
@@ -1058,7 +1105,7 @@ void NV_API_CALL os_dbg_set_level(NvU32 new_debuglevel)
 
 NvU64 NV_API_CALL os_get_max_user_va(void)
 {
-	return TASK_SIZE;
+    return TASK_SIZE;
 }
 
 NV_STATUS NV_API_CALL os_schedule(void)
@@ -1609,7 +1656,7 @@ NV_STATUS NV_API_CALL os_alloc_pages_node
      *                              instead).
      *
      * 6. (Optional) __GFP_RECLAIM: Used to allow/forbid reclaim.
-     *                              This is part of GFP_USER and consequently 
+     *                              This is part of GFP_USER and consequently
      *                              GFP_HIGHUSER_MOVABLE.
      *
      * Some of these flags are relatively more recent, with the last of them
@@ -1726,6 +1773,7 @@ NV_STATUS NV_API_CALL os_open_temporary_file
     void **ppFile
 )
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
 #if defined(O_TMPFILE)
     struct file *file;
     const char *default_path = "/tmp";
@@ -1771,6 +1819,9 @@ NV_STATUS NV_API_CALL os_open_temporary_file
 #else
     return NV_ERR_NOT_SUPPORTED;
 #endif
+#else
+    return NV_ERR_NOT_SUPPORTED;
+#endif
 }
 
 void NV_API_CALL os_close_file
@@ -1778,7 +1829,9 @@ void NV_API_CALL os_close_file
     void *pFile
 )
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     filp_close(pFile, NULL);
+#endif
 }
 
 #define NV_MAX_NUM_FILE_IO_RETRIES 10
@@ -1791,6 +1844,7 @@ NV_STATUS NV_API_CALL os_write_file
     NvU64 offset
 )
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     loff_t f_pos = offset;
     ssize_t num_written;
     int num_retries = NV_MAX_NUM_FILE_IO_RETRIES;
@@ -1821,6 +1875,9 @@ retry:
     }
 
     return NV_OK;
+#else
+    return NV_ERR_NOT_SUPPORTED;
+#endif
 }
 
 NV_STATUS NV_API_CALL os_read_file
@@ -1831,6 +1888,7 @@ NV_STATUS NV_API_CALL os_read_file
     NvU64 offset
 )
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     loff_t f_pos = offset;
     ssize_t num_read;
     int num_retries = NV_MAX_NUM_FILE_IO_RETRIES;
@@ -1861,6 +1919,9 @@ retry:
     }
 
     return NV_OK;
+#else
+    return NV_ERR_NOT_SUPPORTED;
+#endif
 }
 
 NV_STATUS NV_API_CALL os_open_readonly_file
@@ -1869,6 +1930,7 @@ NV_STATUS NV_API_CALL os_open_readonly_file
     void       **ppFile
 )
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     struct file *file;
 
     /*
@@ -1890,6 +1952,9 @@ NV_STATUS NV_API_CALL os_open_readonly_file
     *ppFile = (void *)file;
 
     return NV_OK;
+#else
+    return NV_ERR_NOT_SUPPORTED;
+#endif
 }
 
 NV_STATUS NV_API_CALL os_open_and_read_file
@@ -2044,6 +2109,22 @@ void NV_API_CALL os_nv_cap_close_fd
 )
 {
     nv_cap_close_fd(fd);
+}
+
+NvS32 NV_API_CALL os_imex_channel_count
+(
+    void
+)
+{
+    return nv_caps_imex_channel_count();
+}
+
+NvS32 NV_API_CALL os_imex_channel_get
+(
+    NvU64 descriptor
+)
+{
+    return nv_caps_imex_channel_get((int)descriptor);
 }
 
 /*
@@ -2269,6 +2350,37 @@ NV_STATUS NV_API_CALL os_numa_add_gpu_memory
             }
 #endif
             goto failed;
+        }
+
+        /*
+         * On systems with cpuset cgroup controller enabled, memory alloc on
+         * this just hotplugged GPU memory node can fail if the
+         * cpuset_hotplug_work is not scheduled yet. cpuset_hotplug_work is
+         * where the current->mems_allowed is updated in the path
+         * cpuset_hotplug_workfn->update_tasks_nodemask. When cpuset is
+         * enabled and current->mems_allowed is not updated, memory allocation
+         * with __GFP_THISNODE and this node id fails. cpuset_wait_for_hotplug
+         * kernel function can be used to wait for the work to finish but that
+         * is not exported. Adding a time loop to wait for
+         * current->mems_allowed to be updated as a WAR while an upstream
+         * kernel fix is being explored. Bug 4385903
+         */
+        if (!node_isset(node, cpuset_current_mems_allowed))
+        {
+            unsigned long delay;
+
+            delay = jiffies + (HZ / 10); // 100ms
+            while(time_before(jiffies, delay) &&
+                  !node_isset(node, cpuset_current_mems_allowed))
+            {
+                os_schedule();
+            }
+
+            if (!node_isset(node, cpuset_current_mems_allowed))
+            {
+                nv_printf(NV_DBG_ERRORS, "NVRM: Hotplugged GPU memory NUMA node: %d "
+                          "not set in current->mems_allowed!\n", node);
+            }
         }
 
         *nodeId = node;

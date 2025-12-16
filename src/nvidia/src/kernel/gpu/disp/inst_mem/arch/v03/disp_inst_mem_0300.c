@@ -30,6 +30,7 @@
 
 #define RM_STRICT_CONFIG_EMIT_DISP_ENGINE_DEFINITIONS     0
 
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/disp/inst_mem/disp_inst_mem.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/mem_mgr/context_dma.h"
@@ -207,7 +208,8 @@ instmemCommitContextDma_v03_00
         case ADDR_SYSMEM:
         case ADDR_REGMEM:
             // SOC Display always need _PHYSICAL_NVM flag to be set as display is not over PCI
-            if (pGpu->getProperty(pGpu, PDB_PROP_GPU_TEGRA_SOC_NVDISPLAY))
+            if (pGpu->getProperty(pGpu, PDB_PROP_GPU_TEGRA_SOC_NVDISPLAY) ||
+                pGpu->getProperty(pGpu, PDB_PROP_GPU_IS_SOC_SDM))
             {
                 ctxDMAFlag |= SF_DEF(_DMA, _TARGET_NODE, _PHYSICAL_NVM);
             }

@@ -97,9 +97,10 @@ _pmaRollback
 
             for (j = 0; j < framesPerPage; j++)
             {
-                pPma->pMapInfo->pmaMapChangeStateAttribEx(pPma->pRegions[regId], (frameNum + j), oldState, STATE_MASK);
+                pPma->pMapInfo->pmaMapChangeStateAttrib(pPma->pRegions[regId], (frameNum + j), oldState, STATE_MASK);
             }
         }
+        pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
     }
 
     if (failFrame != 0)
@@ -110,9 +111,20 @@ _pmaRollback
         frameNum = PMA_ADDR2FRAME(pPages[failCount], addrBase);
         for(i = 0; i < failFrame; i++)
         {
-            pPma->pMapInfo->pmaMapChangeStateAttribEx(pPma->pRegions[regId], (frameNum + i), oldState, STATE_MASK);
+            pPma->pMapInfo->pmaMapChangeStateAttrib(pPma->pRegions[regId], (frameNum + i), oldState, STATE_MASK);
         }
+        pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
     }
+}
+
+static inline void
+_pmaDefaultStatsCallback
+(
+    void *pCtx,
+    NvU64 freeFrames
+)
+{
+    return;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -208,8 +220,8 @@ pmaInitialize(PMA *pPma, NvU32 initFlags)
     //
     pMapInfo->pmaMapInit = pmaRegmapInit;
     pMapInfo->pmaMapDestroy = pmaRegmapDestroy;
-    pMapInfo->pmaMapChangeStateAttribEx = pmaRegmapChangeStateAttribEx;
-    pMapInfo->pmaMapChangePageStateAttribEx = pmaRegmapChangePageStateAttribEx;
+    pMapInfo->pmaMapChangeStateAttrib = pmaRegmapChangeStateAttrib;
+    pMapInfo->pmaMapChangePageStateAttrib = pmaRegmapChangePageStateAttrib;
     pMapInfo->pmaMapChangeBlockStateAttrib = pmaRegmapChangeBlockStateAttrib;
     pMapInfo->pmaMapRead = pmaRegmapRead;
     pMapInfo->pmaMapScanContiguous = pmaRegmapScanContiguous;
@@ -250,6 +262,9 @@ pmaInitialize(PMA *pPma, NvU32 initFlags)
     pPma->pmaStats.numFree2mbPagesProtected = 0;
     pPma->regSize = 0;
     portAtomicSetSize(&pPma->initScrubbing, PMA_SCRUB_INITIALIZE);
+
+    pPma->pStatsUpdateCtx = NULL;
+    pPma->pStatsUpdateCb = _pmaDefaultStatsCallback;
 
     // OK not to take lock since it's initialization
     NV_ASSERT(pmaStateCheck(pPma));
@@ -516,13 +531,15 @@ pmaRegisterRegion
                                                            PMA_SCRUB_INITIALIZE);
     }
 
-    status = pmaRegisterBlacklistInfo(pPma, physBase, pBlacklistPageBase, blacklistCount);
+    status = pmaRegisterBlacklistInfo(pPma, physBase, pBlacklistPageBase, blacklistCount, NV_TRUE);
     if (status != NV_OK)
     {
         pPma->pMapInfo->pmaMapDestroy(pMap);
         portMemFree(pPma->pRegDescriptors[id]);
         return status;
     }
+
+    pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
 
     NV_PRINTF(LEVEL_INFO, "Registered region:\n");
     pmaRegionPrint(pPma, pPma->pRegDescriptors[id], pPma->pRegions[id]);
@@ -1056,6 +1073,8 @@ pmaAllocatePages_retry:
 
             pPma->pMapInfo->pmaMapChangeBlockStateAttrib(pMap, frameBase, numPagesAllocatedSoFar * framesPerPage,
                                                          pinOption, MAP_MASK);
+            
+            pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
 
             if (blacklistOffFlag && blacklistOffPerRegion[regId])
             {
@@ -1069,12 +1088,14 @@ pmaAllocatePages_retry:
         }
         else
         {
-            NvU64 frameRangeStart = 0;
-            NvU64 lastFrameRangeEnd = 0;
+            NvU64 frameRangeStart   = 0;
+            NvU64 nextExpectedFrame = 0;
+            NvU32 frameRangeRegId   = 0;
             NvU64 frameBase = 0;
 
             (void)frameRangeStart;   //Silence the compiler
-            (void)lastFrameRangeEnd;
+            (void)nextExpectedFrame;
+            (void)frameRangeRegId;
 
             NV_PRINTF(LEVEL_INFO, "Successfully allocated frames:\n");
 
@@ -1089,25 +1110,33 @@ pmaAllocatePages_retry:
                 if (i == 0)
                 {
                     frameRangeStart = frameBase;
+                    frameRangeRegId = regId;
                 }
-                else if ((lastFrameRangeEnd + 1) != frameBase)
+                else if ((frameRangeRegId != regId) || (nextExpectedFrame != frameBase))
                 {
                     // Break in frame range detected
-                    NV_PRINTF(LEVEL_INFO, "0x%llx through 0x%llx \n",
-                                          frameRangeStart,
-                                          lastFrameRangeEnd);
+                    NV_PRINTF(LEVEL_INFO, "0x%llx through 0x%llx region %d \n",
+                                          reverseFlag ? nextExpectedFrame + framesPerPage : frameRangeStart,
+                                          reverseFlag ? frameRangeStart + framesPerPage - 1 : nextExpectedFrame - 1,
+                                          frameRangeRegId);
 
                     frameRangeStart = frameBase;
+                    frameRangeRegId = regId;
                 }
-                lastFrameRangeEnd = frameBase + framesPerPage - 1;
+                nextExpectedFrame = reverseFlag ? frameBase - framesPerPage : frameBase + framesPerPage;
 
-                pPma->pMapInfo->pmaMapChangePageStateAttribEx(pMap, PMA_ADDR2FRAME(pPages[i], addrBase),
+                pPma->pMapInfo->pmaMapChangePageStateAttrib(pMap, PMA_ADDR2FRAME(pPages[i], addrBase),
                                                             pageSize, pinOption, MAP_MASK);
 
             }
-            NV_PRINTF(LEVEL_INFO, "0x%llx through 0x%llx \n",
-                                  frameRangeStart,
-                                  frameBase + framesPerPage - 1);
+
+            pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
+
+            // Break in frame range detected
+            NV_PRINTF(LEVEL_INFO, "0x%llx through 0x%llx region %d \n",
+                                      reverseFlag ? nextExpectedFrame + framesPerPage : frameRangeStart,
+                                      reverseFlag ? frameRangeStart + framesPerPage - 1 : nextExpectedFrame - 1,
+                                      frameRangeRegId);
         }
     }
 
@@ -1234,7 +1263,7 @@ pmaPinPages
             }
             else
             {
-                pPma->pMapInfo->pmaMapChangeStateAttribEx(pPma->pRegions[regId], (frameNum + j), STATE_PIN, STATE_MASK);
+                pPma->pMapInfo->pmaMapChangeStateAttrib(pPma->pRegions[regId], (frameNum + j), STATE_PIN, STATE_MASK);
             }
         }
     }
@@ -1244,59 +1273,6 @@ done:
 
     return status;
 }
-
-
-NV_STATUS
-pmaUnpinPages
-(
-    PMA      *pPma,
-    NvU64    *pPages,
-    NvLength  pageCount,
-    NvU64     pageSize
-)
-{
-    NvU32          framesPerPage, regId, i, j;
-    NvU64          frameNum, addrBase;
-    PMA_PAGESTATUS state;
-    framesPerPage  = (NvU32)(pageSize >> PMA_PAGE_SHIFT);
-
-    if (pPma == NULL || pageCount == 0 || pPages == NULL
-        || (pageSize != _PMA_64KB && pageSize != _PMA_128KB && pageSize != _PMA_2MB && pageSize != _PMA_512MB))
-    {
-        return NV_ERR_INVALID_ARGUMENT;
-    }
-
-    portSyncSpinlockAcquire(pPma->pPmaLock);
-
-    for(i = 0; i < pageCount; i++)
-    {
-        regId = findRegionID(pPma, pPages[i]);
-        addrBase = pPma->pRegDescriptors[regId]->base;
-        frameNum = PMA_ADDR2FRAME(pPages[i], addrBase);
-
-        for (j = 0; j < framesPerPage; j++)
-        {
-            state = pPma->pMapInfo->pmaMapRead(pPma->pRegions[regId], (frameNum + j), NV_FALSE);
-            if (state != STATE_PIN)
-            {
-                NV_PRINTF(LEVEL_ERROR, "Unpin failed at %dth page %dth frame\n",
-                                        i, j);
-                _pmaRollback(pPma, pPages, i, j, pageSize, STATE_PIN);
-                portSyncSpinlockRelease(pPma->pPmaLock);
-                return NV_ERR_INVALID_STATE;
-            }
-            else
-            {
-                pPma->pMapInfo->pmaMapChangeStateAttribEx(pPma->pRegions[regId], (frameNum + j), STATE_UNPIN, STATE_MASK);
-            }
-        }
-    }
-
-    portSyncSpinlockRelease(pPma->pPmaLock);
-
-    return NV_OK;
-}
-
 
 void
 pmaFreePages
@@ -1379,9 +1355,11 @@ pmaFreePages
             // Reset everything except for the (ATTRIB_EVICTING and ATTRIB_BLACKLIST) state to support memory being freed
             // after being picked for eviction.
             //
-            pPma->pMapInfo->pmaMapChangeStateAttribEx(pPma->pRegions[regId], (frameNum + j), newStatus, ~(ATTRIB_EVICTING | ATTRIB_BLACKLIST));
+            pPma->pMapInfo->pmaMapChangeStateAttrib(pPma->pRegions[regId], (frameNum + j), newStatus, ~(ATTRIB_EVICTING | ATTRIB_BLACKLIST));
         }
     }
+
+    pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
 
     portSyncSpinlockRelease(pPma->pPmaLock);
 
@@ -1431,6 +1409,8 @@ pmaClearScrubRange
             pmaSetBlockStateAttrib(pPma, physBase, physLimit - physBase + 1, 0, ATTRIB_SCRUBBING);
         }
     }
+
+    pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
 }
 
 
@@ -1463,6 +1443,8 @@ pmaScrubComplete
         pmaSetBlockStateAttrib(pPma, physBase, physLimit - physBase + 1, 0, ATTRIB_SCRUBBING);
     }
 
+    pPma->pStatsUpdateCb(pPma->pStatsUpdateCtx, pPma->pmaStats.numFreeFrames);
+
     NV_PRINTF(LEVEL_INFO, "Inside\n");
     for (regionIdx = 0; regionIdx < pPma->regSize; regionIdx++)
     {
@@ -1475,6 +1457,19 @@ pmaScrubComplete
     return NV_OK;
 }
 
+void
+pmaRegisterUpdateStatsCb
+(
+    PMA *pPma,
+    pmaUpdateStatsCb_t pUpdateCb,
+    void *pCtxPtr
+)
+{
+    // Only supported right after init, so we don't bother taking locks.
+    pPma->pStatsUpdateCb = pUpdateCb;
+    pPma->pStatsUpdateCtx = pCtxPtr;
+    pUpdateCb(pCtxPtr, pPma->pmaStats.numFreeFrames);
+}
 
 NV_STATUS
 pmaRegisterEvictionCb
@@ -1930,7 +1925,7 @@ pmaAddToBlacklistTracking
     {
         blacklistPages.physOffset  = physAddr;
         blacklistPages.bIsDynamic  = NV_TRUE;
-        status = pmaRegisterBlacklistInfo(pPma, 0, &blacklistPages, 1);
+        status = pmaRegisterBlacklistInfo(pPma, 0, &blacklistPages, 1, NV_FALSE);
     }
     return status;
 }

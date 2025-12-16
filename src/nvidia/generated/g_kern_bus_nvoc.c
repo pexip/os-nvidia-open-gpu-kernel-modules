@@ -66,44 +66,44 @@ const struct NVOC_CLASS_DEF __nvoc_class_def_KernelBus =
     /*pExportInfo=*/        &__nvoc_export_info_KernelBus
 };
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateConstructEngine(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, ENGDESCRIPTOR arg0) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateConstructEngine(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, ENGDESCRIPTOR arg0) {
     return kbusConstructEngine(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreInitLocked(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreInitLocked(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
     return kbusStatePreInitLocked(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset));
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStateInitLocked(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStateInitLocked(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
     return kbusStateInitLocked(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset));
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreLoad(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreLoad(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
     return kbusStatePreLoad(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStateLoad(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStateLoad(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
     return kbusStateLoad(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePostLoad(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePostLoad(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
     return kbusStatePostLoad(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreUnload(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePreUnload(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 arg0) {
     return kbusStatePreUnload(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
 }
 
-static NV_STATUS __nvoc_thunk_KernelBus_engstateStateUnload(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 flags) {
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStateUnload(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 flags) {
     return kbusStateUnload(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), flags);
 }
 
-static void __nvoc_thunk_KernelBus_engstateStateDestroy(OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
-    kbusStateDestroy(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset));
+static NV_STATUS __nvoc_thunk_KernelBus_engstateStatePostUnload(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus, NvU32 flags) {
+    return kbusStatePostUnload(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset), flags);
 }
 
-static NV_STATUS __nvoc_thunk_OBJENGSTATE_kbusStatePostUnload(POBJGPU pGpu, struct KernelBus *pEngstate, NvU32 arg0) {
-    return engstateStatePostUnload(pGpu, (struct OBJENGSTATE *)(((unsigned char *)pEngstate) + __nvoc_rtti_KernelBus_OBJENGSTATE.offset), arg0);
+static void __nvoc_thunk_KernelBus_engstateStateDestroy(struct OBJGPU *pGpu, struct OBJENGSTATE *pKernelBus) {
+    kbusStateDestroy(pGpu, (struct KernelBus *)(((unsigned char *)pKernelBus) - __nvoc_rtti_KernelBus_OBJENGSTATE.offset));
 }
 
 static NV_STATUS __nvoc_thunk_OBJENGSTATE_kbusStateInitUnlocked(POBJGPU pGpu, struct KernelBus *pEngstate) {
@@ -176,18 +176,6 @@ void __nvoc_init_dataField_KernelBus(KernelBus *pThis, RmHalspecOwner *pRmhalspe
         pThis->bAllowReflectedMappingAccess = ((NvBool)(0 != 0));
     }
 
-    // Hal field -- bBar2Tunnelled
-    // default
-    {
-        pThis->bBar2Tunnelled = ((NvBool)(0 != 0));
-    }
-
-    // Hal field -- bBar2InternalOnly
-    // default
-    {
-        pThis->bBar2InternalOnly = ((NvBool)(0 != 0));
-    }
-
     // Hal field -- bIsEntireBar2RegionVirtuallyAddressible
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
@@ -227,6 +215,17 @@ void __nvoc_init_dataField_KernelBus(KernelBus *pThis, RmHalspecOwner *pRmhalspe
     {
         pThis->setProperty(pThis, PDB_PROP_KBUS_IS_MISSING, ((NvBool)(0 != 0)));
     }
+
+    // NVOC Property Hal field -- PDB_PROP_KBUS_RESTORE_BAR1_SIZE_BUG_3249028_WAR
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x11f0fc00UL) )) /* ChipHal: GA100 | GA102 | GA103 | GA104 | GA106 | GA107 | AD102 | AD103 | AD104 | AD106 | AD107 | GH100 */ 
+    {
+        pThis->setProperty(pThis, PDB_PROP_KBUS_RESTORE_BAR1_SIZE_BUG_3249028_WAR, ((NvBool)(0 == 0)));
+    }
+    // default
+    else
+    {
+        pThis->setProperty(pThis, PDB_PROP_KBUS_RESTORE_BAR1_SIZE_BUG_3249028_WAR, ((NvBool)(0 != 0)));
+    }
 }
 
 NV_STATUS __nvoc_ctor_OBJENGSTATE(OBJENGSTATE* );
@@ -255,6 +254,16 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     PORT_UNREFERENCED_VARIABLE(rmVariantHal);
     PORT_UNREFERENCED_VARIABLE(rmVariantHal_HalVarIdx);
 
+    // Hal function -- kbusInitBarsSize
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusInitBarsSize__ = &kbusInitBarsSize_VGPUSTUB;
+    }
+    else
+    {
+        pThis->__kbusInitBarsSize__ = &kbusInitBarsSize_KERNEL;
+    }
+
     pThis->__kbusConstructEngine__ = &kbusConstructEngine_IMPL;
 
     // Hal function -- kbusStatePreInitLocked
@@ -263,7 +272,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     pThis->__kbusStateInitLocked__ = &kbusStateInitLocked_IMPL;
 
     // Hal function -- kbusStatePreLoad
-    pThis->__kbusStatePreLoad__ = &kbusStatePreLoad_56cd7a;
+    pThis->__kbusStatePreLoad__ = &kbusStatePreLoad_GM107;
 
     // Hal function -- kbusStateLoad
     pThis->__kbusStateLoad__ = &kbusStateLoad_GM107;
@@ -277,8 +286,141 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // Hal function -- kbusStateUnload
     pThis->__kbusStateUnload__ = &kbusStateUnload_GM107;
 
+    // Hal function -- kbusStatePostUnload
+    pThis->__kbusStatePostUnload__ = &kbusStatePostUnload_GM107;
+
     // Hal function -- kbusStateDestroy
     pThis->__kbusStateDestroy__ = &kbusStateDestroy_GM107;
+
+    // Hal function -- kbusMapBar2Aperture
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusMapBar2Aperture__ = &kbusMapBar2Aperture_VBAR2_SRIOV;
+    }
+    else
+    {
+        pThis->__kbusMapBar2Aperture__ = &kbusMapBar2Aperture_VBAR2;
+    }
+
+    // Hal function -- kbusValidateBar2ApertureMapping
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusValidateBar2ApertureMapping__ = &kbusValidateBar2ApertureMapping_VBAR2_SRIOV;
+    }
+    else
+    {
+        pThis->__kbusValidateBar2ApertureMapping__ = &kbusValidateBar2ApertureMapping_VBAR2;
+    }
+
+    // Hal function -- kbusUnmapBar2ApertureWithFlags
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusUnmapBar2ApertureWithFlags__ = &kbusUnmapBar2ApertureWithFlags_VBAR2_SRIOV;
+    }
+    else
+    {
+        pThis->__kbusUnmapBar2ApertureWithFlags__ = &kbusUnmapBar2ApertureWithFlags_VBAR2;
+    }
+
+    // Hal function -- kbusGetVaLimitForBar2
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusGetVaLimitForBar2__ = &kbusGetVaLimitForBar2_IMPL;
+    }
+    else
+    {
+        pThis->__kbusGetVaLimitForBar2__ = &kbusGetVaLimitForBar2_FWCLIENT;
+    }
+
+    // Hal function -- kbusCalcCpuInvisibleBar2Range
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusCalcCpuInvisibleBar2Range__ = &kbusCalcCpuInvisibleBar2Range_GP100;
+    }
+    else
+    {
+        pThis->__kbusCalcCpuInvisibleBar2Range__ = &kbusCalcCpuInvisibleBar2Range_f2d351;
+    }
+
+    // Hal function -- kbusCalcCpuInvisibleBar2ApertureSize
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusCalcCpuInvisibleBar2ApertureSize__ = &kbusCalcCpuInvisibleBar2ApertureSize_GV100;
+    }
+    else
+    {
+        pThis->__kbusCalcCpuInvisibleBar2ApertureSize__ = &kbusCalcCpuInvisibleBar2ApertureSize_13cd8d;
+    }
+
+    // Hal function -- kbusCommitBar2
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusCommitBar2__ = &kbusCommitBar2_GM107;
+    }
+    else
+    {
+        pThis->__kbusCommitBar2__ = &kbusCommitBar2_KERNEL;
+    }
+
+    // Hal function -- kbusRewritePTEsForExistingMapping
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusRewritePTEsForExistingMapping__ = &kbusRewritePTEsForExistingMapping_VBAR2;
+    }
+    else
+    {
+        pThis->__kbusRewritePTEsForExistingMapping__ = &kbusRewritePTEsForExistingMapping_92bfc3;
+    }
+
+    // Hal function -- kbusPatchBar1Pdb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusPatchBar1Pdb__ = &kbusPatchBar1Pdb_56cd7a;
+    }
+    else
+    {
+        pThis->__kbusPatchBar1Pdb__ = &kbusPatchBar1Pdb_GSPCLIENT;
+    }
+
+    // Hal function -- kbusPatchBar2Pdb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusPatchBar2Pdb__ = &kbusPatchBar2Pdb_56cd7a;
+    }
+    else
+    {
+        pThis->__kbusPatchBar2Pdb__ = &kbusPatchBar2Pdb_GSPCLIENT;
+    }
+
+    // Hal function -- kbusConstructVirtualBar2CpuInvisibleHeap
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusConstructVirtualBar2CpuInvisibleHeap__ = &kbusConstructVirtualBar2CpuInvisibleHeap_VBAR2;
+    }
+    else
+    {
+        pThis->__kbusConstructVirtualBar2CpuInvisibleHeap__ = &kbusConstructVirtualBar2CpuInvisibleHeap_56cd7a;
+    }
+
+    // Hal function -- kbusMapCpuInvisibleBar2Aperture
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusMapCpuInvisibleBar2Aperture__ = &kbusMapCpuInvisibleBar2Aperture_VBAR2;
+    }
+    else
+    {
+        pThis->__kbusMapCpuInvisibleBar2Aperture__ = &kbusMapCpuInvisibleBar2Aperture_46f6a7;
+    }
+
+    // Hal function -- kbusUnmapCpuInvisibleBar2Aperture
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusUnmapCpuInvisibleBar2Aperture__ = &kbusUnmapCpuInvisibleBar2Aperture_VBAR2;
+    }
+    else
+    {
+        pThis->__kbusUnmapCpuInvisibleBar2Aperture__ = &kbusUnmapCpuInvisibleBar2Aperture_b3696a;
+    }
 
     // Hal function -- kbusTeardownBar2CpuAperture
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
@@ -341,6 +483,25 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusGetPeerId__ = &kbusGetPeerId_GP100;
     }
 
+    // Hal function -- kbusGetNvlinkPeerId
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x11f0fc00UL) )) /* ChipHal: GA100 | GA102 | GA103 | GA104 | GA106 | GA107 | AD102 | AD103 | AD104 | AD106 | AD107 | GH100 */ 
+        {
+            pThis->__kbusGetNvlinkPeerId__ = &kbusGetNvlinkPeerId_GA100;
+        }
+        // default
+        else
+        {
+            pThis->__kbusGetNvlinkPeerId__ = &kbusGetNvlinkPeerId_c732fb;
+        }
+    }
+    // default
+    else
+    {
+        pThis->__kbusGetNvlinkPeerId__ = &kbusGetNvlinkPeerId_c732fb;
+    }
+
     // Hal function -- kbusGetNvSwitchPeerId
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x11f0fc00UL) )) /* ChipHal: GA100 | GA102 | GA103 | GA104 | GA106 | GA107 | AD102 | AD103 | AD104 | AD106 | AD107 | GH100 */ 
     {
@@ -373,17 +534,24 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     }
 
     // Hal function -- kbusGetNvlinkP2PPeerId
-    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x00000060UL) )) /* ChipHal: TU102 | TU104 */ 
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
     {
-        pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_GP100;
-    }
-    else if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x00000380UL) )) /* ChipHal: TU106 | TU116 | TU117 */ 
-    {
-        pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_56cd7a;
+        pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_VGPU;
     }
     else
     {
-        pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_GA100;
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x00000060UL) )) /* ChipHal: TU102 | TU104 */ 
+        {
+            pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_GP100;
+        }
+        else if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x00000380UL) )) /* ChipHal: TU106 | TU116 | TU117 */ 
+        {
+            pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_56cd7a;
+        }
+        else
+        {
+            pThis->__kbusGetNvlinkP2PPeerId__ = &kbusGetNvlinkP2PPeerId_GA100;
+        }
     }
 
     // Hal function -- kbusWriteP2PWmbTag
@@ -448,15 +616,15 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusUnreserveP2PPeerIds__ = &kbusUnreserveP2PPeerIds_GP100;
     }
 
-    // Hal function -- kbusNeedStaticBar1Mapping
+    // Hal function -- kbusIsBar1P2PCapable
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
-        pThis->__kbusNeedStaticBar1Mapping__ = &kbusNeedStaticBar1Mapping_GH100;
+        pThis->__kbusIsBar1P2PCapable__ = &kbusIsBar1P2PCapable_GH100;
     }
     // default
     else
     {
-        pThis->__kbusNeedStaticBar1Mapping__ = &kbusNeedStaticBar1Mapping_bf6dfa;
+        pThis->__kbusIsBar1P2PCapable__ = &kbusIsBar1P2PCapable_bf6dfa;
     }
 
     // Hal function -- kbusEnableStaticBar1Mapping
@@ -467,7 +635,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusEnableStaticBar1Mapping__ = &kbusEnableStaticBar1Mapping_46f6a7;
+        pThis->__kbusEnableStaticBar1Mapping__ = &kbusEnableStaticBar1Mapping_395e98;
     }
 
     // Hal function -- kbusDisableStaticBar1Mapping
@@ -478,7 +646,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusDisableStaticBar1Mapping__ = &kbusDisableStaticBar1Mapping_56cd7a;
+        pThis->__kbusDisableStaticBar1Mapping__ = &kbusDisableStaticBar1Mapping_d44104;
     }
 
     // Hal function -- kbusGetBar1P2PDmaInfo
@@ -492,26 +660,26 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusGetBar1P2PDmaInfo__ = &kbusGetBar1P2PDmaInfo_395e98;
     }
 
-    // Hal function -- kbusStaticMapFbAperture
+    // Hal function -- kbusUpdateStaticBar1VAMapping
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
-        pThis->__kbusStaticMapFbAperture__ = &kbusStaticMapFbAperture_GH100;
+        pThis->__kbusUpdateStaticBar1VAMapping__ = &kbusUpdateStaticBar1VAMapping_GH100;
     }
     // default
     else
     {
-        pThis->__kbusStaticMapFbAperture__ = &kbusStaticMapFbAperture_395e98;
+        pThis->__kbusUpdateStaticBar1VAMapping__ = &kbusUpdateStaticBar1VAMapping_395e98;
     }
 
-    // Hal function -- kbusStaticUnmapFbAperture
+    // Hal function -- kbusGetStaticFbAperture
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
-        pThis->__kbusStaticUnmapFbAperture__ = &kbusStaticUnmapFbAperture_GH100;
+        pThis->__kbusGetStaticFbAperture__ = &kbusGetStaticFbAperture_GH100;
     }
     // default
     else
     {
-        pThis->__kbusStaticUnmapFbAperture__ = &kbusStaticUnmapFbAperture_395e98;
+        pThis->__kbusGetStaticFbAperture__ = &kbusGetStaticFbAperture_395e98;
     }
 
     // Hal function -- kbusCreateP2PMappingForBar1P2P
@@ -522,7 +690,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusCreateP2PMappingForBar1P2P__ = &kbusCreateP2PMappingForBar1P2P_46f6a7;
+        pThis->__kbusCreateP2PMappingForBar1P2P__ = &kbusCreateP2PMappingForBar1P2P_395e98;
     }
 
     // Hal function -- kbusRemoveP2PMappingForBar1P2P
@@ -533,7 +701,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusRemoveP2PMappingForBar1P2P__ = &kbusRemoveP2PMappingForBar1P2P_46f6a7;
+        pThis->__kbusRemoveP2PMappingForBar1P2P__ = &kbusRemoveP2PMappingForBar1P2P_395e98;
     }
 
     // Hal function -- kbusHasPcieBar1P2PMapping
@@ -544,7 +712,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusHasPcieBar1P2PMapping__ = &kbusHasPcieBar1P2PMapping_491d52;
+        pThis->__kbusHasPcieBar1P2PMapping__ = &kbusHasPcieBar1P2PMapping_bf6dfa;
     }
 
     // Hal function -- kbusIsPcieBar1P2PMappingSupported
@@ -555,18 +723,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     // default
     else
     {
-        pThis->__kbusIsPcieBar1P2PMappingSupported__ = &kbusIsPcieBar1P2PMappingSupported_491d52;
-    }
-
-    // Hal function -- kbusSetupBar1P2PCapability
-    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
-    {
-        pThis->__kbusSetupBar1P2PCapability__ = &kbusSetupBar1P2PCapability_GH100;
-    }
-    // default
-    else
-    {
-        pThis->__kbusSetupBar1P2PCapability__ = &kbusSetupBar1P2PCapability_b3696a;
+        pThis->__kbusIsPcieBar1P2PMappingSupported__ = &kbusIsPcieBar1P2PMappingSupported_bf6dfa;
     }
 
     // Hal function -- kbusCheckFlaSupportedAndInit
@@ -747,6 +904,44 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusSetupBindFla__ = &kbusSetupBindFla_46f6a7;
     }
 
+    // Hal function -- kbusSendSysmembarSingle
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusSendSysmembarSingle__ = &kbusSendSysmembarSingle_56cd7a;
+    }
+    else
+    {
+        pThis->__kbusSendSysmembarSingle__ = &kbusSendSysmembarSingle_KERNEL;
+    }
+
+    // Hal function -- kbusCacheBAR1ResizeSize_WAR_BUG_3249028
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__kbusCacheBAR1ResizeSize_WAR_BUG_3249028__ = &kbusCacheBAR1ResizeSize_WAR_BUG_3249028_GH100;
+    }
+    else if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x000003e0UL) )) /* ChipHal: TU102 | TU104 | TU106 | TU116 | TU117 */ 
+    {
+        pThis->__kbusCacheBAR1ResizeSize_WAR_BUG_3249028__ = &kbusCacheBAR1ResizeSize_WAR_BUG_3249028_d44104;
+    }
+    else
+    {
+        pThis->__kbusCacheBAR1ResizeSize_WAR_BUG_3249028__ = &kbusCacheBAR1ResizeSize_WAR_BUG_3249028_GA100;
+    }
+
+    // Hal function -- kbusRestoreBAR1ResizeSize_WAR_BUG_3249028
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__kbusRestoreBAR1ResizeSize_WAR_BUG_3249028__ = &kbusRestoreBAR1ResizeSize_WAR_BUG_3249028_GH100;
+    }
+    else if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x000003e0UL) )) /* ChipHal: TU102 | TU104 | TU106 | TU116 | TU117 */ 
+    {
+        pThis->__kbusRestoreBAR1ResizeSize_WAR_BUG_3249028__ = &kbusRestoreBAR1ResizeSize_WAR_BUG_3249028_ac1694;
+    }
+    else
+    {
+        pThis->__kbusRestoreBAR1ResizeSize_WAR_BUG_3249028__ = &kbusRestoreBAR1ResizeSize_WAR_BUG_3249028_GA100;
+    }
+
     // Hal function -- kbusIsDirectMappingAllowed
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x000003e0UL) )) /* ChipHal: TU102 | TU104 | TU106 | TU116 | TU117 */ 
     {
@@ -765,6 +960,16 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     else
     {
         pThis->__kbusUseDirectSysmemMap__ = &kbusUseDirectSysmemMap_GA100;
+    }
+
+    // Hal function -- kbusMemCopyBar0Window
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusMemCopyBar0Window__ = &kbusMemCopyBar0Window_46f6a7;
+    }
+    else
+    {
+        pThis->__kbusMemCopyBar0Window__ = &kbusMemCopyBar0Window_GM107;
     }
 
     // Hal function -- kbusWriteBAR0WindowBase
@@ -798,13 +1003,20 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     }
 
     // Hal function -- kbusSetBAR0WindowVidOffset
-    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
     {
-        pThis->__kbusSetBAR0WindowVidOffset__ = &kbusSetBAR0WindowVidOffset_GH100;
+        pThis->__kbusSetBAR0WindowVidOffset__ = &kbusSetBAR0WindowVidOffset_56cd7a;
     }
     else
     {
-        pThis->__kbusSetBAR0WindowVidOffset__ = &kbusSetBAR0WindowVidOffset_GM107;
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+        {
+            pThis->__kbusSetBAR0WindowVidOffset__ = &kbusSetBAR0WindowVidOffset_GH100;
+        }
+        else
+        {
+            pThis->__kbusSetBAR0WindowVidOffset__ = &kbusSetBAR0WindowVidOffset_GM107;
+        }
     }
 
     // Hal function -- kbusGetBAR0WindowVidOffset
@@ -817,14 +1029,165 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusGetBAR0WindowVidOffset__ = &kbusGetBAR0WindowVidOffset_GM107;
     }
 
-    // Hal function -- kbusVerifyBar2
-    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    // Hal function -- kbusSetupBar0WindowBeforeBar2Bootstrap
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
     {
-        pThis->__kbusVerifyBar2__ = &kbusVerifyBar2_GH100;
+        pThis->__kbusSetupBar0WindowBeforeBar2Bootstrap__ = &kbusSetupBar0WindowBeforeBar2Bootstrap_56cd7a;
     }
     else
     {
-        pThis->__kbusVerifyBar2__ = &kbusVerifyBar2_GM107;
+        pThis->__kbusSetupBar0WindowBeforeBar2Bootstrap__ = &kbusSetupBar0WindowBeforeBar2Bootstrap_GM107;
+    }
+
+    // Hal function -- kbusRestoreBar0WindowAfterBar2Bootstrap
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusRestoreBar0WindowAfterBar2Bootstrap__ = &kbusRestoreBar0WindowAfterBar2Bootstrap_b3696a;
+    }
+    else
+    {
+        pThis->__kbusRestoreBar0WindowAfterBar2Bootstrap__ = &kbusRestoreBar0WindowAfterBar2Bootstrap_GM107;
+    }
+
+    // Hal function -- kbusVerifyBar2
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusVerifyBar2__ = &kbusVerifyBar2_56cd7a;
+    }
+    else
+    {
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+        {
+            pThis->__kbusVerifyBar2__ = &kbusVerifyBar2_GH100;
+        }
+        else
+        {
+            pThis->__kbusVerifyBar2__ = &kbusVerifyBar2_GM107;
+        }
+    }
+
+    // Hal function -- kbusBar2BootStrapInPhysicalMode
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusBar2BootStrapInPhysicalMode__ = &kbusBar2BootStrapInPhysicalMode_VGPUSTUB;
+    }
+    else
+    {
+        pThis->__kbusBar2BootStrapInPhysicalMode__ = &kbusBar2BootStrapInPhysicalMode_56cd7a;
+    }
+
+    // Hal function -- kbusBindBar2
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+        {
+            pThis->__kbusBindBar2__ = &kbusBindBar2_GH100;
+        }
+        else
+        {
+            pThis->__kbusBindBar2__ = &kbusBindBar2_TU102;
+        }
+    }
+    else
+    {
+        pThis->__kbusBindBar2__ = &kbusBindBar2_5baef9;
+    }
+
+    // Hal function -- kbusInstBlkWriteAddrLimit
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x000003e0UL) )) /* ChipHal: TU102 | TU104 | TU106 | TU116 | TU117 */ 
+        {
+            pThis->__kbusInstBlkWriteAddrLimit__ = &kbusInstBlkWriteAddrLimit_GP100;
+        }
+        else
+        {
+            pThis->__kbusInstBlkWriteAddrLimit__ = &kbusInstBlkWriteAddrLimit_b3696a;
+        }
+    }
+    else
+    {
+        pThis->__kbusInstBlkWriteAddrLimit__ = &kbusInstBlkWriteAddrLimit_f2d351;
+    }
+
+    // Hal function -- kbusInitInstBlk
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusInitInstBlk__ = &kbusInitInstBlk_GP100;
+    }
+    else
+    {
+        pThis->__kbusInitInstBlk__ = &kbusInitInstBlk_ac1694;
+    }
+
+    // Hal function -- kbusBar2InstBlkWrite
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusBar2InstBlkWrite__ = &kbusBar2InstBlkWrite_GP100;
+    }
+    else
+    {
+        pThis->__kbusBar2InstBlkWrite__ = &kbusBar2InstBlkWrite_d44104;
+    }
+
+    // Hal function -- kbusSetupBar2PageTablesAtBottomOfFb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusSetupBar2PageTablesAtBottomOfFb__ = &kbusSetupBar2PageTablesAtBottomOfFb_GM107;
+    }
+    else
+    {
+        pThis->__kbusSetupBar2PageTablesAtBottomOfFb__ = &kbusSetupBar2PageTablesAtBottomOfFb_22ba1e;
+    }
+
+    // Hal function -- kbusTeardownBar2PageTablesAtBottomOfFb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusTeardownBar2PageTablesAtBottomOfFb__ = &kbusTeardownBar2PageTablesAtBottomOfFb_GM107;
+    }
+    else
+    {
+        pThis->__kbusTeardownBar2PageTablesAtBottomOfFb__ = &kbusTeardownBar2PageTablesAtBottomOfFb_566dba;
+    }
+
+    // Hal function -- kbusSetupBar2InstBlkAtBottomOfFb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusSetupBar2InstBlkAtBottomOfFb__ = &kbusSetupBar2InstBlkAtBottomOfFb_GM107;
+    }
+    else
+    {
+        pThis->__kbusSetupBar2InstBlkAtBottomOfFb__ = &kbusSetupBar2InstBlkAtBottomOfFb_22ba1e;
+    }
+
+    // Hal function -- kbusTeardownBar2InstBlkAtBottomOfFb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusTeardownBar2InstBlkAtBottomOfFb__ = &kbusTeardownBar2InstBlkAtBottomOfFb_GM107;
+    }
+    else
+    {
+        pThis->__kbusTeardownBar2InstBlkAtBottomOfFb__ = &kbusTeardownBar2InstBlkAtBottomOfFb_566dba;
+    }
+
+    // Hal function -- kbusSetupBar2PageTablesAtTopOfFb
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusSetupBar2PageTablesAtTopOfFb__ = &kbusSetupBar2PageTablesAtTopOfFb_GM107;
+    }
+    else
+    {
+        pThis->__kbusSetupBar2PageTablesAtTopOfFb__ = &kbusSetupBar2PageTablesAtTopOfFb_22ba1e;
+    }
+
+    // Hal function -- kbusCommitBar2PDEs
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusCommitBar2PDEs__ = &kbusCommitBar2PDEs_GM107;
+    }
+    else
+    {
+        pThis->__kbusCommitBar2PDEs__ = &kbusCommitBar2PDEs_22ba1e;
     }
 
     // Hal function -- kbusVerifyCoherentLink
@@ -836,6 +1199,26 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
     else
     {
         pThis->__kbusVerifyCoherentLink__ = &kbusVerifyCoherentLink_56cd7a;
+    }
+
+    // Hal function -- kbusTeardownMailbox
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__kbusTeardownMailbox__ = &kbusTeardownMailbox_GH100;
+    }
+    else
+    {
+        pThis->__kbusTeardownMailbox__ = &kbusTeardownMailbox_GM107;
+    }
+
+    // Hal function -- kbusBar1InstBlkVasUpdate
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        pThis->__kbusBar1InstBlkVasUpdate__ = &kbusBar1InstBlkVasUpdate_GM107;
+    }
+    else
+    {
+        pThis->__kbusBar1InstBlkVasUpdate__ = &kbusBar1InstBlkVasUpdate_56cd7a;
     }
 
     // Hal function -- kbusFlushPcieForBar0Doorbell
@@ -892,6 +1275,23 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
         pThis->__kbusTeardownCoherentCpuMapping__ = &kbusTeardownCoherentCpuMapping_d44104;
     }
 
+    // Hal function -- kbusBar1InstBlkBind
+    if (( ((rmVariantHal_HalVarIdx >> 5) == 0UL) && ((1UL << (rmVariantHal_HalVarIdx & 0x1f)) & 0x00000001UL) )) /* RmVariantHal: VF */ 
+    {
+        if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+        {
+            pThis->__kbusBar1InstBlkBind__ = &kbusBar1InstBlkBind_GH100;
+        }
+        else
+        {
+            pThis->__kbusBar1InstBlkBind__ = &kbusBar1InstBlkBind_TU102;
+        }
+    }
+    else
+    {
+        pThis->__kbusBar1InstBlkBind__ = &kbusBar1InstBlkBind_92bfc3;
+    }
+
     // Hal function -- kbusGetEccCounts
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
@@ -919,9 +1319,9 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, RmHalspecOwner *
 
     pThis->__nvoc_base_OBJENGSTATE.__engstateStateUnload__ = &__nvoc_thunk_KernelBus_engstateStateUnload;
 
-    pThis->__nvoc_base_OBJENGSTATE.__engstateStateDestroy__ = &__nvoc_thunk_KernelBus_engstateStateDestroy;
+    pThis->__nvoc_base_OBJENGSTATE.__engstateStatePostUnload__ = &__nvoc_thunk_KernelBus_engstateStatePostUnload;
 
-    pThis->__kbusStatePostUnload__ = &__nvoc_thunk_OBJENGSTATE_kbusStatePostUnload;
+    pThis->__nvoc_base_OBJENGSTATE.__engstateStateDestroy__ = &__nvoc_thunk_KernelBus_engstateStateDestroy;
 
     pThis->__kbusStateInitUnlocked__ = &__nvoc_thunk_OBJENGSTATE_kbusStateInitUnlocked;
 
@@ -936,7 +1336,7 @@ void __nvoc_init_funcTable_KernelBus(KernelBus *pThis, RmHalspecOwner *pRmhalspe
     __nvoc_init_funcTable_KernelBus_1(pThis, pRmhalspecowner);
 }
 
-NvU32 kbusGetP2PWriteMailboxAddressSize_STATIC_DISPATCH(OBJGPU *pGpu) {
+NvU32 kbusGetP2PWriteMailboxAddressSize_STATIC_DISPATCH(struct OBJGPU *pGpu) {
     ChipHal *chipHal = &staticCast(pGpu, RmHalspecOwner)->chipHal;
     const unsigned long chipHal_HalVarIdx = (unsigned long)chipHal->__nvoc_HalVarIdx;
 
@@ -963,23 +1363,31 @@ void __nvoc_init_KernelBus(KernelBus *pThis, RmHalspecOwner *pRmhalspecowner) {
     __nvoc_init_funcTable_KernelBus(pThis, pRmhalspecowner);
 }
 
-NV_STATUS __nvoc_objCreate_KernelBus(KernelBus **ppThis, Dynamic *pParent, NvU32 createFlags) {
+NV_STATUS __nvoc_objCreate_KernelBus(KernelBus **ppThis, Dynamic *pParent, NvU32 createFlags)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     KernelBus *pThis;
     RmHalspecOwner *pRmhalspecowner;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(KernelBus), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(KernelBus));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_KernelBus);
 
     pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object.createFlags = createFlags;
 
-    if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
+    // pParent must be a valid object that derives from a halspec owner class.
+    NV_ASSERT_OR_RETURN(pParent != NULL, NV_ERR_INVALID_ARGUMENT);
+
+    // Link the child into the parent unless flagged not to do so.
+    if (!(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
         objAddChild(pParentObj, &pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object);
@@ -997,16 +1405,25 @@ NV_STATUS __nvoc_objCreate_KernelBus(KernelBus **ppThis, Dynamic *pParent, NvU32
     status = __nvoc_ctor_KernelBus(pThis, pRmhalspecowner);
     if (status != NV_OK) goto __nvoc_objCreate_KernelBus_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_KernelBus_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(KernelBus));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

@@ -22,17 +22,17 @@
  */
 #include "gpu/gpu.h"
 #include "gpu/gpu_child_class_defs.h"
-#include "published/turing/tu102/dev_vm.h"
-#include "published/turing/tu102/hwproject.h"
+#include "gpu/bif/kernel_bif.h"
 #include "gpu/mem_sys/kern_mem_sys.h"
 #include "gpu/bus/kern_bus.h"
 #include "gpu/bif/kernel_bif.h"
 #include "gpu/mem_mgr/rm_page_size.h"
-#include "nverror.h"
 #include "jt.h"
 #include "gpu/falcon/kernel_falcon.h"
 #include "gpu/gsp/kernel_gsp.h"
 
+#include "published/turing/tu102/dev_vm.h"
+#include "published/turing/tu102/hwproject.h"
 #include "published/turing/tu102/dev_nv_xve.h"
 #include "published/turing/tu102/dev_gc6_island.h"
 #include "published/turing/tu102/dev_gc6_island_addendum.h"
@@ -74,6 +74,8 @@ gpuGetSriovCaps_TU102
     pParams->bSriovHeavyEnabled                    = gpuIsWarBug200577889SriovHeavyEnabled(pGpu);
     pParams->bEmulateVFBar0TlbInvalidationRegister = pGpu->getProperty(pGpu, PDB_PROP_GPU_BUG_3007008_EMULATE_VF_MMU_TLB_INVALIDATE);
     pParams->bClientRmAllocatedCtxBuffer           = gpuIsClientRmAllocatedCtxBufferEnabled(pGpu);
+    pParams->bNonPowerOf2ChannelCountSupported     = gpuIsNonPowerOf2ChannelCountSupported(pGpu);
+    pParams->bVfResizableBAR1Supported             = gpuIsVfResizableBAR1Supported(pGpu);
 
     return NV_OK;
 }
@@ -144,6 +146,7 @@ static const GPUCHILDPRESENT gpuChildrenPresent_TU102[] =
     GPU_CHILD_PRESENT(KernelFifo, 1),
     GPU_CHILD_PRESENT(KernelGmmu, 1),
     GPU_CHILD_PRESENT(KernelGraphics, 1),
+    GPU_CHILD_PRESENT(KernelHwpm, 1),
     GPU_CHILD_PRESENT(KernelMc, 1),
     GPU_CHILD_PRESENT(SwIntr, 1),
     GPU_CHILD_PRESENT(KernelNvlink, 1),
@@ -174,6 +177,7 @@ static const GPUCHILDPRESENT gpuChildrenPresent_TU104[] =
     GPU_CHILD_PRESENT(KernelFifo, 1),
     GPU_CHILD_PRESENT(KernelGmmu, 1),
     GPU_CHILD_PRESENT(KernelGraphics, 1),
+    GPU_CHILD_PRESENT(KernelHwpm, 1),
     GPU_CHILD_PRESENT(KernelMc, 1),
     GPU_CHILD_PRESENT(SwIntr, 1),
     GPU_CHILD_PRESENT(KernelNvlink, 1),
@@ -204,6 +208,7 @@ static const GPUCHILDPRESENT gpuChildrenPresent_TU106[] =
     GPU_CHILD_PRESENT(KernelFifo, 1),
     GPU_CHILD_PRESENT(KernelGmmu, 1),
     GPU_CHILD_PRESENT(KernelGraphics, 1),
+    GPU_CHILD_PRESENT(KernelHwpm, 1),
     GPU_CHILD_PRESENT(KernelMc, 1),
     GPU_CHILD_PRESENT(SwIntr, 1),
     GPU_CHILD_PRESENT(KernelNvlink, 1),
@@ -270,6 +275,78 @@ gpuJtVersionSanityCheck_TU102_EXIT:
     return status;
 }
 
+/*!
+ * @brief: Return base offset of register group
+ *
+ * @param[in]  pGpu          OBJGPU pointer
+ *             regBase       NvU32 value for requested register group
+ * @param[out] offset        NvU32 pointer to return base offset
+ *
+ * @returns NV_OK if the register group is found.
+ */
+NV_STATUS
+gpuGetRegBaseOffset_TU102(OBJGPU *pGpu, NvU32 regBase, NvU32 *pOffset)
+{
+    switch (regBase)
+    {
+        case NV_REG_BASE_USERMODE:
+        {
+            //
+            // Baremetal from Turing will not use the NV_USERMODE_*
+            // as - "NV_USERMODE is going away long term, and
+            // doesn't support any of the new remap
+            // type features". Since we would need the new features
+            // such as worksubmission doorbell register interrupting GSP,
+            // we will start using the physical registers through NV_VIRTUAL_FUNCTION
+            // even on host.
+            //
+            *pOffset = GPU_GET_VREG_OFFSET(pGpu, DRF_BASE(NV_VIRTUAL_FUNCTION));
+
+            return NV_OK;
+        }
+        default:
+        {
+
+            return NV_ERR_NOT_SUPPORTED;
+        }
+    }
+}
+
+/*!
+ * @brief Check if register being accessed is within guest BAR0 space.
+ *
+ * @param[in] pGpu   OBJGPU pointer
+ * @param[in] addr   Address being validated
+ */
+NV_STATUS
+gpuSanityCheckVirtRegAccess_TU102
+(
+    OBJGPU *pGpu,
+    NvU32   addr
+)
+{
+    // Not applicable in PV mode
+    if (IS_VIRTUAL_WITHOUT_SRIOV(pGpu))
+    {
+        return NV_OK;
+    }
+
+    if ((addr >= DEVICE_BASE(NV_PCFG)) &&
+        (addr < DEVICE_BASE(NV_PCFG) + PCIE_CONFIG_SPACE_SIZE))
+    {
+        return NV_OK;
+    }
+
+    // Check if address in NV_VIRTUAL_FUNCTION range, if not error out.
+    if ((addr < DRF_EXTENT(NV_VIRTUAL_FUNCTION_PRIV)) ||
+        ((addr >= DRF_BASE(NV_VIRTUAL_FUNCTION)) && (addr < DRF_EXTENT(NV_VIRTUAL_FUNCTION))))
+    {
+        return NV_OK;
+    }
+
+    return NV_ERR_INVALID_ADDRESS;
+}
+
 /*
  * @brief Function that checks if ECC error occurred by reading various count
  * registers/interrupt registers. This function is not floorsweeping-aware so
@@ -294,7 +371,7 @@ gpuCheckEccCounts_TU102
     // If counts > 0 or if poison interrupt pending, ECC error has occurred.
     if (((dramCount + ltcCount + mmuCount + pcieCount) != 0) || gpuCheckIfFbhubPoisonIntrPending_HAL(pGpu))
     {
-        NV_ERROR_LOG(pGpu, UNRECOVERABLE_ECC_ERROR_ESCAPE,
+        nvErrorLog_va((void *)pGpu, UNRECOVERABLE_ECC_ERROR_ESCAPE,
                       "An uncorrectable ECC error detected "
                       "(possible firmware handling failure) "
                       "DRAM:%d, LTC:%d, MMU:%d, PCIE:%d", dramCount, ltcCount, mmuCount, pcieCount);

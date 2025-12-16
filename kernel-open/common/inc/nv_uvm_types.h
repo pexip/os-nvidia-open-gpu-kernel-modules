@@ -104,6 +104,10 @@ typedef struct UvmGpuMemoryInfo_tag
     // Out: Set to TRUE, if the allocation is in sysmem.
     NvBool sysmem;
 
+    // Out: Set to TRUE, if this allocation is treated as EGM.
+    //      sysmem is also TRUE when egm is TRUE.
+    NvBool egm;
+
     // Out: Set to TRUE, if the allocation is a constructed
     //      under a Device or Subdevice.
     //      All permutations of sysmem and deviceDescendant are valid.
@@ -125,6 +129,10 @@ typedef struct UvmGpuMemoryInfo_tag
 
     // Out: Uuid of the GPU to which the allocation belongs.
     //      This is only valid if deviceDescendant is NV_TRUE.
+    //      When egm is NV_TRUE, this is also the UUID of the GPU
+    //      for which EGM is local.
+    //      If the GPU has SMC enabled, the UUID is the GI UUID.
+    //      Otherwise, it is the UUID for the physical GPU.
     //      Note: If the allocation is owned by a device in
     //      an SLI group and the allocation is broadcast
     //      across the SLI group, this UUID will be any one
@@ -259,6 +267,7 @@ typedef struct UvmGpuChannelInfo_tag
 
     // The errorNotifier is filled out when the channel hits an RC error.
     NvNotification    *errorNotifier;
+    NvNotification    *keyRotationNotifier;
 
     NvU32              hwRunlistId;
     NvU32              hwChannelId;
@@ -284,13 +293,13 @@ typedef struct UvmGpuChannelInfo_tag
 
     // GPU VAs of both GPFIFO and GPPUT are needed in Confidential Computing
     // so a channel can be controlled via another channel (SEC2 or WLC/LCIC)
-    NvU64             gpFifoGpuVa;
-    NvU64             gpPutGpuVa;
-    NvU64             gpGetGpuVa;
+    NvU64              gpFifoGpuVa;
+    NvU64              gpPutGpuVa;
+    NvU64              gpGetGpuVa;
     // GPU VA of work submission offset is needed in Confidential Computing
     // so CE channels can ring doorbell of other channels as required for
     // WLC/LCIC work submission
-    NvU64             workSubmissionOffsetGpuVa;
+    NvU64              workSubmissionOffsetGpuVa;
 } UvmGpuChannelInfo;
 
 typedef enum
@@ -332,7 +341,7 @@ typedef struct UvmGpuPagingChannelAllocParams_tag
 
 // The max number of Copy Engines supported by a GPU.
 // The gpu ops build has a static assert that this is the correct number.
-#define UVM_COPY_ENGINE_COUNT_MAX 10
+#define UVM_COPY_ENGINE_COUNT_MAX 64
 
 typedef struct
 {
@@ -538,6 +547,10 @@ typedef struct UvmGpuP2PCapsParams_tag
     // the GPUs are direct peers.
     NvU32 peerIds[2];
 
+    // Out: peerId[i] contains gpu[i]'s EGM peer id of gpu[1 - i]. Only defined
+    // if the GPUs are direct peers and EGM enabled in the system.
+    NvU32 egmPeerIds[2];
+
     // Out: UVM_LINK_TYPE
     NvU32 p2pLink;
 
@@ -582,16 +595,16 @@ typedef struct UvmGpuClientInfo_tag
 
 typedef enum
 {
-    UVM_GPU_CONF_COMPUTE_MODE_NONE,
-    UVM_GPU_CONF_COMPUTE_MODE_APM,
-    UVM_GPU_CONF_COMPUTE_MODE_HCC,
-    UVM_GPU_CONF_COMPUTE_MODE_COUNT
+    UVM_GPU_CONF_COMPUTE_MODE_NONE = 0,
+    UVM_GPU_CONF_COMPUTE_MODE_HCC = 2
 } UvmGpuConfComputeMode;
 
 typedef struct UvmGpuConfComputeCaps_tag
 {
     // Out: GPU's confidential compute mode
     UvmGpuConfComputeMode mode;
+    // Is key rotation enabled for UVM keys
+    NvBool bKeyRotationEnabled;
 } UvmGpuConfComputeCaps;
 
 #define UVM_GPU_NAME_LENGTH 0x40
@@ -601,7 +614,8 @@ typedef struct UvmGpuInfo_tag
     // Printable gpu name
     char name[UVM_GPU_NAME_LENGTH];
 
-    // Uuid of this gpu
+    // Uuid of the physical GPU or GI UUID if nvUvmInterfaceGetGpuInfo()
+    // requested information for a valid SMC partition.
     NvProcessorUuid uuid;
 
     // Gpu architecture; NV2080_CTRL_MC_ARCH_INFO_ARCHITECTURE_*
@@ -683,6 +697,16 @@ typedef struct UvmGpuInfo_tag
     // to NVSwitch peers.
     NvBool connectedToSwitch;
     NvU64 nvswitchMemoryWindowStart;
+
+    // local EGM properties
+    // NV_TRUE if EGM is enabled
+    NvBool   egmEnabled;
+
+    // Peer ID to reach local EGM when EGM is enabled
+    NvU8     egmPeerId;
+
+    // EGM base address to offset in the GMMU PTE entry for EGM mappings
+    NvU64    egmBaseAddr;
 } UvmGpuInfo;
 
 typedef struct UvmGpuFbInfo_tag
@@ -691,9 +715,10 @@ typedef struct UvmGpuFbInfo_tag
     // RM regions that are not registered with PMA either.
     NvU64 maxAllocatableAddress;
 
-    NvU32 heapSize;         // RAM in KB available for user allocations
-    NvU32 reservedHeapSize; // RAM in KB reserved for internal RM allocation
-    NvBool bZeroFb;         // Zero FB mode enabled.
+    NvU32 heapSize;          // RAM in KB available for user allocations
+    NvU32 reservedHeapSize;  // RAM in KB reserved for internal RM allocation
+    NvBool bZeroFb;          // Zero FB mode enabled.
+    NvU64 maxVidmemPageSize; // Largest GPU page size to access vidmem.
 } UvmGpuFbInfo;
 
 typedef struct UvmGpuEccInfo_tag
@@ -771,14 +796,14 @@ typedef NV_STATUS (*uvmEventResume_t) (void);
 /*******************************************************************************
     uvmEventStartDevice
     This function will be called by the GPU driver once it has finished its
-    initialization to tell the UVM driver that this GPU has come up.
+    initialization to tell the UVM driver that this physical GPU has come up.
 */
 typedef NV_STATUS (*uvmEventStartDevice_t) (const NvProcessorUuid *pGpuUuidStruct);
 
 /*******************************************************************************
     uvmEventStopDevice
-    This function will be called by the GPU driver to let UVM know that a GPU
-    is going down.
+    This function will be called by the GPU driver to let UVM know that a
+    physical GPU is going down.
 */
 typedef NV_STATUS (*uvmEventStopDevice_t) (const NvProcessorUuid *pGpuUuidStruct);
 
@@ -809,7 +834,7 @@ typedef NV_STATUS (*uvmEventServiceInterrupt_t) (void *pDeviceObject,
 /*******************************************************************************
     uvmEventIsrTopHalf_t
     This function will be called by the GPU driver to let UVM know
-    that an interrupt has occurred.
+    that an interrupt has occurred on the given physical GPU.
 
     Returns:
         NV_OK if the UVM driver handled the interrupt
@@ -916,11 +941,6 @@ typedef struct UvmGpuFaultInfo_tag
         // CSL context used for performing decryption of replayable faults when
         // Confidential Computing is enabled.
         UvmCslContext cslCtx;
-
-        // Indicates whether UVM owns the replayable fault buffer.
-        // The value of this field is always NV_TRUE When Confidential Computing
-        // is disabled.
-        NvBool bUvmOwnsHwFaultBuffer;
     } replayable;
     struct
     {
@@ -1066,5 +1086,22 @@ typedef enum UvmCslOperation
     UVM_CSL_OPERATION_ENCRYPT,
     UVM_CSL_OPERATION_DECRYPT
 } UvmCslOperation;
+
+typedef enum UVM_KEY_ROTATION_STATUS {
+    // Key rotation complete/not in progress
+    UVM_KEY_ROTATION_STATUS_IDLE = 0,
+    // RM is waiting for clients to report their channels are idle for key rotation
+    UVM_KEY_ROTATION_STATUS_PENDING = 1,
+    // Key rotation is in progress
+    UVM_KEY_ROTATION_STATUS_IN_PROGRESS = 2,
+    // Key rotation timeout failure, RM will RC non-idle channels.
+    // UVM should never see this status value.
+    UVM_KEY_ROTATION_STATUS_FAILED_TIMEOUT = 3,
+    // Key rotation failed because upper threshold was crossed, RM will RC non-idle channels
+    UVM_KEY_ROTATION_STATUS_FAILED_THRESHOLD = 4,
+    // Internal RM failure while rotating keys for a certain channel, RM will RC the channel.
+    UVM_KEY_ROTATION_STATUS_FAILED_ROTATION = 5,
+    UVM_KEY_ROTATION_STATUS_MAX_COUNT = 6,
+} UVM_KEY_ROTATION_STATUS;
 
 #endif // _NV_UVM_TYPES_H_

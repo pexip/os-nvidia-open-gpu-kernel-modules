@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -34,42 +34,11 @@
 #include "ctrl/ctrl2080/ctrl2080perf_cf.h"
 #include "utils/nvassert.h"
 
-/*!
- * Constrcutor for kccu class.
- *
- * @param[in] pGpu          GPU object pointer.
- * @param[in] pKernelCcu    KernelCcu object pointer
- * @param[in] engDesc       KernelCcu Engine descriptor
- *
- * @return  NV_OK  If successfully constructed.
- */
-NV_STATUS
-kccuConstructEngine_IMPL
-(
-   OBJGPU        *pGpu,
-   KernelCcu     *pKernelCcu,
-   ENGDESCRIPTOR engDesc
-)
+NV_STATUS kccuConstructEngine_IMPL(OBJGPU *pGpu,
+                                   KernelCcu *pKernelCcu,
+                                   ENGDESCRIPTOR engDesc)
 {
-    NV_PRINTF(LEVEL_INFO, "KernelCcu: Constructor\n");
-
     return NV_OK;
-}
-
-/*!
- * Destructor
- *
- * @param[in]  pKernelCcu  KernelCcu object pointer
- */
-void
-kccuDestruct_IMPL
-(
-    KernelCcu *pKernelCcu
-)
-{
-    NV_PRINTF(LEVEL_INFO, "KernelCcu: Destructor\n");
-
-    return;
 }
 
 /*!
@@ -96,8 +65,11 @@ _kccuAllocMemory
 {
     NV_STATUS status            = NV_OK;
     MEMORY_DESCRIPTOR *pMemDesc = NULL;
+    NvU64 flags                 = MEMDESC_FLAGS_USER_READ_ONLY;
 
     NV_PRINTF(LEVEL_INFO, "KernelCcu: Allocate memory for class members and shared buffer\n");
+
+    flags |= MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY;
 
     // Allocate memory & init the KernelCcu class members to store shared buffer info
     pKernelCcu->shrBuf[idx].pCounterDstInfo = portMemAllocNonPaged(sizeof(CCU_SHRBUF_INFO));
@@ -114,8 +86,7 @@ _kccuAllocMemory
 
     // Create a memory descriptor data structure for the shared buffer
     status = memdescCreate(&pKernelCcu->pMemDesc[idx], pGpu, shrBufSize, 0, NV_MEMORY_CONTIGUOUS,
-                           ADDR_SYSMEM, NV_MEMORY_CACHED,
-                           MEMDESC_FLAGS_USER_READ_ONLY);
+                           ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
     if (status != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR, "CCU memdescCreate failed for(%u) with status: 0x%x\n", idx, status);
@@ -130,7 +101,8 @@ _kccuAllocMemory
     }
 
     // Allocate physical storage for the memory descriptor
-    status = memdescAlloc(pMemDesc);
+    memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_55, 
+                    pMemDesc);
     if (status != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR, "CCU memdescAlloc failed for(%u) with status: 0x%x\n", idx, status);
@@ -398,11 +370,6 @@ NV_STATUS kccuStateLoad_IMPL
 
     NV_PRINTF(LEVEL_INFO, "KernelCcu: State load \n");
 
-    if (IS_VIRTUAL(pGpu))
-    {
-        return NV_ERR_NOT_SUPPORTED;
-    }
-
     // Create device shared buffer
     status = _kccuInitDevSharedBuffer(pGpu, pKernelCcu);
     if (status != NV_OK)
@@ -479,11 +446,6 @@ NV_STATUS kccuMemDescGetForShrBufId_IMPL
 {
     NV_PRINTF(LEVEL_INFO, "KernelCcu: Get memdesc for idx(%u) \n", idx);
 
-    if (IS_VIRTUAL(pGpu))
-    {
-        return NV_ERR_NOT_SUPPORTED;
-    }
-
     if (idx >= CCU_SHRBUF_COUNT_MAX)
     {
         NV_PRINTF(LEVEL_ERROR, "CCU memdesc get failed for input idx(%u). Invalid index.\n",
@@ -517,11 +479,6 @@ NV_STATUS kccuMemDescGetForSwizzId_IMPL
 )
 {
     NvU32 idx = 0;
-
-    if (IS_VIRTUAL(pGpu))
-    {
-        return NV_ERR_NOT_SUPPORTED;
-    }
 
     for (idx = CCU_MIG_SHRBUF_ID_START; idx < CCU_SHRBUF_COUNT_MAX; idx++)
     {
@@ -685,11 +642,6 @@ NV_STATUS kccuMemDescGetForComputeInst_IMPL
 )
 {
     NvU32 idx;
-
-    if (IS_VIRTUAL(pGpu))
-    {
-        return NV_ERR_NOT_SUPPORTED;
-    }
 
     for (idx = CCU_MIG_SHRBUF_ID_START; idx < CCU_SHRBUF_COUNT_MAX; idx++)
     {

@@ -1,5 +1,34 @@
 # Changelog
 
+## Release 550 Entries
+
+#### Added
+
+- Added vGPU Host and vGPU Guest support. For vGPU Host, please refer to the README.vgpu packaged in the vGPU Host Package for more details.
+
+### [550.40.07] 2024-01-24
+
+#### Fixed
+
+- Set INSTALL_MOD_DIR only if it's not defined, [#570](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/570) by @keelung-yang
+## Release 545 Entries
+
+#### Fixed
+
+- The brightness control of NVIDIA seems to be broken, [#573](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/573)
+
+### [545.29.02] 2023-10-31
+
+### [545.23.06] 2023-10-17
+
+#### Fixed
+
+- Fix always-false conditional, [#493](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/493) by @meme8383
+
+#### Added
+
+- Added beta-quality support for GeForce and Workstation GPUs. Please see the "Open Linux Kernel Modules" chapter in the NVIDIA GPU driver end user README for details.
+
 ## Release 535 Entries
 
 ### [535.179] 2024-05-09

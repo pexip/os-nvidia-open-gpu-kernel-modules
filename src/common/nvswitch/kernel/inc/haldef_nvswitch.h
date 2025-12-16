@@ -47,6 +47,36 @@
 //     _op(return type, function name, (parameter list), _arch)
 //
 
+#define NVSWITCH_HAL_FUNCTION_LIST_FEATURE_0(_op, _arch) \
+    _op(NvBool,    nvswitch_is_cci_supported,               (nvswitch_device *device), _arch)  \
+    _op(void,      nvswitch_cci_setup_gpio_pins,            (nvswitch_device *device), _arch)  \
+    _op(NvlStatus, nvswitch_cci_get_cci_link_mode,          (nvswitch_device *device, NvU32 linkNumber, NvU64 *mode), _arch)  \
+    _op(NvlStatus, nvswitch_cci_discovery,                  (nvswitch_device *device), _arch)  \
+    _op(void,      nvswitch_cci_get_xcvrs_present,          (nvswitch_device *device, NvU32 *pMaskPresent), _arch)  \
+    _op(void,      nvswitch_cci_get_xcvrs_present_change,   (nvswitch_device *device, NvU32 *pMaskPresentChange), _arch)  \
+    _op(NvlStatus, nvswitch_cci_reset,                      (nvswitch_device *device), _arch)  \
+    _op(NvlStatus, nvswitch_cci_reset_links,                (nvswitch_device *device, NvU64 linkMask), _arch)  \
+    _op(NvlStatus, nvswitch_cci_ports_cpld_read,            (nvswitch_device *device, NvU8 reg, NvU8 *pData), _arch)  \
+    _op(NvlStatus, nvswitch_cci_ports_cpld_write,           (nvswitch_device *device, NvU8 reg, NvU8 Data), _arch)  \
+    _op(void,      nvswitch_cci_update_link_state_led,      (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_cci_set_xcvr_led_state,         (nvswitch_device *device, NvU32 client, NvU32 osfp, NvBool bSetLocate), _arch) \
+    _op(NvlStatus, nvswitch_cci_get_xcvr_led_state,         (nvswitch_device *device, NvU32 client, NvU32 osfp, NvU8 *pLedState), _arch) \
+    _op(NvlStatus, nvswitch_cci_setup_onboard,              (nvswitch_device *device), _arch)  \
+    _op(NvlStatus, nvswitch_cci_setup_module_path,          (nvswitch_device *device, NvU32 client, NvU32 osfp), _arch)  \
+    _op(NvlStatus, nvswitch_cci_module_access_cmd,          (nvswitch_device *device, NvU32 client, NvU32 osfp, NvU32 addr, NvU32 length, \
+                                                                                  NvU8 *pValArray, NvBool bRead, NvBool bBlk), _arch)  \
+    _op(NvlStatus, nvswitch_cci_apply_control_set_values,   (nvswitch_device *device, NvU32 client, NvU32 moduleMask), _arch)  \
+    _op(NvlStatus, nvswitch_cci_reset_and_drain_links,      (nvswitch_device *device, NvU64 link_mask, NvBool bForced), _arch)  \
+    _op(NvlStatus, nvswitch_cci_cmis_cage_bezel_marking,    (nvswitch_device *device, NvU8 cageIndex, char *pBezelMarking), _arch)  \
+    _op(NvlStatus, nvswitch_cci_get_grading_values,         (nvswitch_device *device, NvU32 client, NvU32 linkId, NvU8 *laneMask, NVSWITCH_CCI_GRADING_VALUES *pGrading), _arch) \
+    _op(NvlStatus, nvswitch_cci_get_xcvr_mask,              (nvswitch_device *device, NvU32 *pMaskAll, NvU32 *pMaskPresent), _arch) \
+    _op(void,      nvswitch_cci_set_xcvr_present,           (nvswitch_device *device, NvU32 maskPresent), _arch) \
+    _op(void,      nvswitch_cci_destroy,                    (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_get_soe_heartbeat,         (nvswitch_device *device, NVSWITCH_GET_SOE_HEARTBEAT_PARAMS *p), _arch) \
+    _op(void,      nvswitch_update_link_state_led,          (nvswitch_device *device), _arch) \
+    _op(void,      nvswitch_led_shutdown,                   (nvswitch_device *device), _arch) \
+
+
 #define NVSWITCH_HAL_FUNCTION_LIST(_op, _arch)                                          \
     _op(NvlStatus, nvswitch_initialize_device_state, (nvswitch_device *device), _arch)  \
     _op(void,      nvswitch_destroy_device_state,    (nvswitch_device *device), _arch)  \
@@ -68,7 +98,7 @@
     _op(NvlStatus, nvswitch_lib_service_interrupts,  (nvswitch_device *device), _arch)  \
     _op(NvU64,     nvswitch_hw_counter_read_counter, (nvswitch_device *device), _arch)  \
     _op(NvBool,    nvswitch_is_link_in_use,          (nvswitch_device *device, NvU32 link_id), _arch)  \
-    _op(NvlStatus, nvswitch_reset_and_drain_links,   (nvswitch_device *device, NvU64 link_mask), _arch)  \
+    _op(NvlStatus, nvswitch_reset_and_drain_links,   (nvswitch_device *device, NvU64 link_mask, NvBool bForced), _arch)  \
     _op(NvlStatus, nvswitch_ctrl_get_info,           (nvswitch_device *device, NVSWITCH_GET_INFO *p), _arch)  \
     _op(NvlStatus, nvswitch_ctrl_get_nvlink_status,  (nvswitch_device *device, NVSWITCH_GET_NVLINK_STATUS_PARAMS *ret), _arch)  \
     _op(NvlStatus, nvswitch_ctrl_get_counters,       (nvswitch_device *device, NVSWITCH_NVLINK_GET_COUNTERS_PARAMS *ret), _arch)  \
@@ -183,6 +213,7 @@
     _op(NvU32,     nvswitch_get_eng_count,  (nvswitch_device *device, NVSWITCH_ENGINE_ID eng_id, NvU32 eng_bcast), _arch)  \
     _op(NvU32,     nvswitch_eng_rd,         (nvswitch_device *device, NVSWITCH_ENGINE_ID eng_id, NvU32 eng_bcast, NvU32 eng_instance, NvU32 offset), _arch)  \
     _op(void,      nvswitch_eng_wr,         (nvswitch_device *device, NVSWITCH_ENGINE_ID eng_id, NvU32 eng_bcast, NvU32 eng_instance, NvU32 offset, NvU32 data), _arch)  \
+    _op(void,      nvswitch_reg_write_32,      (nvswitch_device *device, NvU32 offset, NvU32 data), _arch) \
     _op(NvU32,     nvswitch_get_link_eng_inst,  (nvswitch_device *device, NvU32 link_id, NVSWITCH_ENGINE_ID eng_id), _arch)  \
     _op(void *,    nvswitch_alloc_chipdevice,   (nvswitch_device *device), _arch)  \
     _op(NvlStatus, nvswitch_init_thermal,       (nvswitch_device *device), _arch)  \
@@ -234,9 +265,40 @@
     _op(NvlStatus, nvswitch_ctrl_therm_read_voltage, (nvswitch_device *device, NVSWITCH_CTRL_GET_VOLTAGE_PARAMS *info), _arch) \
     _op(void,      nvswitch_soe_init_l2_state,       (nvswitch_device *device), _arch) \
     _op(NvlStatus, nvswitch_ctrl_therm_read_power, (nvswitch_device *device, NVSWITCH_GET_POWER_PARAMS *info), _arch) \
+    _op(NvlStatus, nvswitch_get_board_id, (nvswitch_device *device, NvU16 *boardId), _arch) \
     _op(NvBool,    nvswitch_does_link_need_termination_enabled, (nvswitch_device *device, nvlink_link *link), _arch) \
     _op(NvlStatus, nvswitch_link_termination_setup, (nvswitch_device *device, nvlink_link *link), _arch) \
     _op(NvlStatus, nvswitch_check_io_sanity, (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_get_link_l1_capability, (nvswitch_device *device, NvU32 linkNum, NvBool *isL1Capable), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_get_link_l1_threshold, (nvswitch_device *device, NvU32 linkNum, NvU32 *lpThreshold), _arch) \
+    _op(NvlStatus, nvswitch_ctrl_set_link_l1_threshold, (nvlink_link *link, NvU32 lpEntryThreshold), _arch) \
+    _op(void,      nvswitch_fsp_update_cmdq_head_tail, (nvswitch_device  *device, NvU32 queueHead, NvU32 queueTail), _arch) \
+    _op(void,      nvswitch_fsp_get_cmdq_head_tail, (nvswitch_device  *device, NvU32 *pQueueHead, NvU32 *pQueueTail), _arch) \
+    _op(void,      nvswitch_fsp_update_msgq_head_tail, (nvswitch_device *device, NvU32 msgqHead, NvU32 msgqTail), _arch) \
+    _op(void,      nvswitch_fsp_get_msgq_head_tail, (nvswitch_device *device, NvU32 *pMsgqHead, NvU32 *pMsgqTail), _arch) \
+    _op(NvU32,     nvswitch_fsp_get_channel_size, (nvswitch_device *device), _arch) \
+    _op(NvU8,      nvswitch_fsp_nvdm_to_seid, (nvswitch_device *device, NvU8 nvdmType), _arch) \
+    _op(NvU32,     nvswitch_fsp_create_mctp_header, (nvswitch_device *device, NvU8 som, NvU8 eom, NvU8 seid, NvU8 seq), _arch) \
+    _op(NvU32,     nvswitch_fsp_create_nvdm_header, (nvswitch_device *device, NvU32 nvdmType), _arch) \
+    _op(NvlStatus, nvswitch_fsp_validate_mctp_payload_header, (nvswitch_device *device, NvU8 *pBuffer, NvU32 size), _arch) \
+    _op(NvlStatus, nvswitch_fsp_process_nvdm_msg, (nvswitch_device  *device, NvU8 *pBuffer, NvU32 size), _arch) \
+    _op(NvlStatus, nvswitch_fsp_process_cmd_response, (nvswitch_device *device, NvU8 *pBuffer, NvU32 size), _arch) \
+    _op(NvlStatus, nvswitch_fsp_config_ememc, (nvswitch_device *device, NvU32 offset, NvBool bAincw, NvBool bAincr), _arch) \
+    _op(NvlStatus, nvswitch_fsp_write_to_emem, (nvswitch_device *device, NvU8 *pBuffer, NvU32 size), _arch) \
+    _op(NvlStatus, nvswitch_fsp_read_from_emem, (nvswitch_device *device, NvU8 *pBuffer, NvU32 size), _arch) \
+    _op(NvlStatus, nvswitch_fsp_error_code_to_nvlstatus_map, (nvswitch_device *device, NvU32 errorCode), _arch) \
+    _op(NvlStatus, nvswitch_fsp_get_packet_info, (nvswitch_device *device, NvU8 *pBuffer, NvU32 size, NvU8 *pPacketState, NvU8 *pTag), _arch) \
+    _op(NvlStatus, nvswitch_fsprpc_get_caps, (nvswitch_device *device, NVSWITCH_FSPRPC_GET_CAPS_PARAMS *params), _arch) \
+    _op(NvlStatus, nvswitch_detect_tnvl_mode, (nvswitch_device *device), _arch) \
+    _op(NvBool,    nvswitch_is_tnvl_mode_enabled, (nvswitch_device *device), _arch) \
+    _op(NvBool,    nvswitch_is_tnvl_mode_locked, (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_tnvl_get_attestation_certificate_chain, (nvswitch_device *device, NVSWITCH_GET_ATTESTATION_CERTIFICATE_CHAIN_PARAMS *params), _arch) \
+    _op(NvlStatus, nvswitch_tnvl_get_attestation_report, (nvswitch_device *device, NVSWITCH_GET_ATTESTATION_REPORT_PARAMS *params), _arch) \
+    _op(NvlStatus, nvswitch_tnvl_send_fsp_lock_config, (nvswitch_device *device), _arch) \
+    _op(NvlStatus, nvswitch_tnvl_get_status, (nvswitch_device *device, NVSWITCH_GET_TNVL_STATUS_PARAMS *params), _arch) \
+    _op(NvlStatus, nvswitch_send_tnvl_prelock_cmd, (nvswitch_device *device), _arch) \
+    _op(void,      nvswitch_tnvl_disable_interrupts, (nvswitch_device *device), _arch) \
+    NVSWITCH_HAL_FUNCTION_LIST_FEATURE_0(_op, _arch) \
 
 #define NVSWITCH_HAL_FUNCTION_LIST_LS10(_op, _arch) \
     _op(NvlStatus, nvswitch_launch_ALI, (nvswitch_device *device), _arch) \

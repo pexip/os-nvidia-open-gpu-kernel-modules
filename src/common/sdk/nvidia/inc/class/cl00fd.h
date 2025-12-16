@@ -34,7 +34,20 @@
 // Source file:      class/cl00fd.finn
 //
 
-#define NV_MEMORY_MULTICAST_FABRIC                (0xfdU) /* finn: Evaluated from "NV00FD_ALLOCATION_PARAMETERS_MESSAGE_ID" */
+#include "cl00e0.h"
+
+
+
+#define NV_MEMORY_MULTICAST_FABRIC                               (0xfdU) /* finn: Evaluated from "NV00FD_ALLOCATION_PARAMETERS_MESSAGE_ID" */
+
+/*
+ *  expPacket [IN]
+ *    Export object (see cl00e0.h) identifier from which memory will be imported.
+ *
+ *  index [IN]
+ *    Index of the export object to which the memory object is attached.
+ */
+
 
 /*
  *  alignment [IN]
@@ -48,8 +61,7 @@
  *    Requested page size. Can be any of the NV_MEMORY_MULTICAST_FABRIC_PAGE_SIZE_*
  *
  *  allocFlags [IN]
- *    Reserved for future use
- *    Clients should pass 0 as of now.
+ *     Should be one of NV_MEMORY_MULTICAST_FABRIC_ALLOC_FLAGS_*
  *
  *  numGpus [IN]
  *    Number of unique GPUs to be attached.
@@ -58,16 +70,29 @@
  *    Optional OS event handle created with NvRmAllocOsEvent().
  */
 
-#define NV_MEMORY_MULTICAST_FABRIC_PAGE_SIZE_512M 0x20000000
+#define NV_MEMORY_MULTICAST_FABRIC_PAGE_SIZE_512M                0x20000000
+
+/*
+ * This flag must be passed if the object is created using export packet. Note
+ * when this flag is provided, the input params: alignment, allocSize,
+ * numGpus, pageSize won't be honored.
+ */
+#define NV_MEMORY_MULTICAST_FABRIC_ALLOC_FLAGS_USE_EXPORT_PACKET 0x00000001
+
+
 
 #define NV00FD_ALLOCATION_PARAMETERS_MESSAGE_ID (0x00fdU)
 
 typedef struct NV00FD_ALLOCATION_PARAMETERS {
+    NV_EXPORT_MEM_PACKET expPacket;
+    NvU16                index;
+
+
     NV_DECLARE_ALIGNED(NvU64 alignment, 8);
     NV_DECLARE_ALIGNED(NvU64 allocSize, 8);
-    NvU32 pageSize;
-    NvU32 allocFlags;
-    NvU32 numGpus;
+    NvU32                pageSize;
+    NvU32                allocFlags;
+    NvU32                numGpus;
     NV_DECLARE_ALIGNED(NvP64 pOsEvent, 8);
 } NV00FD_ALLOCATION_PARAMETERS;
 

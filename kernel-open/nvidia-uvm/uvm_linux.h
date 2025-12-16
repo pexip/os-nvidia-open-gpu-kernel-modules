@@ -228,47 +228,6 @@ static inline const struct cpumask *uvm_cpumask_of_node(int node)
 
 #define NV_UVM_GFP_FLAGS (GFP_KERNEL | __GFP_NOMEMALLOC)
 
-// Develop builds define DEBUG but enable optimization
-#if defined(DEBUG) && !defined(NVIDIA_UVM_DEVELOP)
-  // Wrappers for functions not building correctly without optimizations on,
-  // implemented in uvm_debug_optimized.c. Notably the file is only built for
-  // debug builds, not develop or release builds.
-
-  // Unoptimized builds of atomic_xchg() hit a BUILD_BUG() on arm64 as it relies
-  // on __xchg being completely inlined:
-  //   /usr/src/linux-3.12.19/arch/arm64/include/asm/cmpxchg.h:67:3: note: in expansion of macro 'BUILD_BUG'
-  //
-  // Powerppc hits a similar issue, but ends up with an undefined symbol:
-  //   WARNING: "__xchg_called_with_bad_pointer" [...] undefined!
-  int nv_atomic_xchg(atomic_t *val, int new);
-
-  // Same problem as atomic_xchg() on powerppc:
-  //   WARNING: "__cmpxchg_called_with_bad_pointer" [...] undefined!
-  int nv_atomic_cmpxchg(atomic_t *val, int old, int new);
-
-  // Same problem as atomic_xchg() on powerppc:
-  //   WARNING: "__cmpxchg_called_with_bad_pointer" [...] undefined!
-  long nv_atomic_long_cmpxchg(atomic_long_t *val, long old, long new);
-
-  // This Linux kernel commit:
-  // 2016-08-30  0d025d271e55f3de21f0aaaf54b42d20404d2b23
-  // leads to build failures on x86_64, when compiling without optimization. Avoid
-  // that problem, by providing our own builds of copy_from_user / copy_to_user,
-  // for debug (non-optimized) UVM builds. Those are accessed via these
-  // nv_copy_to/from_user wrapper functions.
-  //
-  // Bug 1849583 has further details.
-  unsigned long nv_copy_from_user(void *to, const void __user *from, unsigned long n);
-  unsigned long nv_copy_to_user(void __user *to, const void *from, unsigned long n);
-
-#else
-  #define nv_atomic_xchg            atomic_xchg
-  #define nv_atomic_cmpxchg         atomic_cmpxchg
-  #define nv_atomic_long_cmpxchg    atomic_long_cmpxchg
-  #define nv_copy_to_user           copy_to_user
-  #define nv_copy_from_user         copy_from_user
-#endif
-
 #ifndef NV_ALIGN_DOWN
 #define NV_ALIGN_DOWN(v,g) ((v) & ~((g) - 1))
 #endif
@@ -357,6 +316,47 @@ static inline NvU64 NV_GETTIME(void)
         for ((bit) = find_next_zero_bit((addr), (size), (bit));     \
              (bit) < (size);                                        \
              (bit) = find_next_zero_bit((addr), (size), (bit) + 1))
+#endif
+
+#if !defined(NV_FIND_NEXT_BIT_WRAP_PRESENT)
+    static inline unsigned long find_next_bit_wrap(const unsigned long *addr, unsigned long size, unsigned long offset)
+    {
+        unsigned long bit = find_next_bit(addr, size, offset);
+
+        if (bit < size)
+            return bit;
+
+        bit = find_first_bit(addr, offset);
+        return bit < offset ? bit : size;
+    }
+#endif
+
+// for_each_set_bit_wrap and __for_each_wrap were introduced in v6.1-rc1
+// by commit 4fe49b3b97c2640147c46519c2a6fdb06df34f5f
+#if !defined(for_each_set_bit_wrap)
+static inline unsigned long __for_each_wrap(const unsigned long *bitmap,
+                                            unsigned long size,
+                                            unsigned long start,
+                                            unsigned long n)
+{
+    unsigned long bit;
+
+    if (n > start) {
+        bit = find_next_bit(bitmap, size, n);
+        if (bit < size)
+            return bit;
+
+        n = 0;
+    }
+
+    bit = find_next_bit(bitmap, start, n);
+    return bit < start ? bit : size;
+}
+
+#define for_each_set_bit_wrap(bit, addr, size, start)                   \
+    for ((bit) = find_next_bit_wrap((addr), (size), (start));           \
+         (bit) < (size);                                                \
+         (bit) = __for_each_wrap((addr), (size), (start), (bit) + 1))
 #endif
 
 // Added in 2.6.24
@@ -590,4 +590,5 @@ static inline pgprot_t uvm_pgprot_decrypted(pgprot_t prot)
   #include <asm/page.h>
   #define page_to_virt(x)    __va(PFN_PHYS(page_to_pfn(x)))
 #endif
+
 #endif // _UVM_LINUX_H

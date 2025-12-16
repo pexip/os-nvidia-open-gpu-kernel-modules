@@ -21,9 +21,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-// FIXME XXX
-#define NVOC_KERNEL_NVLINK_H_PRIVATE_ACCESS_ALLOWED
-
 #include "core/system.h"
 #include "gpu_mgr/gpu_mgr.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
@@ -100,7 +97,7 @@ p2pGetCaps
     // The classes like NV50_P2P, NV50_THIRD_PARTY_P2P depends on direct P2P
     // connectivity, hence the check.
     //
-    if (!((connectivity == P2P_CONNECTIVITY_PCIE) ||
+    if (!((connectivity == P2P_CONNECTIVITY_PCIE_PROPRIETARY) ||
           (connectivity == P2P_CONNECTIVITY_PCIE_BAR1) ||
           (connectivity == P2P_CONNECTIVITY_NVLINK) ||
           (connectivity == P2P_CONNECTIVITY_C2C)))
@@ -576,43 +573,20 @@ _p2pCapsGetHostSystemStatusOverPcieBar1
 )
 {
     OBJSYS *pSys = SYS_GET_INSTANCE();
-    NvU32 cpuFamily = DRF_VAL(0000_CTRL, _SYSTEM, _CPU_FAMILY, pSys->cpuInfo.family);
 
-    if (bCommonPciSwitchFound)
+    *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_OK;
+
+    if (bCommonPciSwitchFound ||
+        (pSys->cpuInfo.type == NV0000_CTRL_SYSTEM_CPU_TYPE_RYZEN) ||
+        (pSys->cpuInfo.type == NV0000_CTRL_SYSTEM_CPU_TYPE_XEON_SPR))
     {
-        // Both of GPUs are on the same PCIE switch
-        *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_OK;
         *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_OK;
-
-        NV_PRINTF(LEVEL_INFO, "A common switch detected\n");
-    }
-    else if (cpuFamily == NV0000_CTRL_SYSTEM_CPU_ID_AMD_FAMILY)
-    {
-        *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_OK;
-
-        if (pSys->cpuInfo.type == NV0000_CTRL_SYSTEM_CPU_TYPE_RYZEN)
-            *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_OK;
-        else
-            *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_NOT_SUPPORTED;
-
-        NV_PRINTF(LEVEL_INFO, "AMD CPU detected\n");
-    }
-    else if (cpuFamily == NV0000_CTRL_SYSTEM_CPU_ID_INTEL_FAMILY)
-    {
-        *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_OK;
-        *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_NOT_SUPPORTED;
-
-        NV_PRINTF(LEVEL_INFO, "Intel CPU detected\n");
     }
     else
     {
-        *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_NOT_SUPPORTED;
-        *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_NOT_SUPPORTED;
-
-        NV_PRINTF(LEVEL_INFO, "Unsupported HW config\n");
+        *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_CHIPSET_NOT_SUPPORTED;
+        NV_PRINTF(LEVEL_INFO, "Unrecognized CPU. Read Cap is disabled\n");
     }
-
-    NV_PRINTF(LEVEL_INFO, "WriteCap 0x%x ReadCap 0x%x\n", *pP2PWriteCapStatus, *pP2PReadCapStatus);
 
     return NV_OK;
 }
@@ -649,6 +623,13 @@ _kp2pCapsGetStatusOverPcieBar1
         return NV_ERR_NOT_SUPPORTED;
     }
 
+    // Check if any overrides are enabled.
+    if (_kp2pCapsCheckStatusOverridesForPcie(gpuMask, pP2PWriteCapStatus,
+                                            pP2PReadCapStatus))
+    {
+        return NV_OK;
+    }
+
     //
     // Re-initialize to check loop back configuration if only single GPU in
     // requested mask.
@@ -673,10 +654,10 @@ _kp2pCapsGetStatusOverPcieBar1
     if (*pP2PReadCapStatus == NV0000_P2P_CAPS_STATUS_OK)
         *pP2PReadCapStatus = readCapStatus;
 
-    if ((*pP2PReadCapStatus != NV0000_P2P_CAPS_STATUS_OK) &&
+    if ((*pP2PReadCapStatus != NV0000_P2P_CAPS_STATUS_OK) ||
         (*pP2PWriteCapStatus != NV0000_P2P_CAPS_STATUS_OK))
     {
-        // return not supported if it does not support any operation
+        // return not supported if it does not support both operations
         return NV_ERR_NOT_SUPPORTED;
     }
 
@@ -752,7 +733,7 @@ p2pGetCapsStatus
     while ((pGpu = gpumgrGetNextGpu(gpuMask, &gpuInstance)) != NULL)
     {
         pKernelNvlink = GPU_GET_KERNEL_NVLINK(pGpu);
-        if (pKernelNvlink != NULL && pKernelNvlink->discoveredLinks != 0 &&
+        if (pKernelNvlink != NULL && knvlinkGetDiscoveredLinkMask(pGpu, pKernelNvlink) != 0 &&
             (pSys->getProperty(pSys, PDB_PROP_SYS_NVSWITCH_IS_PRESENT) ||
              knvlinkIsNvswitchProxyPresent(pGpu, pKernelNvlink) ||
              GPU_IS_NVSWITCH_DETECTED(pGpu)))
@@ -791,7 +772,7 @@ p2pGetCapsStatus
             NvU8 bar1P2PWriteCapStatus = *pP2PWriteCapStatus;
             NvU8 bar1P2PReadCapStatus = *pP2PReadCapStatus;
 
-            *pConnectivity = P2P_CONNECTIVITY_PCIE;
+            *pConnectivity = P2P_CONNECTIVITY_PCIE_PROPRIETARY;
 
             if (_kp2pCapsGetStatusOverPcieBar1(gpuMask, &bar1P2PWriteCapStatus,
                     &bar1P2PReadCapStatus, bCommonSwitchFound) == NV_OK)

@@ -24,6 +24,7 @@
 #define NVOC_KERNEL_GRAPHICS_H_PRIVATE_ACCESS_ALLOWED
 
 
+#include "rmconfig.h"
 
 #include "kernel/gpu/gr/kernel_graphics_manager.h"
 #include "kernel/gpu/gr/kernel_graphics.h"
@@ -41,6 +42,7 @@
 #include "kernel/gpu/intr/engine_idx.h"
 #include "gpu/mem_mgr/virt_mem_allocator.h"
 #include "gpu/mmu/kern_gmmu.h"
+#include "platform/sli/sli.h"
 #include "rmapi/rs_utils.h"
 #include "rmapi/client.h"
 
@@ -153,7 +155,7 @@ kgraphicsConstructEngine_IMPL
             NvU32 override;
         } instlocOverrides[] =
         {
-            { GR_CTX_BUFFER_MAIN,      DRF_VAL(_REG_STR_RM, _INST_LOC, _GRCTX, pGpu->instLocOverrides) },
+            { GR_CTX_BUFFER_MAIN,      DRF_VAL(_REG_STR_RM, _INST_LOC,   _GRCTX, pGpu->instLocOverrides) },
             { GR_CTX_BUFFER_PATCH,     DRF_VAL(_REG_STR_RM, _INST_LOC_2, _CTX_PATCH, pGpu->instLocOverrides2) },
             { GR_CTX_BUFFER_ZCULL,     DRF_VAL(_REG_STR_RM, _INST_LOC_2, _ZCULLCTX, pGpu->instLocOverrides2) },
             { GR_CTX_BUFFER_PM,        DRF_VAL(_REG_STR_RM, _INST_LOC_2, _PMCTX, pGpu->instLocOverrides2) },
@@ -161,7 +163,8 @@ kgraphicsConstructEngine_IMPL
             { GR_CTX_BUFFER_BETA_CB,   DRF_VAL(_REG_STR_RM, _INST_LOC_3, _GFXP_BETACB_BUFFER, pGpu->instLocOverrides3) },
             { GR_CTX_BUFFER_PAGEPOOL,  DRF_VAL(_REG_STR_RM, _INST_LOC_3, _GFXP_PAGEPOOL_BUFFER, pGpu->instLocOverrides3) },
             { GR_CTX_BUFFER_SPILL,     DRF_VAL(_REG_STR_RM, _INST_LOC_3, _GFXP_SPILL_BUFFER, pGpu->instLocOverrides3) },
-            { GR_CTX_BUFFER_RTV_CB,    DRF_VAL(_REG_STR_RM, _INST_LOC_3, _GFXP_RTVCB_BUFFER, pGpu->instLocOverrides3) }
+            { GR_CTX_BUFFER_RTV_CB,    DRF_VAL(_REG_STR_RM, _INST_LOC_3, _GFXP_RTVCB_BUFFER, pGpu->instLocOverrides3) },
+            { GR_CTX_BUFFER_SETUP,     DRF_VAL(_REG_STR_RM, _INST_LOC_4, _GFXP_SETUP_BUFFER, pGpu->instLocOverrides4) }
         };
 
         for (idx = 0; idx < NV_ARRAY_ELEMENTS(instlocOverrides); ++idx)
@@ -317,10 +320,11 @@ kgraphicsStateInitLocked_IMPL
         // first as a part of Fifo post load. Hence, add the golden channel
         // creation as a fifo post-scheduling-enablement callback.
         //
-        kfifoAddSchedulingHandler(pGpu, GPU_GET_KERNEL_FIFO(pGpu),
-                                  _kgraphicsPostSchedulingEnableHandler,
-                                  (void *)((NvUPtr)(pKernelGraphics->instance)),
-                                  NULL, NULL);
+        NV_ASSERT_OK_OR_RETURN(
+            kfifoAddSchedulingHandler(pGpu, GPU_GET_KERNEL_FIFO(pGpu),
+                                      _kgraphicsPostSchedulingEnableHandler,
+                                      (void *)((NvUPtr)(pKernelGraphics->instance)),
+                                      NULL, NULL));
     }
 
     pKernelGraphics->bug4208224Info.hClient      = NV01_NULL_OBJECT;
@@ -358,7 +362,9 @@ kgraphicsStateLoad_IMPL
     NvU32 flags
 )
 {
-    if (pGpu->fecsCtxswLogConsumerCount > 0)
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+
+    if (fecsGetCtxswLogConsumerCount(pGpu, pKernelGraphicsManager) > 0)
     {
         fecsBufferMap(pGpu, pKernelGraphics);
         fecsBufferReset(pGpu, pKernelGraphics);
@@ -375,21 +381,7 @@ kgraphicsStatePreUnload_IMPL
     NvU32 flags
 )
 {
-    if (pKernelGraphics->bug4208224Info.bConstructed)
-    {
-        RM_API *pRmApi = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
-        NV2080_CTRL_INTERNAL_KGR_INIT_BUG4208224_WAR_PARAMS params = {0};
-
-        params.bTeardown = NV_TRUE;
-        NV_ASSERT_OK(pRmApi->Control(pRmApi,
-                     pKernelGraphics->bug4208224Info.hClient,
-                     pKernelGraphics->bug4208224Info.hSubdeviceId,
-                     NV2080_CTRL_CMD_INTERNAL_KGR_INIT_BUG4208224_WAR,
-                     &params,
-                     sizeof(params)));
-        NV_ASSERT_OK(pRmApi->Free(pRmApi, pKernelGraphics->bug4208224Info.hClient, pKernelGraphics->bug4208224Info.hClient));
-        pKernelGraphics->bug4208224Info.bConstructed = NV_FALSE;
-    }
+    kgraphicsTeardownBug4208224State_HAL(pGpu, pKernelGraphics);
 
     fecsBufferUnmap(pGpu, pKernelGraphics);
 
@@ -789,6 +781,273 @@ cleanup:
             NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
                 kgraphicsAllocGrGlobalCtxBuffers_HAL(pGpu, pKernelGraphics, gfid, NULL));
         }
+    }
+
+    return status;
+}
+
+NV_STATUS
+kgraphicsLoadStaticInfo_VF
+(
+    OBJGPU *pGpu,
+    KernelGraphics *pKernelGraphics,
+    NvU32 swizzId
+)
+{
+    KGRAPHICS_PRIVATE_DATA *pPrivate = pKernelGraphics->pPrivate;
+    VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+    NvU32 grIdx = pKernelGraphics->instance;
+    NVOS_STATUS status = NV_OK;
+
+    NV_ASSERT_OR_RETURN(pVSI != NULL, NV_ERR_INVALID_STATE);
+    NV_ASSERT_OR_RETURN(pPrivate != NULL, NV_ERR_INVALID_STATE);
+
+    if (pPrivate->bInitialized)
+        return status;
+
+    if (IS_MIG_IN_USE(pGpu))
+    {
+        KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
+
+        //
+        // Delay initialization to GPU instance configuration, unless MODS is using
+        // legacy VGPU mode, in which case the guest never receives a
+        // configuration call
+        //
+        if ((swizzId == KMIGMGR_SWIZZID_INVALID) && !kmigmgrUseLegacyVgpuPolicy(pGpu, pKernelMIGManager))
+            return status;
+
+        pPrivate->staticInfo.pGrInfo = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pGrInfo));
+        if (pPrivate->staticInfo.pGrInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pGrInfo->infoList,
+                    NV0080_CTRL_GR_INFO_MAX_SIZE * sizeof(*pPrivate->staticInfo.pGrInfo->infoList),
+                    pVSI->grInfoParams.engineInfo[grIdx].infoList,
+                    NV0080_CTRL_GR_INFO_MAX_SIZE * sizeof(*pVSI->grInfoParams.engineInfo[grIdx].infoList));
+
+        portMemCopy(&pPrivate->staticInfo.globalSmOrder, sizeof(pPrivate->staticInfo.globalSmOrder),
+                    &pVSI->globalSmOrder.globalSmOrder[grIdx], sizeof(pVSI->globalSmOrder.globalSmOrder[grIdx]));
+
+        // grCaps are the same for all GR and can be copied from VGPU static info
+        portMemCopy(pPrivate->staticInfo.grCaps.capsTbl, sizeof(pPrivate->staticInfo.grCaps.capsTbl),
+                    pVSI->grCapsBits, sizeof(pVSI->grCapsBits));
+
+        // Initialize PDB properties synchronized with physical RM
+        pPrivate->staticInfo.pdbTable.bPerSubCtxheaderSupported = pVSI->bPerSubCtxheaderSupported;
+        kgraphicsSetPerSubcontextContextHeaderSupported(pGpu, pKernelGraphics, pPrivate->staticInfo.pdbTable.bPerSubCtxheaderSupported);
+
+        pPrivate->staticInfo.pSmIssueRateModifier =
+                portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pSmIssueRateModifier));
+        if (pPrivate->staticInfo.pSmIssueRateModifier == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pSmIssueRateModifier, sizeof(*pPrivate->staticInfo.pSmIssueRateModifier),
+                    &pVSI->smIssueRateModifier.smIssueRateModifier[grIdx], sizeof(pVSI->smIssueRateModifier.smIssueRateModifier[grIdx]));
+
+        pPrivate->staticInfo.pPpcMasks = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pPpcMasks));
+        if (pPrivate->staticInfo.pPpcMasks == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pPpcMasks, sizeof(*pPrivate->staticInfo.pPpcMasks),
+                    &pVSI->ppcMaskParams.enginePpcMasks[grIdx], sizeof(pVSI->ppcMaskParams.enginePpcMasks[grIdx]));
+
+        portMemCopy(&pPrivate->staticInfo.floorsweepingMasks, sizeof(pPrivate->staticInfo.floorsweepingMasks),
+                    &pVSI->floorsweepMaskParams.floorsweepingMasks[grIdx], sizeof(pVSI->floorsweepMaskParams.floorsweepingMasks[grIdx]));
+
+        pPrivate->staticInfo.pContextBuffersInfo =
+            portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pContextBuffersInfo));
+
+        if (pPrivate->staticInfo.pContextBuffersInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pContextBuffersInfo,
+                    sizeof(*pPrivate->staticInfo.pContextBuffersInfo),
+                    &pVSI->ctxBuffInfo.engineContextBuffersInfo[grIdx],
+                    sizeof(pVSI->ctxBuffInfo.engineContextBuffersInfo[grIdx]));
+
+        pPrivate->staticInfo.fecsRecordSize.fecsRecordSize = pVSI->fecsRecordSize.fecsRecordSize[grIdx].fecsRecordSize;
+
+        pPrivate->staticInfo.pFecsTraceDefines =
+                portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pFecsTraceDefines));
+
+        if (pPrivate->staticInfo.pFecsTraceDefines == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pFecsTraceDefines,
+                    sizeof(*pPrivate->staticInfo.pFecsTraceDefines),
+                    &pVSI->fecsTraceDefines.fecsTraceDefines[grIdx],
+                    sizeof(pVSI->fecsTraceDefines.fecsTraceDefines[grIdx]));
+
+        portMemCopy(&pPrivate->staticInfo.pdbTable, sizeof(pPrivate->staticInfo.pdbTable),
+                    &pVSI->pdbTableParams.pdbTable[grIdx], sizeof(pVSI->pdbTableParams.pdbTable[grIdx]));
+    }
+    else if (grIdx == 0)
+    {
+        portMemCopy(pPrivate->staticInfo.grCaps.capsTbl, sizeof(pPrivate->staticInfo.grCaps.capsTbl),
+                    pVSI->grCapsBits, sizeof(pVSI->grCapsBits));
+
+        pPrivate->staticInfo.pGrInfo = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pGrInfo));
+        if (pPrivate->staticInfo.pGrInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pGrInfo->infoList,
+                    NV0080_CTRL_GR_INFO_MAX_SIZE * sizeof(*pPrivate->staticInfo.pGrInfo->infoList),
+                    pVSI->grInfoParams.engineInfo[grIdx].infoList,
+                    NV0080_CTRL_GR_INFO_MAX_SIZE * sizeof(*pVSI->grInfoParams.engineInfo[grIdx].infoList));
+
+        // Initialize PDB properties synchronized with physical RM
+        pPrivate->staticInfo.pdbTable.bPerSubCtxheaderSupported = pVSI->bPerSubCtxheaderSupported;
+        kgraphicsSetPerSubcontextContextHeaderSupported(pGpu, pKernelGraphics, pPrivate->staticInfo.pdbTable.bPerSubCtxheaderSupported);
+
+        portMemCopy(&pPrivate->staticInfo.globalSmOrder, sizeof(pPrivate->staticInfo.globalSmOrder),
+                    &pVSI->globalSmOrder.globalSmOrder[grIdx], sizeof(pVSI->globalSmOrder.globalSmOrder[grIdx]));
+
+        pPrivate->staticInfo.pSmIssueRateModifier =
+                portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pSmIssueRateModifier));
+        if (pPrivate->staticInfo.pSmIssueRateModifier == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pSmIssueRateModifier, sizeof(*pPrivate->staticInfo.pSmIssueRateModifier),
+                    &pVSI->smIssueRateModifier.smIssueRateModifier[grIdx], sizeof(pVSI->smIssueRateModifier.smIssueRateModifier[grIdx]));
+
+        pPrivate->staticInfo.pPpcMasks = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pPpcMasks));
+        if (pPrivate->staticInfo.pPpcMasks == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pPpcMasks, sizeof(*pPrivate->staticInfo.pPpcMasks),
+                    &pVSI->ppcMaskParams.enginePpcMasks[grIdx], sizeof(pVSI->ppcMaskParams.enginePpcMasks[grIdx]));
+
+        pPrivate->staticInfo.pContextBuffersInfo =
+            portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pContextBuffersInfo));
+
+        if (pPrivate->staticInfo.pContextBuffersInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pContextBuffersInfo,
+                    sizeof(*pPrivate->staticInfo.pContextBuffersInfo),
+                    &pVSI->ctxBuffInfo.engineContextBuffersInfo[grIdx],
+                    sizeof(pVSI->ctxBuffInfo.engineContextBuffersInfo[grIdx]));
+
+        portMemCopy(&pPrivate->staticInfo.floorsweepingMasks, sizeof(pPrivate->staticInfo.floorsweepingMasks),
+                    &pVSI->floorsweepMaskParams.floorsweepingMasks[grIdx], sizeof(pVSI->floorsweepMaskParams.floorsweepingMasks[grIdx]));
+
+        pPrivate->staticInfo.pRopInfo = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pRopInfo));
+        if (pPrivate->staticInfo.pRopInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pRopInfo, sizeof(*pPrivate->staticInfo.pRopInfo),
+                    &pVSI->ropInfoParams.engineRopInfo[grIdx], sizeof(pVSI->ropInfoParams.engineRopInfo[grIdx]));
+
+        pPrivate->staticInfo.pZcullInfo = portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pZcullInfo));
+        if (pPrivate->staticInfo.pZcullInfo == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pZcullInfo, sizeof(*pPrivate->staticInfo.pZcullInfo),
+                    &pVSI->zcullInfoParams.engineZcullInfo[grIdx], sizeof(pVSI->zcullInfoParams.engineZcullInfo[grIdx]));
+
+        pPrivate->staticInfo.fecsRecordSize.fecsRecordSize = pVSI->fecsRecordSize.fecsRecordSize[grIdx].fecsRecordSize;
+
+        pPrivate->staticInfo.pFecsTraceDefines =
+                portMemAllocNonPaged(sizeof(*pPrivate->staticInfo.pFecsTraceDefines));
+        if (pPrivate->staticInfo.pFecsTraceDefines == NULL)
+        {
+            status = NV_ERR_NO_MEMORY;
+            goto cleanup;
+        }
+
+        portMemCopy(pPrivate->staticInfo.pFecsTraceDefines,
+                    sizeof(*pPrivate->staticInfo.pFecsTraceDefines),
+                    &pVSI->fecsTraceDefines.fecsTraceDefines[grIdx],
+                    sizeof(pVSI->fecsTraceDefines.fecsTraceDefines[grIdx]));
+
+        portMemCopy(&pPrivate->staticInfo.pdbTable, sizeof(pPrivate->staticInfo.pdbTable),
+                    &pVSI->pdbTableParams.pdbTable[grIdx], sizeof(pVSI->pdbTableParams.pdbTable[grIdx]));
+    }
+    else
+    {
+        // if MIG disabled, only GR0 static data needs to be published
+        return status;
+    }
+
+    if (status == NV_OK)
+    {
+        // Publish static configuration
+        pPrivate->bInitialized = NV_TRUE;
+    }
+
+    if (!IS_MIG_IN_USE(pGpu) && (grIdx == 0))
+    {
+        KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+
+        // Cache legacy GR mask info (i.e. GR0 with MIG disabled) to pKernelGraphicsManager->legacyFsMaskState
+        kgrmgrSetLegacyKgraphicsStaticInfo(pGpu, pKernelGraphicsManager, pKernelGraphics);
+    }
+
+    // FECS ctxsw logging is consumed when profiling support is available in guest
+    if (!pVSI->vgpuStaticProperties.bProfilingTracingEnabled)
+    {
+        kgraphicsSetCtxswLoggingSupported(pGpu, pKernelGraphics, NV_FALSE);
+        NV_PRINTF(LEVEL_NOTICE, "Profiling support not requested. Disabling ctxsw logging\n");
+    }
+
+cleanup :
+
+    if (status != NV_OK)
+    {
+        portMemFree(pPrivate->staticInfo.pGrInfo);
+        pPrivate->staticInfo.pGrInfo = NULL;
+
+        portMemFree(pPrivate->staticInfo.pPpcMasks);
+        pPrivate->staticInfo.pPpcMasks = NULL;
+
+        portMemFree(pPrivate->staticInfo.pZcullInfo);
+        pPrivate->staticInfo.pZcullInfo = NULL;
+
+        portMemFree(pPrivate->staticInfo.pRopInfo);
+        pPrivate->staticInfo.pRopInfo = NULL;
+
+        portMemFree(pPrivate->staticInfo.pContextBuffersInfo);
+        pPrivate->staticInfo.pContextBuffersInfo = NULL;
+
+        portMemFree(pPrivate->staticInfo.pSmIssueRateModifier);
+        pPrivate->staticInfo.pSmIssueRateModifier = NULL;
+
+        portMemFree(pPrivate->staticInfo.pFecsTraceDefines);
+        pPrivate->staticInfo.pFecsTraceDefines = NULL;
     }
 
     return status;
@@ -1428,6 +1687,8 @@ kgraphicsAllocKgraphicsBuffers_KERNEL
     if (kgraphicsIsCtxswLoggingSupported(pGpu, pKernelGraphics) &&
         (kgraphicsGetGlobalCtxBuffers(pGpu, pKernelGraphics, gfid)->memDesc[GR_GLOBALCTX_BUFFER_FECS_EVENT] != NULL))
     {
+        KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+
         if (!gvaspaceIsExternallyOwned(pGVAS) && !IS_VIRTUAL_WITHOUT_SRIOV(pGpu))
         {
             //
@@ -1444,7 +1705,7 @@ kgraphicsAllocKgraphicsBuffers_KERNEL
             fecsBufferMap(pGpu, pKernelGraphics);
         }
 
-        if (pGpu->fecsCtxswLogConsumerCount > 0)
+        if (fecsGetCtxswLogConsumerCount(pGpu, pKernelGraphicsManager) > 0)
             fecsBufferReset(pGpu, pKernelGraphics);
     }
 
@@ -1824,7 +2085,7 @@ kgraphicsCreateGoldenImageChannel_IMPL
         portMemSet(&nv2080AllocParams, 0, sizeof(nv2080AllocParams));
         nv2080AllocParams.subDeviceId = thisSubDeviceInstance;
 
-        NV_CHECK_OK(status, LEVEL_WARNING,
+        NV_CHECK_OK(status, LEVEL_SILENT,
             pRmApi->AllocWithHandle(pRmApi,
                                     hClientId,
                                     hDeviceId,
@@ -2076,7 +2337,8 @@ kgraphicsCreateGoldenImageChannel_IMPL
         }
 
         NV_ASSERT_OK(
-            vaspaceReserveMempool(pKernelChannel->pVAS, pGpu, hClientId,
+            vaspaceReserveMempool(pKernelChannel->pVAS, pGpu,
+                                  GPU_RES_GET_DEVICE(pKernelChannel),
                                   reserveSize, RM_PAGE_SIZE,
                                   VASPACE_RESERVE_FLAGS_NONE));
     }
@@ -2151,15 +2413,20 @@ void kgraphicsFreeGlobalCtxBuffers_IMPL
 
     pCtxBuffers = &pKernelGraphics->globalCtxBuffersInfo.pGlobalCtxBuffers[gfid];
 
+    if (!pCtxBuffers->bAllocated)
+        return;
+
     FOR_EACH_IN_ENUM(GR_GLOBALCTX_BUFFER, buff)
     {
         if (pCtxBuffers->memDesc[buff] != NULL)
+        {
             bEvict = NV_TRUE;
 
-        memdescFree(pCtxBuffers->memDesc[buff]);
-        memdescDestroy(pCtxBuffers->memDesc[buff]);
-        pCtxBuffers->memDesc[buff] = NULL;
-        pCtxBuffers->bInitialized[buff] = NV_FALSE;
+            memdescFree(pCtxBuffers->memDesc[buff]);
+            memdescDestroy(pCtxBuffers->memDesc[buff]);
+            pCtxBuffers->memDesc[buff] = NULL;
+            pCtxBuffers->bInitialized[buff] = NV_FALSE;
+        }
     }
     FOR_EACH_IN_ENUM_END;
 
@@ -2369,9 +2636,8 @@ _kgraphicsCtrlCmdGrGetInfoV2
     NV_STATUS status = NV_OK;
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     NvU32 grInfoListSize = pParams->grInfoListSize;
-    KernelGraphics *pKernelGraphics;
-    const KGRAPHICS_STATIC_INFO *pKernelGraphicsStaticInfo;
     KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
+    NV2080_CTRL_INTERNAL_STATIC_GR_INFO *pGrInfo;
     NvU32 i;
 
     if (pKernelGraphicsManager == NULL)
@@ -2386,33 +2652,32 @@ _kgraphicsCtrlCmdGrGetInfoV2
         return NV_ERR_INVALID_ARGUMENT;
     }
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, RES_GET_CLIENT_HANDLE(pDevice)))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
-        NvU32 grIdx;
-        for (grIdx = 0; grIdx < GPU_MAX_GRS; grIdx++)
-        {
-            pKernelGraphics = GPU_GET_KERNEL_GRAPHICS(pGpu, grIdx);
-            if (pKernelGraphics != NULL)
-                break;
-        }
-        if (pKernelGraphics == NULL)
-            return NV_ERR_INVALID_STATE;
+        NV_ASSERT_OR_RETURN(kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->bInitialized, NV_ERR_INVALID_STATE);
+        NV_ASSERT_OR_RETURN(kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->pGrInfo != NULL, NV_ERR_NOT_SUPPORTED);
+
+        pGrInfo = kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->pGrInfo;
     }
     else
     {
+        KernelGraphics *pKernelGraphics;
+        const KGRAPHICS_STATIC_INFO *pKernelGraphicsStaticInfo;
+
         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
             kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice, &pParams->grRouteInfo, &pKernelGraphics));
-    }
 
-    pKernelGraphicsStaticInfo = kgraphicsGetStaticInfo(pGpu, pKernelGraphics);
-    NV_ASSERT_OR_RETURN(pKernelGraphicsStaticInfo != NULL, NV_ERR_INVALID_STATE);
-    NV_ASSERT_OR_RETURN(pKernelGraphicsStaticInfo->pGrInfo != NULL, NV_ERR_NOT_SUPPORTED);
+        pKernelGraphicsStaticInfo = kgraphicsGetStaticInfo(pGpu, pKernelGraphics);
+        NV_ASSERT_OR_RETURN(pKernelGraphicsStaticInfo != NULL, NV_ERR_INVALID_STATE);
+        NV_ASSERT_OR_RETURN(pKernelGraphicsStaticInfo->pGrInfo != NULL, NV_ERR_NOT_SUPPORTED);
+
+        pGrInfo = pKernelGraphicsStaticInfo->pGrInfo;
+    }
 
     for (i = 0; i < grInfoListSize; i++)
     {
         NV_CHECK_OR_RETURN(LEVEL_ERROR, pParams->grInfoList[i].index < NV2080_CTRL_GR_INFO_MAX_SIZE, NV_ERR_INVALID_ARGUMENT);
-        pParams->grInfoList[i].data =
-            pKernelGraphicsStaticInfo->pGrInfo->infoList[pParams->grInfoList[i].index].data;
+        pParams->grInfoList[i].data = pGrInfo->infoList[pParams->grInfoList[i].index].data;
     }
 
     return status;
@@ -2660,16 +2925,15 @@ subdeviceCtrlCmdKGrGetSmToGpcTpcMappings_IMPL
 {
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     KernelGraphics *pKernelGraphics;
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
     const KGRAPHICS_STATIC_INFO *pStaticInfo;
     NvU32 i;
 
-    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
+    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         return NV_ERR_NOT_SUPPORTED;
     }
@@ -2708,7 +2972,6 @@ subdeviceCtrlCmdKGrGetGlobalSmOrder_IMPL
     NV_STATUS status = NV_OK;
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     KernelGraphics *pKernelGraphics;
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
@@ -2717,7 +2980,7 @@ subdeviceCtrlCmdKGrGetGlobalSmOrder_IMPL
 
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         return NV_ERR_NOT_SUPPORTED;
     }
@@ -2766,7 +3029,6 @@ subdeviceCtrlCmdKGrGetSmIssueRateModifier_IMPL
 {
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     KernelGraphics *pKernelGraphics;
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     const KGRAPHICS_STATIC_INFO *pStaticInfo;
@@ -2774,7 +3036,7 @@ subdeviceCtrlCmdKGrGetSmIssueRateModifier_IMPL
 
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         NvU32 grIdx;
         for (grIdx = 0; grIdx < GPU_MAX_GRS; grIdx++)
@@ -2825,7 +3087,6 @@ subdeviceCtrlCmdKGrGetGpcMask_IMPL
 {
     NV_STATUS status = NV_OK;
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     KernelGraphics *pKernelGraphics;
@@ -2835,7 +3096,7 @@ subdeviceCtrlCmdKGrGetGpcMask_IMPL
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
     if (!IS_MIG_IN_USE(pGpu) ||
-        kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+        kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         pParams->gpcMask = kgrmgrGetLegacyGpcMask(pGpu, pKernelGraphicsManager);
     }
@@ -2872,7 +3133,6 @@ subdeviceCtrlCmdKGrGetTpcMask_IMPL
 {
     NV_STATUS status = NV_OK;
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     KernelGraphics *pKernelGraphics;
@@ -2883,7 +3143,7 @@ subdeviceCtrlCmdKGrGetTpcMask_IMPL
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
     if (!IS_MIG_IN_USE(pGpu) ||
-        kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+        kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         pParams->tpcMask = kgrmgrGetLegacyTpcMask(pGpu, pKernelGraphicsManager, pParams->gpcId);
     }
@@ -2956,7 +3216,6 @@ subdeviceCtrlCmdKGrGetPpcMask_IMPL
 )
 {
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     KernelGraphics *pKernelGraphics;
@@ -2965,7 +3224,7 @@ subdeviceCtrlCmdKGrGetPpcMask_IMPL
 
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgrmgrGetLegacyPpcMask(pGpu, pKernelGraphicsManager, pParams->gpcId, &pParams->ppcMask));
     }
@@ -3010,10 +3269,9 @@ subdeviceCtrlCmdKGrFecsBindEvtbufForUid_IMPL
     RsResourceRef *pEventBufferRef = NULL;
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
-    NvHandle hNotifier = RES_GET_HANDLE(pSubdevice);
     NvBool bMIGInUse = IS_MIG_IN_USE(pGpu);
 
-    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
+    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
     NV_ASSERT_OK_OR_RETURN(
         serverutilGetResourceRefWithType(hClient, pParams->hEventBuffer, classId(EventBuffer), &pEventBufferRef));
@@ -3027,7 +3285,7 @@ subdeviceCtrlCmdKGrFecsBindEvtbufForUid_IMPL
     status = fecsAddBindpoint(pGpu,
                               pClient,
                               pEventBufferRef,
-                              hNotifier,
+                              pSubdevice,
                               pParams->bAllUsers,
                               pParams->levelOfDetail,
                               pParams->eventFilter,
@@ -3055,10 +3313,9 @@ subdeviceCtrlCmdKGrFecsBindEvtbufForUidV2_IMPL
     RsResourceRef *pEventBufferRef = NULL;
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
-    NvHandle hNotifier = RES_GET_HANDLE(pSubdevice);
     pParams->reasonCode = NV2080_CTRL_GR_FECS_BIND_REASON_CODE_NONE;
 
-    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
+    LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
     NV_ASSERT_OK_OR_RETURN(
         serverutilGetResourceRefWithType(hClient, pParams->hEventBuffer, classId(EventBuffer), &pEventBufferRef));
@@ -3069,7 +3326,7 @@ subdeviceCtrlCmdKGrFecsBindEvtbufForUidV2_IMPL
     status = fecsAddBindpoint(pGpu,
                               pClient,
                               pEventBufferRef,
-                              hNotifier,
+                              pSubdevice,
                               pParams->bAllUsers,
                               pParams->levelOfDetail,
                               pParams->eventFilter,
@@ -3094,7 +3351,6 @@ subdeviceCtrlCmdKGrGetPhysGpcMask_IMPL
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     KernelGraphics *pKernelGraphics;
     const KGRAPHICS_STATIC_INFO *pKernelGraphicsStaticInfo;
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
     NvU32 grIdx = 0;
@@ -3112,7 +3368,7 @@ subdeviceCtrlCmdKGrGetPhysGpcMask_IMPL
     // For valid subscription - Return physical GPC mask after validating that
     //                           a physical syspipe exist in given GPU instance
     //
-    else if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    else if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         NV_ASSERT_OR_RETURN(pParams->physSyspipeId < GPU_MAX_GRS, NV_ERR_INVALID_ARGUMENT);
         grIdx = pParams->physSyspipeId;
@@ -3162,7 +3418,6 @@ subdeviceCtrlCmdKGrGetZcullMask_IMPL
 )
 {
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
-    NvHandle hClient = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
     NV2080_CTRL_GR_ROUTE_INFO grRouteInfo;
@@ -3172,7 +3427,7 @@ subdeviceCtrlCmdKGrGetZcullMask_IMPL
 
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
-    if (kmigmgrIsClientUsingDeviceProfiling(pGpu, pKernelMIGManager, hClient))
+    if (kmigmgrIsDeviceUsingDeviceProfiling(pGpu, pKernelMIGManager, pDevice))
     {
         pParams->zcullMask = kgrmgrGetLegacyZcullMask(pGpu, pKernelGraphicsManager, pParams->gpcId);
     }
@@ -3267,7 +3522,7 @@ subdeviceCtrlCmdKGrCtxswPmMode_IMPL
         KernelGraphicsContext *pKernelGraphicsContext;
         RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
 
-        LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
+        LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
 
         if (pParams->pmMode != NV2080_CTRL_CTXSW_PM_MODE_NO_CTXSW)
         {
@@ -3764,4 +4019,140 @@ subdeviceCtrlCmdKGrGetGfxGpcAndTpcInfo_IMPL
     pParams->numGfxTpc = pKernelGraphicsStaticInfo->floorsweepingMasks.numGfxTpc;
 
     return NV_OK;
+}
+
+#define KGR_DO_WITH_GR(pGpu, pKernelGraphics, body) do                                            \
+    {                                                                                             \
+        (body);                                                                                   \
+    } while (0);
+
+NV_STATUS
+subdeviceCtrlCmdGrInternalSetFecsTraceHwEnable_IMPL
+(
+    Subdevice *pSubdevice,
+    NV2080_CTRL_INTERNAL_GR_SET_FECS_TRACE_HW_ENABLE_PARAMS *pParams
+)
+{
+    OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
+    NV_STATUS status = NV_OK;
+    KernelGraphics *pKernelGraphics;
+
+    LOCK_ASSERT_AND_RETURN(rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
+
+    NV_CHECK_OK_OR_RETURN(
+        LEVEL_ERROR,
+        kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice,
+                                     &pParams->grRouteInfo, &pKernelGraphics));
+
+    KGR_DO_WITH_GR(pGpu, pKernelGraphics,
+                   kgraphicsSetFecsTraceHwEnable_HAL(pGpu, pKernelGraphics, pParams->bEnable));
+    pKernelGraphics->bCtxswLoggingEnabled = pParams->bEnable;
+
+    return status;
+}
+
+NV_STATUS
+subdeviceCtrlCmdGrInternalGetFecsTraceHwEnable_IMPL
+(
+    Subdevice *pSubdevice,
+    NV2080_CTRL_INTERNAL_GR_GET_FECS_TRACE_HW_ENABLE_PARAMS *pParams
+)
+{
+    OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
+    NV_STATUS status = NV_OK;
+    KernelGraphics *pKernelGraphics;
+
+    LOCK_ASSERT_AND_RETURN(rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
+
+    NV_CHECK_OK_OR_RETURN(
+        LEVEL_ERROR,
+        kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice, &pParams->grRouteInfo,
+                                     &pKernelGraphics));
+
+    KGR_DO_WITH_GR(pGpu, pKernelGraphics,
+                   pParams->bEnable = kgraphicsIsCtxswLoggingEnabled(pGpu, pKernelGraphics));
+
+    return status;
+}
+
+NV_STATUS
+subdeviceCtrlCmdGrInternalSetFecsTraceRdOffset_IMPL
+(
+    Subdevice *pSubdevice,
+    NV2080_CTRL_INTERNAL_GR_SET_FECS_TRACE_RD_OFFSET_PARAMS *pParams
+)
+{
+    OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
+    NV_STATUS status = NV_OK;
+    KernelGraphics *pKernelGraphics;
+
+    LOCK_ASSERT_AND_RETURN(rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
+
+    NV_CHECK_OK_OR_RETURN(
+        LEVEL_ERROR,
+        kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice, &pParams->grRouteInfo,
+                                     &pKernelGraphics));
+
+    KGR_DO_WITH_GR(pGpu, pKernelGraphics,
+                   kgraphicsSetFecsTraceRdOffset_HAL(pGpu, pKernelGraphics, pParams->offset));
+
+    return status;
+}
+
+NV_STATUS
+subdeviceCtrlCmdGrInternalGetFecsTraceRdOffset_IMPL
+(
+    Subdevice *pSubdevice,
+    NV2080_CTRL_INTERNAL_GR_GET_FECS_TRACE_RD_OFFSET_PARAMS *pParams
+)
+{
+    OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
+    NV_STATUS status = NV_OK;
+    KernelGraphics *pKernelGraphics;
+
+    LOCK_ASSERT_AND_RETURN(rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
+
+    NV_CHECK_OK_OR_RETURN(
+        LEVEL_ERROR,
+        kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice, &pParams->grRouteInfo,
+                                     &pKernelGraphics));
+
+    KGR_DO_WITH_GR(pGpu, pKernelGraphics,
+                   pParams->offset = kgraphicsGetFecsTraceRdOffset_HAL(pGpu, pKernelGraphics));
+
+    return status;
+}
+
+NV_STATUS
+subdeviceCtrlCmdGrInternalSetFecsTraceWrOffset_IMPL
+(
+    Subdevice *pSubdevice,
+    NV2080_CTRL_INTERNAL_GR_SET_FECS_TRACE_WR_OFFSET_PARAMS *pParams
+)
+{
+    OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
+    NV_STATUS status = NV_OK;
+    KernelGraphics *pKernelGraphics;
+
+    LOCK_ASSERT_AND_RETURN(rmDeviceGpuLockIsOwner(pGpu->gpuInstance));
+
+    NV_CHECK_OK_OR_RETURN(
+        LEVEL_ERROR,
+        kgrmgrCtrlRouteKGRWithDevice(pGpu, pKernelGraphicsManager, pDevice, &pParams->grRouteInfo,
+                                     &pKernelGraphics));
+
+    KGR_DO_WITH_GR(pGpu, pKernelGraphics,
+                   kgraphicsSetFecsTraceWrOffset_HAL(pGpu, pKernelGraphics, pParams->offset));
+
+    return status;
 }

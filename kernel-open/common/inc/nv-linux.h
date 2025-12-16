@@ -35,6 +35,7 @@
 #include "os-interface.h"
 #include "nv-timer.h"
 #include "nv-time.h"
+#include "nv-chardev-numbers.h"
 
 #define NV_KERNEL_NAME "Linux"
 
@@ -248,7 +249,7 @@ NV_STATUS nvos_forward_error_to_cray(struct pci_dev *, NvU32,
 #undef NV_SET_PAGES_UC_PRESENT
 #endif
 
-#if !defined(NVCPU_AARCH64) && !defined(NVCPU_PPC64LE)
+#if !defined(NVCPU_AARCH64) && !defined(NVCPU_PPC64LE) && !defined(NVCPU_RISCV64)
 #if !defined(NV_SET_MEMORY_UC_PRESENT) && !defined(NV_SET_PAGES_UC_PRESENT)
 #error "This driver requires the ability to change memory types!"
 #endif
@@ -406,32 +407,6 @@ extern int nv_pat_mode;
 #define NV_GFP_DMA32 (NV_GFP_KERNEL)
 #endif
 
-extern NvBool nvos_is_chipset_io_coherent(void);
-
-#if defined(NVCPU_X86_64)
-#define CACHE_FLUSH()  asm volatile("wbinvd":::"memory")
-#define WRITE_COMBINE_FLUSH() asm volatile("sfence":::"memory")
-#elif defined(NVCPU_AARCH64)
-    static inline void nv_flush_cache_cpu(void *info)
-    {
-        if (!nvos_is_chipset_io_coherent())
-        {
-#if defined(NV_FLUSH_CACHE_ALL_PRESENT)
-            flush_cache_all();
-#else
-            WARN_ONCE(0, "NVRM: kernel does not support flush_cache_all()\n");
-#endif
-        }
-    }
-#define CACHE_FLUSH()            nv_flush_cache_cpu(NULL)
-#define CACHE_FLUSH_ALL()        on_each_cpu(nv_flush_cache_cpu, NULL, 1)
-#define WRITE_COMBINE_FLUSH()    mb()
-#elif defined(NVCPU_PPC64LE)
-#define CACHE_FLUSH()            asm volatile("sync;  \n" \
-                                              "isync; \n" ::: "memory")
-#define WRITE_COMBINE_FLUSH()    CACHE_FLUSH()
-#endif
-
 typedef enum
 {
     NV_MEMORY_TYPE_SYSTEM,      /* Memory mapped for ROM, SBIOS and physical RAM. */
@@ -440,7 +415,7 @@ typedef enum
     NV_MEMORY_TYPE_DEVICE_MMIO, /* All kinds of MMIO referred by NVRM e.g. BARs and MCFG of device */
 } nv_memory_type_t;
 
-#if defined(NVCPU_AARCH64) || defined(NVCPU_PPC64LE)
+#if defined(NVCPU_AARCH64) || defined(NVCPU_PPC64LE) || defined(NVCPU_RISCV64)
 #define NV_ALLOW_WRITE_COMBINING(mt)    1
 #elif defined(NVCPU_X86_64)
 #if defined(NV_ENABLE_PAT_SUPPORT)
@@ -761,7 +736,6 @@ static inline dma_addr_t nv_phys_to_dma(struct device *dev, NvU64 pa)
 #define NV_VMA_FILE(vma)              ((vma)->vm_file)
 
 #define NV_DEVICE_MINOR_NUMBER(x)     minor((x)->i_rdev)
-#define NV_CONTROL_DEVICE_MINOR       255
 
 #define NV_PCI_DISABLE_DEVICE(pci_dev)                           \
     {                                                            \
@@ -1384,7 +1358,19 @@ typedef struct nv_dma_map_s {
          i < dm->mapping.discontig.submap_count;                              \
          i++, sm = &dm->mapping.discontig.submaps[i])
 
+/*
+ * On 4K ARM kernels, use max submap size a multiple of 64K to keep nv-p2p happy.
+ * Despite 4K OS pages, we still use 64K P2P pages due to dependent modules still using 64K.
+ * Instead of using (4G-4K), use max submap size as (4G-64K) since the mapped IOVA range
+ * must be aligned at 64K boundary.
+ */
+#if defined(CONFIG_ARM64_4K_PAGES)
+#define NV_DMA_U32_MAX_4K_PAGES           ((NvU32)((NV_U32_MAX >> PAGE_SHIFT) + 1))
+#define NV_DMA_SUBMAP_MAX_PAGES           ((NvU32)(NV_DMA_U32_MAX_4K_PAGES - 16))
+#else
 #define NV_DMA_SUBMAP_MAX_PAGES           ((NvU32)(NV_U32_MAX >> PAGE_SHIFT))
+#endif
+
 #define NV_DMA_SUBMAP_IDX_TO_PAGE_IDX(s)  (s * NV_DMA_SUBMAP_MAX_PAGES)
 
 /*
@@ -1464,6 +1450,11 @@ typedef struct coherent_link_info_s {
      * baremetal OS environment it is System Physical Address(SPA) and in the case
      * of virutalized OS environment it is Intermediate Physical Address(IPA) */
     NvU64 gpu_mem_pa;
+
+    /* Physical address of the reserved portion of the GPU memory, applicable
+     * only in Grace Hopper self hosted passthrough virtualizatioan platform. */
+    NvU64 rsvd_mem_pa;
+
     /* Bitmap of NUMA node ids, corresponding to the reserved PXMs,
      * available for adding GPU memory to the kernel as system RAM */
     DECLARE_BITMAP(free_node_bitmap, MAX_NUMNODES);
@@ -1611,6 +1602,26 @@ typedef struct nv_linux_state_s {
 
     struct nv_dma_device dma_dev;
     struct nv_dma_device niso_dma_dev;
+
+    /*
+     * Background kthread for handling deferred open operations
+     * (e.g. from O_NONBLOCK).
+     *
+     * Adding to open_q and reading/writing is_accepting_opens
+     * are protected by nvl->open_q_lock (not nvl->ldata_lock).
+     * This allows new deferred open operations to be enqueued without
+     * blocking behind previous ones (which hold nvl->ldata_lock).
+     *
+     * Adding to open_q is only safe if is_accepting_opens is true.
+     * This prevents open operations from racing with device removal.
+     *
+     * Stopping open_q is only safe after setting is_accepting_opens to false.
+     * This ensures that the open_q (and the larger nvl structure) will
+     * outlive any of the open operations enqueued.
+     */
+    nv_kthread_q_t open_q;
+    NvBool is_accepting_opens;
+    struct semaphore open_q_lock;
 #if defined(NV_VGPU_KVM_BUILD)
     wait_queue_head_t wait;
     NvS32 return_status;
@@ -1658,22 +1669,13 @@ typedef struct nvidia_event
     nv_event_t event;
 } nvidia_event_t;
 
-typedef enum
-{
-    NV_FOPS_STACK_INDEX_MMAP,
-    NV_FOPS_STACK_INDEX_IOCTL,
-    NV_FOPS_STACK_INDEX_COUNT
-} nvidia_entry_point_index_t;
-
 typedef struct
 {
     nv_file_private_t nvfp;
 
     nvidia_stack_t *sp;
-    nvidia_stack_t *fops_sp[NV_FOPS_STACK_INDEX_COUNT];
-    struct semaphore fops_sp_lock[NV_FOPS_STACK_INDEX_COUNT];
     nv_alloc_t *free_list;
-    void *nvptr;
+    nv_linux_state_t *nvptr;
     nvidia_event_t *event_data_head, *event_data_tail;
     NvBool dataless_event_pending;
     nv_spinlock_t fp_lock;
@@ -1684,12 +1686,33 @@ typedef struct
     nv_alloc_mapping_context_t mmap_context;
     struct address_space mapping;
 
+    nv_kthread_q_item_t open_q_item;
+    struct completion open_complete;
+    nv_linux_state_t *deferred_open_nvl;
+    int open_rc;
+    NV_STATUS adapter_status;
+
     struct list_head entry;
 } nv_linux_file_private_t;
 
 static inline nv_linux_file_private_t *nv_get_nvlfp_from_nvfp(nv_file_private_t *nvfp)
 {
     return container_of(nvfp, nv_linux_file_private_t, nvfp);
+}
+
+static inline int nv_wait_open_complete_interruptible(nv_linux_file_private_t *nvlfp)
+{
+    return wait_for_completion_interruptible(&nvlfp->open_complete);
+}
+
+static inline void nv_wait_open_complete(nv_linux_file_private_t *nvlfp)
+{
+    wait_for_completion(&nvlfp->open_complete);
+}
+
+static inline NvBool nv_is_open_complete(nv_linux_file_private_t *nvlfp)
+{
+    return completion_done(&nvlfp->open_complete);
 }
 
 #define NV_SET_FILE_PRIVATE(filep,data) ((filep)->private_data = (data))
@@ -1700,28 +1723,6 @@ static inline nv_linux_file_private_t *nv_get_nvlfp_from_nvfp(nv_file_private_t 
 #define NV_GET_NVL_FROM_NV_STATE(nv)    ((nv_linux_state_t *)nv->os_state)
 
 #define NV_STATE_PTR(nvl)   &(((nv_linux_state_t *)(nvl))->nv_state)
-
-static inline nvidia_stack_t *nv_nvlfp_get_sp(nv_linux_file_private_t *nvlfp, nvidia_entry_point_index_t which)
-{
-#if defined(NVCPU_X86_64)
-    if (rm_is_altstack_in_use())
-    {
-        down(&nvlfp->fops_sp_lock[which]);
-        return nvlfp->fops_sp[which];
-    }
-#endif
-    return NULL;
-}
-
-static inline void nv_nvlfp_put_sp(nv_linux_file_private_t *nvlfp, nvidia_entry_point_index_t which)
-{
-#if defined(NVCPU_X86_64)
-    if (rm_is_altstack_in_use())
-    {
-        up(&nvlfp->fops_sp_lock[which]);
-    }
-#endif
-}
 
 #define NV_ATOMIC_READ(data)            atomic_read(&(data))
 #define NV_ATOMIC_SET(data,val)         atomic_set(&(data), (val))
@@ -1795,11 +1796,17 @@ static inline NV_STATUS nv_check_gpu_state(nv_state_t *nv)
 extern NvU32 NVreg_EnableUserNUMAManagement;
 extern NvU32 NVreg_RegisterPCIDriver;
 extern NvU32 NVreg_EnableResizableBar;
+extern NvU32 NVreg_EnableNonblockingOpen;
 
 extern NvU32 num_probed_nv_devices;
 extern NvU32 num_nv_devices;
 
 #define NV_FILE_INODE(file) (file)->f_inode
+
+static inline int nv_is_control_device(struct inode *inode)
+{
+    return (minor((inode)->i_rdev) == NV_MINOR_DEVICE_NUMBER_CONTROL_DEVICE);
+}
 
 #if defined(NV_DOM0_KERNEL_PRESENT) || defined(NV_VGPU_KVM_BUILD)
 #define NV_VGX_HYPER

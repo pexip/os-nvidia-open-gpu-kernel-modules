@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2013-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2013-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -60,6 +60,18 @@ typedef struct KernelGraphics KernelGraphics;
 #endif /* __nvoc_class_id_KernelGraphics */
 
 
+struct KernelGraphicsManager;
+
+#ifndef __NVOC_CLASS_KernelGraphicsManager_TYPEDEF__
+#define __NVOC_CLASS_KernelGraphicsManager_TYPEDEF__
+typedef struct KernelGraphicsManager KernelGraphicsManager;
+#endif /* __NVOC_CLASS_KernelGraphicsManager_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_KernelGraphicsManager
+#define __nvoc_class_id_KernelGraphicsManager 0xd22179
+#endif /* __nvoc_class_id_KernelGraphicsManager */
+
+
 struct EventBuffer;
 
 #ifndef __NVOC_CLASS_EventBuffer_TYPEDEF__
@@ -70,6 +82,18 @@ typedef struct EventBuffer EventBuffer;
 #ifndef __nvoc_class_id_EventBuffer
 #define __nvoc_class_id_EventBuffer 0x63502b
 #endif /* __nvoc_class_id_EventBuffer */
+
+
+struct Subdevice;
+
+#ifndef __NVOC_CLASS_Subdevice_TYPEDEF__
+#define __NVOC_CLASS_Subdevice_TYPEDEF__
+typedef struct Subdevice Subdevice;
+#endif /* __NVOC_CLASS_Subdevice_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_Subdevice
+#define __nvoc_class_id_Subdevice 0x4b01b3
+#endif /* __nvoc_class_id_Subdevice */
 
 
 
@@ -130,7 +154,7 @@ NV_STATUS fecsAddBindpoint
     OBJGPU *pGpu,
     struct RmClient *pClient,
     RsResourceRef *pEventBufferRef,
-    NvHandle hNotifier,
+    struct Subdevice *pNotifier,
     NvBool bAllUsers,
     NV2080_CTRL_GR_FECS_BIND_EVTBUF_LOD levelOfDetail,
     NvU32 eventFilter,
@@ -153,6 +177,7 @@ void fecsClearRoutingInfo(OBJGPU *, struct KernelGraphics *);
 
 /*! Opaque FECS event buffer private data */
 typedef struct KGRAPHICS_FECS_TRACE_INFO KGRAPHICS_FECS_TRACE_INFO;
+typedef struct KGRMGR_FECS_GLOBAL_TRACE_INFO KGRMGR_FECS_GLOBAL_TRACE_INFO;
 
 NV_STATUS fecsCtxswLoggingInit
 (
@@ -162,6 +187,15 @@ NV_STATUS fecsCtxswLoggingInit
 );
 
 void fecsCtxswLoggingTeardown(OBJGPU *pGpu, struct KernelGraphics *pKernelGraphics);
+
+NV_STATUS fecsGlobalLoggingInit
+(
+    OBJGPU *pGpu,
+    struct KernelGraphicsManager *pKernelGraphicsManager,
+    KGRMGR_FECS_GLOBAL_TRACE_INFO **ppFecsGlobalTraceInfo
+);
+
+void fecsGlobalLoggingTeardown(OBJGPU *pGpu, struct KernelGraphicsManager *pKernelGraphicsManager);
 
 /*! set num records to process per intr */
 void fecsSetRecordsPerIntr
@@ -231,6 +265,11 @@ NvBool fecsClearIntrPendingIfPending(OBJGPU *pGpu, struct KernelGraphics *pKerne
 /*! Atomically check is intr callback pending */
 NvBool fecsIsIntrPending(OBJGPU *pGpu, struct KernelGraphics *pKernelGraphics);
 
+/*! Retrieve or modify Ctxsw logging consumer count */
+NvS16 fecsGetCtxswLogConsumerCount(OBJGPU *pGpu, struct KernelGraphicsManager *pKernelGraphicsManager);
+NV_STATUS fecsDecrementCtxswLogConsumerCount(OBJGPU *pGpu, struct KernelGraphicsManager *pKernelGraphicsManager);
+NV_STATUS fecsIncrementCtxswLogConsumerCount(OBJGPU *pGpu, struct KernelGraphicsManager *pKernelGraphicsManager);
+
 /*! Opaque VGPU fecs event buffer private data */
 typedef struct VGPU_FECS_TRACE_STAGING_BUFFER VGPU_FECS_TRACE_STAGING_BUFFER;
 
@@ -245,9 +284,13 @@ void fecsSetVgpuStagingBuffer
     VGPU_FECS_TRACE_STAGING_BUFFER *pStagingBuffer
 );
 
+/*! Retreive map of logging consumers */
+FecsEventBufferBindMultiMap *fecsGetEventBufferBindMultiMap(OBJGPU *pGpu, struct KernelGraphicsManager *pKernelGraphicsManager);
+
 #endif // _FECS_EVENT_LIST_H_
 
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_FECS_EVENT_LIST_NVOC_H_

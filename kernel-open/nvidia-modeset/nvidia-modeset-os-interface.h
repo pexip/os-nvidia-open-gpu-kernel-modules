@@ -97,8 +97,10 @@ typedef struct {
 } NvKmsSyncPtOpParams;
 
 NvBool nvkms_output_rounding_fix(void);
-
+NvBool nvkms_disable_hdmi_frl(void);
 NvBool nvkms_disable_vrr_memclk_switch(void);
+NvBool nvkms_hdmi_deepcolor(void);
+NvBool nvkms_vblank_sem_control(void);
 NvBool nvkms_opportunistic_display_sync(void);
 
 void   nvkms_call_rm    (void *ops);

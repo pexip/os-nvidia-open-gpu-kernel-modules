@@ -15,7 +15,7 @@
     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
     THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN hint OF CONTRACT, TORT OR OTHERWISE, ARISING
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
@@ -25,6 +25,7 @@
 #include "uvm_perf_events.h"
 #include "uvm_perf_module.h"
 #include "uvm_perf_prefetch.h"
+#include "uvm_perf_utils.h"
 #include "uvm_kvmalloc.h"
 #include "uvm_va_block.h"
 #include "uvm_va_range.h"
@@ -355,7 +356,7 @@ static NvU32 uvm_perf_prefetch_prenotify_fault_migrations(uvm_va_block_t *va_blo
     uvm_page_mask_zero(prefetch_pages);
 
     if (UVM_ID_IS_CPU(new_residency) || va_block->gpus[uvm_id_gpu_index(new_residency)] != NULL)
-        resident_mask = uvm_va_block_resident_mask_get(va_block, new_residency);
+        resident_mask = uvm_va_block_resident_mask_get(va_block, new_residency, NUMA_NO_NODE);
 
     // If this is a first-touch fault and the destination processor is the
     // preferred location, populate the whole max_prefetch_region.

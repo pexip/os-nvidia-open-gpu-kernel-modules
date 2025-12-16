@@ -1,0 +1,39 @@
+From feaaaf717e8e0ab01fa5cb66bd6f575a6bd5ac3f Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Thu, 5 Jun 2025 18:16:35 +0200
+Subject: [PATCH] backport page_pgmap changes from 570.153.02
+
+---
+ kernel-open/nvidia-uvm/uvm_hmm.c     | 2 +-
+ kernel-open/nvidia-uvm/uvm_pmm_gpu.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel-open/nvidia-uvm/uvm_hmm.c b/kernel-open/nvidia-uvm/uvm_hmm.c
+index 49598cff..ebd827cf 100644
+--- a/kernel-open/nvidia-uvm/uvm_hmm.c
++++ b/kernel-open/nvidia-uvm/uvm_hmm.c
+@@ -1986,7 +1986,7 @@ static void fill_dst_pfn(uvm_va_block_t *va_block,
+ 
+     dpage = pfn_to_page(pfn);
+     UVM_ASSERT(is_device_private_page(dpage));
+-    UVM_ASSERT(dpage->pgmap->owner == &g_uvm_global);
++    UVM_ASSERT(page_pgmap(dpage)->owner == &g_uvm_global);
+ 
+     hmm_mark_gpu_chunk_referenced(va_block, gpu, gpu_chunk);
+     UVM_ASSERT(!page_count(dpage));
+diff --git a/kernel-open/nvidia-uvm/uvm_pmm_gpu.c b/kernel-open/nvidia-uvm/uvm_pmm_gpu.c
+index b12911c1..637d0725 100644
+--- a/kernel-open/nvidia-uvm/uvm_pmm_gpu.c
++++ b/kernel-open/nvidia-uvm/uvm_pmm_gpu.c
+@@ -3309,7 +3309,7 @@ NvU32 uvm_pmm_gpu_phys_to_virt(uvm_pmm_gpu_t *pmm, NvU64 phys_addr, NvU64 region
+ 
+ static uvm_pmm_gpu_t *devmem_page_to_pmm(struct page *page)
+ {
+-    return container_of(page->pgmap, uvm_pmm_gpu_t, devmem.pagemap);
++    return container_of(page_pgmap(page), uvm_pmm_gpu_t, devmem.pagemap);
+ }
+ 
+ static uvm_gpu_chunk_t *devmem_page_to_chunk_locked(struct page *page)
+-- 
+2.39.5
+

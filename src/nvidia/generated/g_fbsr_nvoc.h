@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2009-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2009-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -91,11 +91,16 @@ typedef struct OBJFBSR OBJFBSR;
 
 
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_FBSR_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJFBSR {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -161,38 +166,6 @@ NV_STATUS __nvoc_objCreate_OBJFBSR(OBJFBSR**, Dynamic*, NvU32);
 #define fbsrEnd_HAL(pGpu, pFbsr) fbsrEnd_DISPATCH(pGpu, pFbsr)
 #define fbsrSendMemsysProgramRawCompressionMode(pGpu, pFbsr, bRawMode) fbsrSendMemsysProgramRawCompressionMode_DISPATCH(pGpu, pFbsr, bRawMode)
 #define fbsrSendMemsysProgramRawCompressionMode_HAL(pGpu, pFbsr, bRawMode) fbsrSendMemsysProgramRawCompressionMode_DISPATCH(pGpu, pFbsr, bRawMode)
-static inline NV_STATUS fbsrCreateChannelForCopy_46f6a7(struct OBJGPU *pGpu, struct OBJFBSR *pFbsr) {
-    return NV_ERR_NOT_SUPPORTED;
-}
-
-
-#ifdef __nvoc_fbsr_h_disabled
-static inline NV_STATUS fbsrCreateChannelForCopy(struct OBJGPU *pGpu, struct OBJFBSR *pFbsr) {
-    NV_ASSERT_FAILED_PRECOMP("OBJFBSR was disabled!");
-    return NV_ERR_NOT_SUPPORTED;
-}
-#else //__nvoc_fbsr_h_disabled
-#define fbsrCreateChannelForCopy(pGpu, pFbsr) fbsrCreateChannelForCopy_46f6a7(pGpu, pFbsr)
-#endif //__nvoc_fbsr_h_disabled
-
-#define fbsrCreateChannelForCopy_HAL(pGpu, pFbsr) fbsrCreateChannelForCopy(pGpu, pFbsr)
-
-static inline NV_STATUS fbsrDestroyChannelForCopy_46f6a7(struct OBJGPU *pGpu, struct OBJFBSR *pFbsr) {
-    return NV_ERR_NOT_SUPPORTED;
-}
-
-
-#ifdef __nvoc_fbsr_h_disabled
-static inline NV_STATUS fbsrDestroyChannelForCopy(struct OBJGPU *pGpu, struct OBJFBSR *pFbsr) {
-    NV_ASSERT_FAILED_PRECOMP("OBJFBSR was disabled!");
-    return NV_ERR_NOT_SUPPORTED;
-}
-#else //__nvoc_fbsr_h_disabled
-#define fbsrDestroyChannelForCopy(pGpu, pFbsr) fbsrDestroyChannelForCopy_46f6a7(pGpu, pFbsr)
-#endif //__nvoc_fbsr_h_disabled
-
-#define fbsrDestroyChannelForCopy_HAL(pGpu, pFbsr) fbsrDestroyChannelForCopy(pGpu, pFbsr)
-
 NV_STATUS fbsrInit_GM107(struct OBJGPU *pGpu, struct OBJFBSR *pFbsr);
 
 
@@ -327,4 +300,5 @@ static inline void fbsrFreeReservedSysMemoryForPowerMgmt(struct OBJFBSR *pFbsr) 
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_FBSR_NVOC_H_

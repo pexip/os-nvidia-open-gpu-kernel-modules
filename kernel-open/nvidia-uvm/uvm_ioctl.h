@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2013-2019 NVidia Corporation
+    Copyright (c) 2013-2023 NVidia Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -320,7 +320,7 @@ typedef struct
 
 typedef struct
 {
-    NvProcessorUuid gpuUuidArray[UVM_MAX_GPUS];                    // IN
+    NvProcessorUuid gpuUuidArray[UVM_MAX_GPUS_V1];                 // IN
     NvU32           numGpus;                                       // IN
     NvU64           serverId                    NV_ALIGN_BYTES(8); // OUT
     NV_STATUS       rmStatus;                                      // OUT
@@ -344,9 +344,9 @@ typedef struct
 
 typedef struct
 {
-    NvProcessorUuid gpuUuidArray[UVM_MAX_GPUS]; // OUT
-    NvU32           validCount;                 // OUT
-    NV_STATUS       rmStatus;                   // OUT
+    NvProcessorUuid gpuUuidArray[UVM_MAX_GPUS_V1]; // OUT
+    NvU32           validCount;                    // OUT
+    NV_STATUS       rmStatus;                      // OUT
 } UVM_GET_GPU_UUID_TABLE_PARAMS;
 
 #if defined(WIN32) || defined(WIN64)
@@ -494,7 +494,7 @@ typedef struct
     NvU64                   base                            NV_ALIGN_BYTES(8); // IN
     NvU64                   length                          NV_ALIGN_BYTES(8); // IN
     NvU64                   offset                          NV_ALIGN_BYTES(8); // IN
-    UvmGpuMappingAttributes perGpuAttributes[UVM_MAX_GPUS];                    // IN
+    UvmGpuMappingAttributes perGpuAttributes[UVM_MAX_GPUS_V2];                 // IN
     NvU64                   gpuAttributesCount              NV_ALIGN_BYTES(8); // IN
     NvS32                   rmCtrlFd;                                          // IN
     NvU32                   hClient;                                           // IN
@@ -552,7 +552,7 @@ typedef struct
 
 typedef struct
 {
-    NvProcessorUuid gpu_uuid;    // IN
+    NvProcessorUuid gpu_uuid;    // IN/OUT
     NvBool          numaEnabled; // OUT
     NvS32           numaNodeId;  // OUT
     NvS32           rmCtrlFd;    // IN
@@ -633,6 +633,7 @@ typedef struct
     NvU64           requestedBase      NV_ALIGN_BYTES(8); // IN
     NvU64           length             NV_ALIGN_BYTES(8); // IN
     NvProcessorUuid preferredLocation;                    // IN
+    NvS32           preferredCpuNumaNode;                 // IN
     NV_STATUS       rmStatus;                             // OUT
 } UVM_SET_PREFERRED_LOCATION_PARAMS;
 
@@ -766,8 +767,19 @@ typedef struct
 #define UVM_MIGRATE_FLAGS_ALL                   (UVM_MIGRATE_FLAG_ASYNC | \
                                                  UVM_MIGRATE_FLAGS_TEST_ALL)
 
-// For pageable migrations, cpuNumaNode is used as the destination NUMA node if
-// destinationUuid is the CPU.
+// If NV_ERR_INVALID_ARGUMENT is returned it is because cpuMemoryNode is not
+// valid and the destination processor is the CPU. cpuMemoryNode is considered
+// invalid if:
+//      * it is less than -1,
+//      * it is equal to or larger than the maximum number of nodes, or
+//      * it corresponds to a registered GPU.
+//      * it is not in the node_possible_map set of nodes,
+//      * it does not have onlined memory
+//
+// For pageable migrations:
+//
+// In addition to the above, in the case of pageable memory, the
+// cpuMemoryNode is considered invalid if it's -1.
 //
 // If NV_WARN_NOTHING_TO_DO is returned, user-space is responsible for
 // completing the migration of the VA range described by userSpaceStart and
@@ -775,6 +787,7 @@ typedef struct
 //
 // If NV_ERR_MORE_PROCESSING_REQUIRED is returned, user-space is responsible
 // for re-trying with a different cpuNumaNode, starting at userSpaceStart.
+//
 #define UVM_MIGRATE                                                   UVM_IOCTL_BASE(51)
 typedef struct
 {
@@ -784,7 +797,7 @@ typedef struct
     NvU32           flags;                                // IN
     NvU64           semaphoreAddress   NV_ALIGN_BYTES(8); // IN
     NvU32           semaphorePayload;                     // IN
-    NvU32           cpuNumaNode;                          // IN
+    NvS32           cpuNumaNode;                          // IN
     NvU64           userSpaceStart     NV_ALIGN_BYTES(8); // OUT
     NvU64           userSpaceLength    NV_ALIGN_BYTES(8); // OUT
     NV_STATUS       rmStatus;                             // OUT
@@ -822,7 +835,14 @@ typedef struct
 
 //
 // Initialize any tracker object such as a queue or counter
-// UvmToolsCreateEventQueue, UvmToolsCreateProcessAggregateCounters, UvmToolsCreateProcessorCounters
+// UvmToolsCreateEventQueue, UvmToolsCreateProcessAggregateCounters,
+// UvmToolsCreateProcessorCounters.
+// Note that the order of structure elements has the version as the last field.
+// This is used to tell whether the kernel supports V2 events or not because
+// the V1 UVM_TOOLS_INIT_EVENT_TRACKER ioctl would not read or update that
+// field but V2 will. This is needed because it is possible to create an event
+// queue before CUDA is initialized which means UvmSetDriverVersion() hasn't
+// been called yet and the kernel version is unknown.
 //
 #define UVM_TOOLS_INIT_EVENT_TRACKER                                  UVM_IOCTL_BASE(56)
 typedef struct
@@ -834,6 +854,8 @@ typedef struct
     NvU32           allProcessors;                        // IN
     NvU32           uvmFd;                                // IN
     NV_STATUS       rmStatus;                             // OUT
+    NvU32           requestedVersion;                     // IN
+    NvU32           grantedVersion;                       // OUT
 } UVM_TOOLS_INIT_EVENT_TRACKER_PARAMS;
 
 //
@@ -914,6 +936,12 @@ typedef struct
 
 //
 // UvmToolsGetProcessorUuidTable
+// Note that tablePtr != 0 and count == 0 means that tablePtr is assumed to be
+// an array of size UVM_MAX_PROCESSORS_V1 and that only UvmEventEntry_V1
+// processor IDs (physical GPU UUIDs) will be reported.
+// tablePtr == 0 and count == 0 can be used to query how many processors are
+// present in order to dynamically allocate the correct size array since the
+// total number of processors is returned in 'count'.
 //
 #define UVM_TOOLS_GET_PROCESSOR_UUID_TABLE                            UVM_IOCTL_BASE(64)
 typedef struct
@@ -921,6 +949,7 @@ typedef struct
     NvU64     tablePtr                 NV_ALIGN_BYTES(8); // IN
     NvU32     count;                                      // IN/OUT
     NV_STATUS rmStatus;                                   // OUT
+    NvU32     version;                                    // OUT
 } UVM_TOOLS_GET_PROCESSOR_UUID_TABLE_PARAMS;
 
 
@@ -966,7 +995,7 @@ typedef struct
 {
     NvU64                   base                            NV_ALIGN_BYTES(8); // IN
     NvU64                   length                          NV_ALIGN_BYTES(8); // IN
-    UvmGpuMappingAttributes perGpuAttributes[UVM_MAX_GPUS];                    // IN
+    UvmGpuMappingAttributes perGpuAttributes[UVM_MAX_GPUS_V2];                 // IN
     NvU64                   gpuAttributesCount              NV_ALIGN_BYTES(8); // IN
     NV_STATUS               rmStatus;                                          // OUT
 } UVM_ALLOC_SEMAPHORE_POOL_PARAMS;

@@ -979,5 +979,121 @@ typedef struct NV0000_CTRL_GPU_GET_NVLINK_BW_MODE_PARAMS {
     NvU8 mode;
 } NV0000_CTRL_GPU_GET_NVLINK_BW_MODE_PARAMS;
 
+/*
+ * NV0000_CTRL_GPU_ACTIVE_DEVICE
+ *
+ * This structure describes a single MIG or plain device in the system
+ * available for use.
+ *
+ *   gpuId
+ *     ID of an attached GPU.
+ *   gpuInstanceId
+ *     MIG gpu instance id of an instance existing on this GPU.
+ *     NV0000_CTRL_GPU_INVALID_ID if the GPU is not in MIG mode.
+ *   computeInstanceId
+ *     MIG compute instance id of an instance existing on this GPU.
+ *     NV0000_CTRL_GPU_INVALID_ID if the GPU is not in MIG mode.
+ *
+ */
+typedef struct NV0000_CTRL_GPU_ACTIVE_DEVICE {
+    NvU32 gpuId;
+    NvU32 gpuInstanceId;
+    NvU32 computeInstanceId;
+} NV0000_CTRL_GPU_ACTIVE_DEVICE;
+
+/*
+ * NV0000_CTRL_CMD_GPU_GET_ACTIVE_DEVICE_IDS
+ *
+ * This command returns a list of valid GPUs treating uniformly MIG devices
+ * and GPUs not in MIG mode.
+ *
+ *   [out] devices
+ *      List of devices aviable for use.
+ *   [out] numDevices
+ *      Number of valid entries in gpus
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_INVALID_PARAM_STRUCT
+ */
+#define NV0000_CTRL_CMD_GPU_GET_ACTIVE_DEVICE_IDS (0x288U) /* finn: Evaluated from "(FINN_NV01_ROOT_GPU_INTERFACE_ID << 8) | NV0000_CTRL_GPU_GET_ACTIVE_DEVICE_IDS_PARAMS_MESSAGE_ID" */
+
+#define NV0000_CTRL_GPU_MAX_ACTIVE_DEVICES        256U
+
+#define NV0000_CTRL_GPU_GET_ACTIVE_DEVICE_IDS_PARAMS_MESSAGE_ID (0x88U)
+
+typedef struct NV0000_CTRL_GPU_GET_ACTIVE_DEVICE_IDS_PARAMS {
+    NvU32                         numDevices;
+    NV0000_CTRL_GPU_ACTIVE_DEVICE devices[NV0000_CTRL_GPU_MAX_ACTIVE_DEVICES];
+} NV0000_CTRL_GPU_GET_ACTIVE_DEVICE_IDS_PARAMS;
+
+/*
+ * NV0000_CTRL_CMD_GPU_ASYNC_ATTACH_ID
+ *
+ * This command attaches the GPU with the given gpuId, similar to
+ * NV0000_CTRL_CMD_GPU_ATTACH_IDS. However, this command instructs the RM
+ * to perform the attach in the background.
+ *
+ * After calling this command, clients are expected to call
+ * NV0000_CTRL_CMD_GPU_WAIT_ATTACH_ID before performing any operation that
+ * depends on the GPU being attached.
+ *
+ * If the gpuId fails to attach, either this command or the subsequent
+ * NV0000_CTRL_CMD_GPU_WAIT_ATTACH_ID command may fail.
+ *
+ * If clients from multiple processes use this command or the
+ * NV0000_CTRL_CMD_GPU_ATTACH_IDS command to attach a gpuId, the RM ensures
+ * that the gpuId won't be detached until all processes have issued a call to
+ * NV0000_CTRL_CMD_GPU_DETACH_IDS to detach the gpuId (or have terminated).
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_OPERATING_SYSTEM
+ *   NV_ERR_INVALID_PARAM_STRUCT
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NV0000_CTRL_CMD_GPU_ASYNC_ATTACH_ID (0x289U) /* finn: Evaluated from "(FINN_NV01_ROOT_GPU_INTERFACE_ID << 8) | NV0000_CTRL_GPU_ASYNC_ATTACH_ID_PARAMS_MESSAGE_ID" */
+
+#define NV0000_CTRL_GPU_ASYNC_ATTACH_ID_PARAMS_MESSAGE_ID (0x89U)
+
+typedef struct NV0000_CTRL_GPU_ASYNC_ATTACH_ID_PARAMS {
+    NvU32 gpuId;
+} NV0000_CTRL_GPU_ASYNC_ATTACH_ID_PARAMS;
+
+/*
+ * NV0000_CTRL_CMD_GPU_WAIT_ATTACH_ID
+ *
+ * This command waits for and returns the status of a background attach
+ * operation started by NV0000_CTRL_CMD_GPU_ASYNC_ATTACH_ID.
+ *
+ * Clients are expected to call this command after calling
+ * NV0000_CTRL_CMD_GPU_ASYNC_ATTACH_ID before performing any operation that
+ * depends on the GPU being attached.
+ *
+ * If the gpuId fails to attach, either this command or the previous
+ * NV0000_CTRL_CMD_GPU_ASYNC_ATTACH_ID command may fail.
+ *
+ * Calling this command for a gpuId that is already attached (for example,
+ * after a successful NV0000_CTRL_CMD_GPU_ATTACH_IDS) is a no-op.
+ *
+ * Calling this command for a gpuId that is neither attached nor has a
+ * background attach operation will result in NV_ERR_INVALID_ARGUMENT.
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_OPERATING_SYSTEM
+ *   NV_ERR_INVALID_PARAM_STRUCT
+ *   NV_ERR_INVALID_ARGUMENT
+ *   NV_ERR_IRQ_EDGE_TRIGGERED
+ *   NV_ERR_IRQ_NOT_FIRING
+ */
+#define NV0000_CTRL_CMD_GPU_WAIT_ATTACH_ID (0x290U) /* finn: Evaluated from "(FINN_NV01_ROOT_GPU_INTERFACE_ID << 8) | NV0000_CTRL_GPU_WAIT_ATTACH_ID_PARAMS_MESSAGE_ID" */
+
+#define NV0000_CTRL_GPU_WAIT_ATTACH_ID_PARAMS_MESSAGE_ID (0x90U)
+
+typedef struct NV0000_CTRL_GPU_WAIT_ATTACH_ID_PARAMS {
+    NvU32 gpuId;
+} NV0000_CTRL_GPU_WAIT_ATTACH_ID_PARAMS;
+
 /* _ctrl0000gpu_h_ */
 

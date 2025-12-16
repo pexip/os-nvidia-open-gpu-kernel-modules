@@ -946,7 +946,7 @@ NV_STATUS rmapiControlCacheGet
 )
 {
     NV_STATUS status = NV_OK;
-    NvU32 flags = 0;
+    NvU32 flags;
     NvU32 ctrlParamsSize;
 
     if (RmapiControlCache.mode == NV0000_CTRL_SYSTEM_RMCTRL_CACHE_MODE_CTRL_MODE_VERIFY_ONLY)
@@ -989,7 +989,7 @@ NV_STATUS rmapiControlCacheSet
 )
 {
     NV_STATUS status = NV_OK;
-    NvU32 flags = 0;
+    NvU32 flags;
     NvU32 ctrlParamsSize;
 
     status = rmapiutilGetControlInfo(cmd, &flags, NULL, &ctrlParamsSize);

@@ -1,4 +1,6 @@
-0001-backport-NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL-ch.patch
+0004-backport-page_pgmap-changes-from-570.153.02.patch
+0005-backport-hmm_make_device_exclusive_range-changes-fro.patch
+0006-backport-NV_DMA_BUF_HAS_DYNAMIC_ATTACHMENT-changes-f.patch
 hardening.patch
 typos.patch
 hmm.patch

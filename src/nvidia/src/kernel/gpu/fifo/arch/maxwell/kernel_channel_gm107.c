@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,6 +28,7 @@
 #include "kernel/gpu/mem_sys/kern_mem_sys.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/mem_mgr/mem_desc.h"
+#include "platform/sli/sli.h"
 
 #include "class/cl906f.h"
 
@@ -255,7 +256,8 @@ NV_STATUS kchannelAllocMem_GM107
         }
     }
 
-    status = memdescAllocList(pInstanceBlock->pInstanceBlockDesc, pInstAllocList);
+    memdescTagAllocList(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_116, 
+                        pInstanceBlock->pInstanceBlockDesc, pInstAllocList);
     if (status == NV_OK)
     {
         MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
@@ -510,11 +512,12 @@ kchannelFreeHwID_GM107
                                            kchannelGetRunlistId(pKernelChannel));
     EMEMBLOCK  *pFifoDataBlock;
 
+    NV_ASSERT_OR_RETURN(pChidMgr != NULL, NV_ERR_OBJECT_NOT_FOUND);
     pFifoDataBlock = pChidMgr->pFifoDataHeap->eheapGetBlock(
         pChidMgr->pFifoDataHeap,
         pKernelChannel->ChID,
         NV_FALSE);
-    NV_ASSERT_OR_RETURN(pFifoDataBlock, NV_ERR_OBJECT_NOT_FOUND);
+    NV_ASSERT_OR_RETURN(pFifoDataBlock != NULL, NV_ERR_OBJECT_NOT_FOUND);
     NV_ASSERT(pFifoDataBlock->pData == pKernelChannel);
 
     status = kfifoChidMgrFreeChid(pGpu, pKernelFifo, pChidMgr, pKernelChannel->ChID);

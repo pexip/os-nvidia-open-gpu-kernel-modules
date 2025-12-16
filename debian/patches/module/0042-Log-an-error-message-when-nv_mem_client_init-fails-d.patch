@@ -1,4 +1,4 @@
-From a49b85be06506c0f915c71da427b361dc9a11479 Mon Sep 17 00:00:00 2001
+From d754426352acfa9570934fbe7fb2ee41e776b410 Mon Sep 17 00:00:00 2001
 From: "Patrick J. LoPresti" <lopresti@gmail.com>
 Date: Wed, 24 Apr 2024 16:28:11 -0700
 Subject: [PATCH] Log an error message when nv_mem_client_init() fails due to
@@ -13,17 +13,17 @@ Origin: other, https://github.com/NVIDIA/open-gpu-kernel-modules/pull/630
  1 file changed, 1 insertion(+)
 
 diff --git a/nvidia-peermem/nvidia-peermem.c b/nvidia-peermem/nvidia-peermem.c
-index 66c4de8..75a0f39 100644
+index 53f6949d..bcb4a145 100644
 --- a/nvidia-peermem/nvidia-peermem.c
 +++ b/nvidia-peermem/nvidia-peermem.c
-@@ -548,6 +548,7 @@ out:
+@@ -557,6 +557,7 @@ out:
  
-     return status;
+     return rc;
  #else
 +    peer_err("module compiled without IB peer memory symbols present\n");
      return -EINVAL;
  #endif
  }
 -- 
-2.20.1
+2.39.5
 

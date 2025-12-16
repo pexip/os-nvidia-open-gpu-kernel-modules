@@ -30,7 +30,6 @@
 #include "rmapi/resource_fwd_decls.h"
 #include "core/locks.h"
 #include "core/system.h"
-#include "gpu/device/device.h"
 #include "resource_desc.h"
 #include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
@@ -66,6 +65,9 @@ rmclientConstruct_IMPL
     API_SECURITY_INFO *pSecInfo = pParams->pSecInfo;
     OBJGPU            *pGpu = NULL;
 
+    // RM client objects can only be created/destroyed with the RW API lock.
+    LOCK_ASSERT_AND_RETURN(rmapiLockIsWriteOwner());
+
     if (RMCFG_FEATURE_PLATFORM_GSP)
     {
         pGpu = gpumgrGetSomeGpu();
@@ -81,18 +83,21 @@ rmclientConstruct_IMPL
     pClient->pUserInfo       = NULL;
     pClient->pSecurityToken  = NULL;
     pClient->pOSInfo         = pSecInfo->clientOSInfo;
+    pClient->imexChannel     = -1;
 
     pClient->cachedPrivilege = pSecInfo->privLevel;
 
     // TODO: Revisit in M2, see GPUSWSEC-1176
     if (RMCFG_FEATURE_PLATFORM_GSP && IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu))
     {
-        if (pSecInfo->pProcessToken != NULL && ((NvU64) pSecInfo->pProcessToken) < VMMU_MAX_GFID)
+        if (pSecInfo->pProcessToken != NULL &&
+            ((NvU64) pSecInfo->pProcessToken) < VMMU_MAX_GFID)
         {
             // Trunc to NvU32 to fit ProcID (VMMU_MAX_GFID << MAX_INT)
             pClient->ProcID = (NvU32)((NvU64)pSecInfo->pProcessToken);
 
-            NV_PRINTF(LEVEL_INFO, "Client allocation with GFID = %u\n", (NvU32)((NvU64)pSecInfo->pProcessToken));
+            NV_PRINTF(LEVEL_INFO, "Client allocation with GFID = %u\n",
+                     (NvU32)((NvU64)pSecInfo->pProcessToken));
         }
     }
     else
@@ -225,12 +230,10 @@ rmclientDestruct_IMPL
 )
 {
     NV_STATUS           status = NV_OK;
-    RsClient           *pRsClient = staticCast(pClient, RsClient);
-    NV_STATUS           tmpStatus;
-    NvHandle            hClient = pRsClient->hClient;
     NvBool              bReleaseLock = NV_FALSE;
-    RS_ITERATOR         it;
-    RM_API             *pRmApi = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
+
+    // RM client objects can only be created/destroyed with the RW API lock.
+    NV_ASSERT(rmapiLockIsWriteOwner());
 
     NV_PRINTF(LEVEL_INFO, "    type: client\n");
 
@@ -240,26 +243,6 @@ rmclientDestruct_IMPL
     CliUnregisterFromThirdPartyP2P(pClient);
 
     osPutPidInfo(pClient->pOsPidInfo);
-
-    //
-    // Free all of the devices of the client (do it in reverse order to
-    // facilitate tear down of things like ctxdmas, etc)
-    //
-    it = clientRefIter(pRsClient, NULL, classId(Device), RS_ITERATE_CHILDREN, NV_TRUE);
-    while (clientRefIterNext(it.pClient, &it))
-    {
-        Device *pDeviceInfo = dynamicCast(it.pResourceRef->pResource, Device);
-
-        // This path is deprecated.
-        NV_ASSERT(0);
-
-        tmpStatus = pRmApi->Free(pRmApi, hClient, RES_GET_HANDLE(pDeviceInfo));
-        if ((tmpStatus != NV_OK) && (status == NV_OK))
-            status = tmpStatus;
-
-        // re-snap iterator as Device list was mutated
-        it = clientRefIter(pRsClient, NULL, classId(Device), RS_ITERATE_CHILDREN, NV_TRUE);
-    }
 
     // Updating the client list just before client handle unregister //
     // in case child free functions need to iterate over all clients //
@@ -332,13 +315,12 @@ rmclientInterMap_IMPL
     mapToParams.hMemoryDevice    = pPrivate->hMemoryDevice;
     mapToParams.gpuMask          = pPrivate->gpuMask;
     mapToParams.bSubdeviceHandleProvided = pPrivate->bSubdeviceHandleProvided;
-    mapToParams.bDmaMapNeeded    = pPrivate->bDmaMapNeeded;
     mapToParams.bFlaMapping      = pPrivate->bFlaMapping;
 
     return resMapTo(pMapperRef->pResource, &mapToParams);
 }
 
-void
+NV_STATUS
 rmclientInterUnmap_IMPL
 (
     RmClient *pClient,
@@ -356,13 +338,14 @@ rmclientInterUnmap_IMPL
     unmapFromParams.hMemory   = pParams->hMappable;
     unmapFromParams.flags     = pParams->flags;
     unmapFromParams.dmaOffset = pParams->dmaOffset;
+    unmapFromParams.size      = pParams->size;
 
     unmapFromParams.pGpu             = pPrivate->pGpu;
     unmapFromParams.hBroadcastDevice = pPrivate->hBroadcastDevice;
     unmapFromParams.gpuMask          = pPrivate->gpuMask;
     unmapFromParams.bSubdeviceHandleProvided = pPrivate->bSubdeviceHandleProvided;
 
-    resUnmapFrom(pMapperRef->pResource, &unmapFromParams);
+    return resUnmapFrom(pMapperRef->pResource, &unmapFromParams);
 }
 
 RS_PRIV_LEVEL
@@ -575,6 +558,12 @@ NvBool rmclientIsAdminByHandle(NvHandle hClient, RS_PRIV_LEVEL privLevel)
 {
     RmClient *pClient = serverutilGetClientUnderLock(hClient);
     return pClient ? rmclientIsAdmin(pClient, privLevel) : NV_FALSE;
+}
+
+NvBool rmclientIsKernelOnlyByHandle(NvHandle hClient)
+{
+    RmClient *pClient = serverutilGetClientUnderLock(hClient);
+    return pClient ? (pClient->pSecurityToken == NULL) : NV_FALSE;
 }
 
 NvBool rmclientSetClientFlagsByHandle(NvHandle hClient, NvU32 clientFlags)
@@ -809,6 +798,11 @@ static NvBool _rmclientIsCapable
         case NV_RM_CAP_EXT_FABRIC_MGMT:
         {
             internalClassId = classId(FmSessionApi);
+            break;
+        }
+        case NV_RM_CAP_SYS_FABRIC_IMEX_MGMT:
+        {
+            internalClassId = classId(ImexSessionApi);
             break;
         }
         case NV_RM_CAP_SYS_SMC_MONITOR:

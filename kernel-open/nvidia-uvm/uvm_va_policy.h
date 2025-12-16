@@ -24,6 +24,7 @@
 #ifndef __UVM_VA_POLICY_H__
 #define __UVM_VA_POLICY_H__
 
+#include <linux/numa.h>
 #include "uvm_linux.h"
 #include "uvm_forward_decl.h"
 #include "uvm_processors.h"
@@ -61,6 +62,18 @@ struct uvm_va_policy_struct
     // Processor ID of the preferred location for this VA range.
     // This is set to UVM_ID_INVALID if no preferred location is set.
     uvm_processor_id_t preferred_location;
+
+    // If the preferred location is the CPU, this is either the preferred NUMA
+    // node ID or NUMA_NO_NODE to indicate that there is no preference among
+    // nodes.
+    // If preferred_location is a GPU, preferred_nid will be used if CPU
+    // pages have to be allocated for any staging copies. Otherwise, it is
+    // not used.
+    //
+    // TODO: Bug 4148100 - Preferred_location and preferred_nid should be
+    //       combined into a new type that combines the processor and NUMA node
+    //       ID.
+    int preferred_nid;
 
     // Mask of processors that are accessing this VA range and should have
     // their page tables updated to access the (possibly remote) pages.
@@ -108,6 +121,12 @@ static const uvm_va_policy_node_t *uvm_va_policy_node_from_policy(const uvm_va_p
 {
     return container_of(policy, uvm_va_policy_node_t, policy);
 }
+
+// Compare the preferred location and preferred nid from the policy
+// with the input processor and CPU node ID.
+// For GPUs, only the processors are compared. For the CPU, the
+// NUMA node IDs are also compared.
+bool uvm_va_policy_preferred_location_equal(const uvm_va_policy_t *policy, uvm_processor_id_t proc, int cpu_node_id);
 
 #if UVM_IS_CONFIG_HMM()
 
@@ -158,6 +177,7 @@ NV_STATUS uvm_va_policy_set_range(uvm_va_block_t *va_block,
                                   uvm_va_policy_type_t which,
                                   bool is_default,
                                   uvm_processor_id_t processor_id,
+                                  int cpu_node_id,
                                   uvm_read_duplication_policy_t new_policy);
 
 // This is an optimized version of uvm_va_policy_set_range() where the caller
@@ -169,6 +189,7 @@ NV_STATUS uvm_va_policy_set_range(uvm_va_block_t *va_block,
 const uvm_va_policy_t *uvm_va_policy_set_preferred_location(uvm_va_block_t *va_block,
                                                             uvm_va_block_region_t region,
                                                             uvm_processor_id_t processor_id,
+                                                            int cpu_node_id,
                                                             const uvm_va_policy_t *old_policy);
 
 // Iterators for specific VA policy ranges.

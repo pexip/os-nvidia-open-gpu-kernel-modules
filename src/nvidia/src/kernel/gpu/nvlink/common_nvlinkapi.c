@@ -69,6 +69,7 @@ static void _calculateNvlinkCaps
     NvU32   bridgedLinks,
     NvU32   ipVerNvlink,
     NvBool  bMIGNvLinkP2PSupported,
+    NvBool  bNvlinkEnabled,
     NV2080_CTRL_CMD_NVLINK_GET_NVLINK_CAPS_PARAMS *pParams
 )
 {
@@ -179,6 +180,11 @@ static void _calculateNvlinkCaps
         }
     }
 
+    if (bNvlinkEnabled)
+    {
+        RMCTRL_SET_CAP(tempCaps, NV2080_CTRL_NVLINK_CAPS, _VALID);
+    }
+
     portMemCopy(&pParams->capsTbl, NV2080_CTRL_NVLINK_CAPS_TBL_SIZE, tempCaps, NV2080_CTRL_NVLINK_CAPS_TBL_SIZE);
 }
 
@@ -197,23 +203,6 @@ nvlinkCtrlCmdBusGetNvlinkCaps
     KernelMIGManager *pKernelMIGManager      = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
     NvBool            bMIGNvLinkP2PSupported = ((pKernelMIGManager != NULL) &&
                                                 kmigmgrIsMIGNvlinkP2PSupported(pGpu, pKernelMIGManager));
-    //
-    // vGPU:
-    //
-    // Since vGPU does all real hardware management in the
-    // host, if we are in guest OS (where IS_VIRTUAL(pGpu) is true),
-    // do an RPC to the host to get blacklist information from host RM
-    //
-    if (IS_VIRTUAL(pGpu))
-    {
-        CALL_CONTEXT *pCallContext = resservGetTlsCallContext();
-        RmCtrlParams *pRmCtrlParams = pCallContext->pControlParams;
-        NV_STATUS     status = NV_OK;
-
-        NV_RM_RPC_CONTROL(pGpu, pRmCtrlParams->hClient, pRmCtrlParams->hObject, pRmCtrlParams->cmd,
-                          pRmCtrlParams->pParams, pRmCtrlParams->paramsSize, status);
-        return status;
-    }
 
     // Initialize link masks to 0
     pParams->enabledLinkMask    = 0;
@@ -241,7 +230,10 @@ nvlinkCtrlCmdBusGetNvlinkCaps
             //
             knvlinkFilterBridgeLinks_HAL(pGpu, pKernelNvlink);
         }
-        _calculateNvlinkCaps(pGpu, pKernelNvlink->bridgeSensableLinks, pKernelNvlink->bridgedLinks, pKernelNvlink->ipVerNvlink, bMIGNvLinkP2PSupported, pParams);
+        _calculateNvlinkCaps(pGpu, pKernelNvlink->bridgeSensableLinks, pKernelNvlink->bridgedLinks,
+                             pKernelNvlink->ipVerNvlink, bMIGNvLinkP2PSupported,
+                             pKernelNvlink->getProperty(pNvlink, PDB_PROP_KNVLINK_ENABLED),
+                             pParams);
 
         pParams->discoveredLinkMask = knvlinkGetDiscoveredLinkMask(pGpu, pKernelNvlink);
         pParams->enabledLinkMask    = knvlinkGetEnabledLinkMask(pGpu, pKernelNvlink);
@@ -624,6 +616,8 @@ subdeviceCtrlCmdBusGetNvlinkStatus_IMPL
                 FOR_EACH_INDEX_IN_MASK(32, i, pParams->enabledLinkMask)
                 {
                     NV2080_CTRL_NVLINK_DEVICE_INFO *pDeviceInfo = &pParams->linkInfo[i].remoteDeviceInfo;
+                    if (pDeviceInfo->deviceType == NV2080_CTRL_NVLINK_DEVICE_INFO_DEVICE_TYPE_SWITCH)
+                    	continue;
                     OBJGPU *pLoopGpu = gpumgrGetGpuFromUuid(pDeviceInfo->deviceUUID,
                                                             DRF_DEF(2080_GPU_CMD, _GPU_GET_GID_FLAGS, _TYPE, _SHA1) |
                                                             DRF_DEF(2080_GPU_CMD, _GPU_GET_GID_FLAGS, _FORMAT, _BINARY));
@@ -659,7 +653,7 @@ subdeviceCtrlCmdBusGetNvlinkStatus_IMPL
 
     if (!bMIGNvLinkP2PSupported)
     {
-        NV_PRINTF(LEVEL_ERROR, "MIG NVLink P2P is not supported.\n");
+        NV_PRINTF(LEVEL_INFO, "MIG NVLink P2P is not supported.\n");
         status = NV_OK;
         return status;
     }

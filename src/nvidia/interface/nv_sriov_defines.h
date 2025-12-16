@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -49,12 +49,12 @@
 
 // Top half serviced interrupts (serviced by both guest and host)
 
-#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_REQUEST          2:2
-#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_REQUEST_EN       (0x1)
-#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_REQUEST_DIS      (0x0)
-#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_HANDLE           (0 ? NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_REQUEST)
+#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_REQUEST                     2:2
+#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_REQUEST_EN                  (0x1)
+#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_REQUEST_DIS                 (0x0)
+#define NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_HANDLE                      (0 ? NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_REQUEST)
 
-#define NV_DOORBELL_NOTIFY_LEAF_TOP_HALF_MASK                                   NVBIT(NV_DOORBELL_NOTIFY_LEAF_SERVICE_REPLAYABLE_FAULT_FLUSH_HANDLE)
+#define NV_DOORBELL_NOTIFY_LEAF_TOP_HALF_MASK                                   NVBIT(NV_DOORBELL_NOTIFY_LEAF_SERVICE_LOCKLESS_OP_HANDLE)
 
 // Host PF interrupts
 
@@ -91,3 +91,4 @@
 #define NV_VF_SCRATCH_REGISTER_GUEST_RPC_HI                                     0x3
 
 #define MAX_PARTITIONS_WITH_GFID                                                (32)
+#define MAX_PARTITIONS_WITH_GFID_MIG_ENABLED                                    (7)

@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -42,8 +42,22 @@ extern "C" {
 #include "kernel/gpu/rc/kernel_rc_watchdog.h"
 #include "kernel/gpu/rc/kernel_rc_watchdog_private.h"
 #include "kernel/gpu/gpu_engine_type.h"
-#include "kernel/gpu/subdevice/subdevice.h"
 #include "kernel/rmapi/client_resource.h"
+
+#include "ctrl/ctrl2080/ctrl2080rc.h"
+
+struct Subdevice;
+
+#ifndef __NVOC_CLASS_Subdevice_TYPEDEF__
+#define __NVOC_CLASS_Subdevice_TYPEDEF__
+typedef struct Subdevice Subdevice;
+#endif /* __NVOC_CLASS_Subdevice_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_Subdevice
+#define __nvoc_class_id_Subdevice 0x4b01b3
+#endif /* __nvoc_class_id_Subdevice */
+
+
 
 typedef enum {
     RC_NOTIFIER_SCOPE_CHANNEL = 0,
@@ -53,11 +67,16 @@ typedef enum {
 /*!
  * Kernel interface for RC (Robust Channels) and Watchdog
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_KERNEL_RC_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct KernelRc {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct OBJENGSTATE __nvoc_base_OBJENGSTATE;
@@ -65,6 +84,7 @@ struct KernelRc {
     struct OBJENGSTATE *__nvoc_pbase_OBJENGSTATE;
     struct KernelRc *__nvoc_pbase_KernelRc;
     NV_STATUS (*__krcConstructEngine__)(struct OBJGPU *, struct KernelRc *, ENGDESCRIPTOR);
+    void (*__krcWatchdogRecovery__)(struct OBJGPU *, struct KernelRc *);
     NV_STATUS (*__krcStateLoad__)(POBJGPU, struct KernelRc *, NvU32);
     NV_STATUS (*__krcStateUnload__)(POBJGPU, struct KernelRc *, NvU32);
     NV_STATUS (*__krcStateInitLocked__)(POBJGPU, struct KernelRc *);
@@ -82,6 +102,7 @@ struct KernelRc {
     NvBool bBreakOnRc;
     NvBool bLogEvents;
     struct KernelChannel *pPreviousChannelInError;
+    NvBool bRcOnBar2Fault;
     NvBool bGpuUuidLoggedOnce;
     KernelWatchdog watchdog;
     KernelWatchdogPersistent watchdogPersistent;
@@ -119,6 +140,8 @@ NV_STATUS __nvoc_objCreate_KernelRc(KernelRc**, Dynamic*, NvU32);
     __nvoc_objCreate_KernelRc((ppNewObj), staticCast((pParent), Dynamic), (createFlags))
 
 #define krcConstructEngine(pGpu, pKernelRc, engDescriptor) krcConstructEngine_DISPATCH(pGpu, pKernelRc, engDescriptor)
+#define krcWatchdogRecovery(pGpu, pKernelRc) krcWatchdogRecovery_DISPATCH(pGpu, pKernelRc)
+#define krcWatchdogRecovery_HAL(pGpu, pKernelRc) krcWatchdogRecovery_DISPATCH(pGpu, pKernelRc)
 #define krcStateLoad(pGpu, pEngstate, arg0) krcStateLoad_DISPATCH(pGpu, pEngstate, arg0)
 #define krcStateUnload(pGpu, pEngstate, arg0) krcStateUnload_DISPATCH(pGpu, pEngstate, arg0)
 #define krcStateInitLocked(pGpu, pEngstate) krcStateInitLocked_DISPATCH(pGpu, pEngstate)
@@ -283,19 +306,6 @@ static inline void krcWatchdog(struct OBJGPU *pGpu, struct KernelRc *pKernelRc) 
 
 #define krcWatchdog_HAL(pGpu, pKernelRc) krcWatchdog(pGpu, pKernelRc)
 
-void krcWatchdogRecovery_KERNEL(struct OBJGPU *pGpu, struct KernelRc *pKernelRc);
-
-
-#ifdef __nvoc_kernel_rc_h_disabled
-static inline void krcWatchdogRecovery(struct OBJGPU *pGpu, struct KernelRc *pKernelRc) {
-    NV_ASSERT_FAILED_PRECOMP("KernelRc was disabled!");
-}
-#else //__nvoc_kernel_rc_h_disabled
-#define krcWatchdogRecovery(pGpu, pKernelRc) krcWatchdogRecovery_KERNEL(pGpu, pKernelRc)
-#endif //__nvoc_kernel_rc_h_disabled
-
-#define krcWatchdogRecovery_HAL(pGpu, pKernelRc) krcWatchdogRecovery(pGpu, pKernelRc)
-
 static inline void krcWatchdogCallbackPerf_b3696a(struct OBJGPU *pGpu, struct KernelRc *pKernelRc) {
     return;
 }
@@ -315,6 +325,16 @@ NV_STATUS krcConstructEngine_IMPL(struct OBJGPU *pGpu, struct KernelRc *pKernelR
 
 static inline NV_STATUS krcConstructEngine_DISPATCH(struct OBJGPU *pGpu, struct KernelRc *pKernelRc, ENGDESCRIPTOR engDescriptor) {
     return pKernelRc->__krcConstructEngine__(pGpu, pKernelRc, engDescriptor);
+}
+
+static inline void krcWatchdogRecovery_f2d351(struct OBJGPU *pGpu, struct KernelRc *pKernelRc) {
+    NV_ASSERT_PRECOMP(0);
+}
+
+void krcWatchdogRecovery_KERNEL(struct OBJGPU *pGpu, struct KernelRc *pKernelRc);
+
+static inline void krcWatchdogRecovery_DISPATCH(struct OBJGPU *pGpu, struct KernelRc *pKernelRc) {
+    pKernelRc->__krcWatchdogRecovery__(pGpu, pKernelRc);
 }
 
 static inline NV_STATUS krcStateLoad_DISPATCH(POBJGPU pGpu, struct KernelRc *pEngstate, NvU32 arg0) {
@@ -379,10 +399,10 @@ static inline void krcInitRegistryOverridesDelayed(struct OBJGPU *pGpu, struct K
 #define krcInitRegistryOverridesDelayed(pGpu, pKernelRc) krcInitRegistryOverridesDelayed_IMPL(pGpu, pKernelRc)
 #endif //__nvoc_kernel_rc_h_disabled
 
-NV_STATUS krcErrorSetNotifier_IMPL(struct OBJGPU *pGpu, struct KernelRc *pKernelRc, struct KernelChannel *pKernelChannel, NvU32 exceptType, NvU32 nv2080EngineType, RC_NOTIFIER_SCOPE scope);
+NV_STATUS krcErrorSetNotifier_IMPL(struct OBJGPU *pGpu, struct KernelRc *pKernelRc, struct KernelChannel *pKernelChannel, NvU32 exceptType, RM_ENGINE_TYPE nv2080EngineType, RC_NOTIFIER_SCOPE scope);
 
 #ifdef __nvoc_kernel_rc_h_disabled
-static inline NV_STATUS krcErrorSetNotifier(struct OBJGPU *pGpu, struct KernelRc *pKernelRc, struct KernelChannel *pKernelChannel, NvU32 exceptType, NvU32 nv2080EngineType, RC_NOTIFIER_SCOPE scope) {
+static inline NV_STATUS krcErrorSetNotifier(struct OBJGPU *pGpu, struct KernelRc *pKernelRc, struct KernelChannel *pKernelChannel, NvU32 exceptType, RM_ENGINE_TYPE nv2080EngineType, RC_NOTIFIER_SCOPE scope) {
     NV_ASSERT_FAILED_PRECOMP("KernelRc was disabled!");
     return NV_ERR_NOT_SUPPORTED;
 }
@@ -568,4 +588,5 @@ void krcWatchdogTimerProc(struct OBJGPU *pGpu, void *);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_KERNEL_RC_NVOC_H_

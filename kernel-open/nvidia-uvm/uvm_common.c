@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2013-2021 NVIDIA Corporation
+    Copyright (c) 2013-2023 NVIDIA Corporation
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -233,18 +233,6 @@ unsigned uvm_get_stale_thread_id(void)
     return (unsigned)task_pid_vnr(current);
 }
 
-//
-// A simple security rule for allowing access to UVM user space memory: if you
-// are the same user as the owner of the memory, or if you are root, then you
-// are granted access. The idea is to allow debuggers and profilers to work, but
-// without opening up any security holes.
-//
-NvBool uvm_user_id_security_check(uid_t euidTarget)
-{
-    return (NV_CURRENT_EUID() == euidTarget) ||
-           (UVM_ROOT_UID == euidTarget);
-}
-
 void on_uvm_test_fail(void)
 {
     (void)NULL;
@@ -330,9 +318,10 @@ int format_uuid_to_buffer(char *buffer, unsigned bufferLength, const NvProcessor
     unsigned i;
     unsigned dashMask = 1 << 4 | 1 << 6 | 1 << 8 | 1 << 10;
 
-    memcpy(buffer, "UVM-GPU-", 8);
     if (bufferLength < (8 /*prefix*/+ 16 * 2 /*digits*/ + 4 * 1 /*dashes*/ + 1 /*null*/))
         return *buffer = 0;
+
+    memcpy(buffer, "UVM-GPU-", 8);
 
     for (i = 0; i < 16; i++) {
         *str++ = uvm_digit_to_hex(pUuidStruct->uuid[i] >> 4);

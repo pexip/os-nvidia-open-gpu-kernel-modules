@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -144,20 +144,33 @@ NV_STATUS serverFreeResourceTreeUnderLock(RsServer *pServer, RS_RES_FREE_PARAMS 
     if (status != NV_OK)
         return status;
 
-    pLockInfo->flags |= RS_LOCK_FLAGS_FREE_SESSION_LOCK;
-    pLockInfo->pResRefToBackRef = pResourceRef;
-    pLockInfo->traceOp = RS_LOCK_TRACE_FREE;
-    pLockInfo->traceClassId = pResourceRef->externalClassId;
-    status = serverResLock_Prologue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
-    if (status != NV_OK)
-        goto done;
+    if (pResourceRef->pResource == NULL)
+    {
+        // 
+        // We don't need to acquire the resource lock for a resource
+        // that already got freed during resource invalidation.
+        // 
 
-    status = clientFreeResource(pResourceRef->pClient, pServer, pFreeParams);
-    NV_ASSERT(status == NV_OK);
+        status = clientFreeResource(pResourceRef->pClient, pServer, pFreeParams);
+        NV_ASSERT(status == NV_OK);
+    }
+    else
+    {
+        pLockInfo->flags |= RS_LOCK_FLAGS_FREE_SESSION_LOCK;
+        pLockInfo->pResRefToBackRef = pResourceRef;
+        pLockInfo->traceOp = RS_LOCK_TRACE_FREE;
+        pLockInfo->traceClassId = pResourceRef->externalClassId;
+        status = serverResLock_Prologue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
+        if (status != NV_OK)
+            goto done;
+
+        status = clientFreeResource(pResourceRef->pClient, pServer, pFreeParams);
+        NV_ASSERT(status == NV_OK);
+
+        serverResLock_Epilogue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
+    }
 
 done:
-    serverResLock_Epilogue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
-
     serverSessionLock_Epilogue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
 
     return status;
@@ -673,8 +686,9 @@ serverAllocResource
         }
         else
         {
-            status = serverLookupSecondClient(pParams, &hSecondClient);
-
+            status = serverAllocLookupSecondClient(pParams->externalClassId, 
+                                                   pParams->pAllocParams,
+                                                   &hSecondClient);
             if (status != NV_OK)
                 goto done;
 
@@ -1059,7 +1073,7 @@ serverFreeResourceTree
     status = clientGetResourceRef(pClient, pParams->hResource, &pResourceRef);
     if (status != NV_OK)
     {
-        NV_PRINTF(LEVEL_ERROR, "hObject 0x%x not found for client 0x%x\n",
+        NV_PRINTF(LEVEL_NOTICE, "hObject 0x%x not found for client 0x%x\n",
                 pParams->hResource,
                 pParams->hClient);
 #if (RS_COMPATABILITY_MODE)
@@ -1191,8 +1205,7 @@ serverFreeResourceTree
 
     if (bPopFreeStack)
     {
-        if (pClient != NULL)
-            pClient->pFreeStack = freeStack.pPrev;
+        pClient->pFreeStack = freeStack.pPrev;
         bPopFreeStack = NV_FALSE;
     }
 
@@ -1214,7 +1227,7 @@ serverFreeResourceTree
         if (bReAcquireLock)
         {
             serverTopLock_Epilogue(pServer, topLockAccess, pLockInfo, &releaseFlags);
-            serverTopLock_Prologue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
+            NV_CHECK_OK(status, LEVEL_INFO, serverTopLock_Prologue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags));
             _serverFreeClient(pServer, &clientFreeParams);
             serverTopLock_Epilogue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
             initialLockState &= ~RS_LOCK_STATE_CLIENT_LOCK_ACQUIRED;
@@ -1258,12 +1271,14 @@ serverControl
 {
     NV_STATUS           status;
     RsClient           *pClient;
+    RsClient           *pSecondClient = NULL;
     RsResourceRef      *pResourceRef = NULL;
     RS_LOCK_INFO       *pLockInfo;
     NvU32               releaseFlags = 0;
     CALL_CONTEXT        callContext;
     CALL_CONTEXT       *pOldContext = NULL;
     LOCK_ACCESS_TYPE    access = LOCK_ACCESS_WRITE;
+    NvHandle            hSecondClient;
 
     pLockInfo = pParams->pLockInfo;
     NV_ASSERT_OR_RETURN(pLockInfo != NULL, NV_ERR_INVALID_ARGUMENT);
@@ -1283,14 +1298,37 @@ serverControl
     if (status != NV_OK)
         goto done;
 
-    status = _serverLockClientWithLockInfo(pServer, LOCK_ACCESS_WRITE, pParams->hClient, pLockInfo, &releaseFlags, &pClient);
+    status = serverControlLookupSecondClient(pParams->cmd, pParams->pParams,
+        pParams->pCookie, &hSecondClient);
     if (status != NV_OK)
         goto done;
 
-    if (!pClient->bActive)
+    if (hSecondClient == 0)
     {
-        status = NV_ERR_INVALID_STATE;
-        goto done;
+        status = _serverLockClientWithLockInfo(pServer, LOCK_ACCESS_WRITE,
+            pParams->hClient, pLockInfo, &releaseFlags, &pClient);
+        if (status != NV_OK)
+            goto done;
+
+        if (!pClient->bActive)
+        {
+            status = NV_ERR_INVALID_STATE;
+            goto done;
+        }
+    }
+    else
+    {
+        status = _serverLockDualClientWithLockInfo(pServer, LOCK_ACCESS_WRITE,
+            pParams->hClient, hSecondClient, pLockInfo, &releaseFlags,
+            &pClient, &pSecondClient);
+        if (status != NV_OK)
+            goto done;
+
+        if (!pClient->bActive || !pSecondClient->bActive)
+        {
+            status = NV_ERR_INVALID_STATE;
+            goto done;
+        }
     }
 
     status = clientValidate(pClient, &pParams->secInfo);
@@ -1355,7 +1393,18 @@ done:
 
     serverSessionLock_Epilogue(pServer, LOCK_ACCESS_WRITE, pLockInfo, &releaseFlags);
 
-    _serverUnlockClientWithLockInfo(pServer, LOCK_ACCESS_WRITE, pParams->hClient, pLockInfo, &releaseFlags);
+    if (pSecondClient != NULL)
+    {
+        _serverUnlockDualClientWithLockInfo(pServer, LOCK_ACCESS_WRITE,
+            pParams->hClient, pSecondClient->hClient,
+            pLockInfo, &releaseFlags);
+    }
+    else
+    {
+        _serverUnlockClientWithLockInfo(pServer, LOCK_ACCESS_WRITE,
+            pParams->hClient, pLockInfo, &releaseFlags);
+    }
+
     serverTopLock_Epilogue(pServer, access, pLockInfo, &releaseFlags);
 
     if (pServer->bUnlockedParamCopy)
@@ -1938,6 +1987,7 @@ serverInterMap
 
     pMapping->flags = pParams->flags;
     pMapping->dmaOffset = pParams->dmaOffset;
+    pMapping->size = pParams->length;
     pMapping->pMemDesc = pParams->pMemDesc;
 
 done:
@@ -1958,6 +2008,135 @@ done:
     return status;
 }
 
+static NV_STATUS
+serverInterUnmapMapping
+(
+    RsClient              *pClient,
+    RsResourceRef         *pMapperRef,
+    RsInterMapping        *pMapping,
+    RS_INTER_UNMAP_PARAMS *pParams,
+    NvBool                 bPartialUnmap
+)
+{
+    RsInterMapping *pNewMappingLeft  = NULL;
+    RsInterMapping *pNewMappingRight = NULL;
+    NV_STATUS       status           = NV_OK;
+
+    if (pParams->dmaOffset > pMapping->dmaOffset)
+    {
+        NV_ASSERT_OK_OR_GOTO(status, refAddInterMapping(pMapperRef, pMapping->pMappableRef, pMapping->pContextRef, &pNewMappingLeft), done);
+
+        pNewMappingLeft->flags = pMapping->flags;
+        pNewMappingLeft->dmaOffset = pMapping->dmaOffset;
+        pNewMappingLeft->size = pParams->dmaOffset - pMapping->dmaOffset;
+    }
+
+    if (pParams->dmaOffset + pParams->size < pMapping->dmaOffset + pMapping->size)
+    {
+        NV_ASSERT_OK_OR_GOTO(status, refAddInterMapping(pMapperRef, pMapping->pMappableRef, pMapping->pContextRef, &pNewMappingRight), done);
+
+        pNewMappingRight->flags = pMapping->flags;
+        pNewMappingRight->dmaOffset = pParams->dmaOffset + pParams->size;
+        pNewMappingRight->size = pMapping->dmaOffset + pMapping->size - pNewMappingRight->dmaOffset;
+    }
+
+    pParams->hMappable = pMapping->pMappableRef->hResource;
+    pParams->pMemDesc = pMapping->pMemDesc;
+    status = clientInterUnmap(pClient, pMapperRef, pParams);
+
+done:
+    if (bPartialUnmap && status != NV_OK)
+    {
+        if (pNewMappingLeft != NULL)
+            refRemoveInterMapping(pMapperRef, pNewMappingLeft);
+
+        if (pNewMappingRight != NULL)
+            refRemoveInterMapping(pMapperRef, pNewMappingRight);
+    }
+    else
+    {
+        // Regular unmap should never fail when the range is found
+        NV_ASSERT(status == NV_OK);
+        refRemoveInterMapping(pMapperRef, pMapping);
+    }
+
+    return status;
+}
+
+static NV_STATUS
+serverInterUnmapInternal
+(
+
+    RsClient              *pClient,
+    RsResourceRef         *pMapperRef,
+    RsResourceRef         *pContextRef,
+    RS_INTER_UNMAP_PARAMS *pParams
+
+)
+{
+    RsInterMapping *pNextMapping   = listHead(&pMapperRef->interMappings);
+    NvU64           unmapDmaOffset = pParams->dmaOffset;
+    NvU64           unmapSize      = pParams->size;
+    NvBool          bPartialUnmap  = (unmapSize != 0);
+    NV_STATUS       unmapStatus    = NV_OK;
+    NV_STATUS       status         = bPartialUnmap ? NV_OK : NV_ERR_OBJECT_NOT_FOUND;
+    NvU64           unmapEnd;
+
+    NV_CHECK_OR_RETURN(LEVEL_ERROR, portSafeAddU64(unmapDmaOffset, unmapSize, &unmapEnd), NV_ERR_INVALID_ARGUMENT);
+
+    while (pNextMapping != NULL)
+    {
+        RsInterMapping *pMapping = pNextMapping;
+        pNextMapping = listNext(&pMapperRef->interMappings, pMapping);
+
+        if (pMapping->pContextRef != pContextRef)
+            continue;
+
+        NvU64 mappingEnd;
+        NV_ASSERT_OR_RETURN(portSafeAddU64(pMapping->dmaOffset, pMapping->size, &mappingEnd), NV_ERR_INVALID_STATE);
+
+        if (bPartialUnmap &&
+            mappingEnd > unmapDmaOffset &&
+            pMapping->dmaOffset < unmapEnd)
+        {
+            if (pMapping->dmaOffset < unmapDmaOffset || mappingEnd > unmapEnd)
+            {
+                // If the mapping does not lie entirely in the unmapped range, we are in the "true" partial unmap path
+                NV_CHECK_TRUE_OR_GOTO(unmapStatus, LEVEL_ERROR, resIsPartialUnmapSupported(pMapperRef->pResource), NV_ERR_INVALID_ARGUMENT, done);
+                // It is unclear what to do with pMemDesc when the mapping is split
+                NV_ASSERT_TRUE_OR_GOTO(unmapStatus, pMapping->pMemDesc == NULL, NV_ERR_INVALID_STATE, done);
+            }
+
+            pParams->dmaOffset = NV_MAX(pMapping->dmaOffset, unmapDmaOffset);
+            pParams->size = NV_MIN(unmapEnd, mappingEnd) - pParams->dmaOffset;
+        }
+        else if (!bPartialUnmap && pMapping->dmaOffset == unmapDmaOffset)
+        {
+            pParams->dmaOffset = pMapping->dmaOffset;
+            pParams->size = pMapping->size;
+        }
+        else
+        {
+            continue;
+        }
+
+        NV_ASSERT_OK_OR_GOTO(unmapStatus, serverInterUnmapMapping(pClient, pMapperRef, pMapping, pParams, bPartialUnmap), done);
+
+        if (!bPartialUnmap)
+        {
+            // non-partial unmap always touches a single mapping
+            status = NV_OK;
+            break;
+        }
+    }
+
+done:
+    if (unmapStatus != NV_OK)
+        status = unmapStatus;
+
+    return status;
+}
+
 NV_STATUS
 serverInterUnmap
 (
@@ -1967,9 +2146,7 @@ serverInterUnmap
 {
     RsClient           *pClient;
     RsResourceRef      *pMapperRef;
-    RsResourceRef      *pMappableRef;
     RsResourceRef      *pContextRef;
-    RsInterMapping     *pMapping;
     LOCK_ACCESS_TYPE    topLockAccess;
 
     NV_STATUS status;
@@ -2008,15 +2185,7 @@ serverInterUnmap
         goto done;
     }
 
-    status = clientGetResourceRef(pClient, pParams->hMappable, &pMappableRef);
-    if (status != NV_OK)
-        goto done;
-
     status = clientGetResourceRef(pClient, pParams->hDevice, &pContextRef);
-    if (status != NV_OK)
-        goto done;
-
-    status = refFindInterMapping(pMapperRef, pMappableRef, pContextRef, pParams->dmaOffset, &pMapping);
     if (status != NV_OK)
         goto done;
 
@@ -2047,10 +2216,7 @@ serverInterUnmap
     if (status != NV_OK)
         goto done;
 
-    clientInterUnmap(pClient, pMapperRef, pParams);
-
-    refRemoveInterMapping(pMapperRef, pMapping);
-
+    status = serverInterUnmapInternal(pClient, pMapperRef, pContextRef, pParams);
 done:
     serverInterUnmap_Epilogue(pServer, pParams);
 
@@ -2445,10 +2611,10 @@ _serverLockClient
     }
 
     pClient = pClientEntry->pClient;
-    NV_ASSERT(pClient->hClient == pClientEntry->hClient);
 
     if ((pClient == NULL) || (pClient->hClient != hClient))
     {
+        NV_ASSERT(0);
         if (access == LOCK_ACCESS_READ)
             RS_RWLOCK_RELEASE_READ(pClientEntry->pLock, &pClientEntry->lockVal);
         else
@@ -3333,14 +3499,27 @@ serverAllocEpilogue_WAR
 }
 
 NV_STATUS
-serverLookupSecondClient
+serverAllocLookupSecondClient
 (
-    RS_RES_ALLOC_PARAMS_INTERNAL *pParams,
-    NvHandle *phClient
+    NvU32     externalClassId,
+    void     *pAllocParams,
+    NvHandle *phSecondClient
 )
 {
-    *phClient = 0;
+    *phSecondClient = 0;
+    return NV_OK;
+}
 
+NV_STATUS
+serverControlLookupSecondClient
+(
+    NvU32              cmd,
+    void              *pControlParams,
+    RS_CONTROL_COOKIE *pCookie,
+    NvHandle          *phSecondClient
+)
+{
+    *phSecondClient = 0;
     return NV_OK;
 }
 
@@ -3868,7 +4047,7 @@ NV_STATUS serverControl_Prologue
     if (status != NV_OK)
         return status;
 
-    serverControlLookupLockFlags(pServer, RS_LOCK_RESOURCE, pParams, pParams->pCookie, pAccess);
+    status = serverControlLookupLockFlags(pServer, RS_LOCK_RESOURCE, pParams, pParams->pCookie, pAccess);
     if (status != NV_OK)
         return status;
 

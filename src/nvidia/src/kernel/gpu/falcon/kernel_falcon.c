@@ -30,8 +30,10 @@
 #include "gpu/fifo/kernel_channel_group_api.h"
 #include "gpu/intr/intr.h"
 #include "gpu/subdevice/subdevice.h"
+#include "gpu/device/device.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/mem_mgr/mem_desc.h"
+#include "gpu/video/kernel_video_engine.h"
 #include "mem_mgr/gpu_vaspace.h"
 #include "mem_mgr/ctx_buf_pool.h"
 #include "rmapi/rmapi.h"
@@ -65,11 +67,17 @@ KernelFalcon *kflcnGetKernelFalconForEngine_IMPL(OBJGPU *pGpu, ENGDESCRIPTOR phy
     switch (physEngDesc)
     {
         // this list is mirrored in subdeviceCtrlCmdInternalGetConstructedFalconInfo_IMPL
-        case ENG_SEC2:     return staticCast(GPU_GET_KERNEL_SEC2(pGpu), KernelFalcon);
+        case ENG_SEC2:
+        {
+            KernelFalcon *pKernelSec2 = staticCast(GPU_GET_KERNEL_SEC2(pGpu), KernelFalcon);
+            if (pKernelSec2 != NULL)
+                return pKernelSec2;
+            break; // If KernelSec2 does not exist on this chip, fall back to GKF list
+        }
         case ENG_GSP:      return staticCast(GPU_GET_KERNEL_GSP(pGpu), KernelFalcon);
-        default:
-            return staticCast(gpuGetGenericKernelFalconForEngine(pGpu, physEngDesc), KernelFalcon);
     }
+
+    return staticCast(gpuGetGenericKernelFalconForEngine(pGpu, physEngDesc), KernelFalcon);
 }
 
 
@@ -134,9 +142,9 @@ static NV_STATUS _kflcnAllocAndMapCtxBuffer
     NV_ASSERT_OK_OR_GOTO(status,
         memdescSetCtxBufPool(pCtxMemDesc, pCtxBufPool),
         done);
-    NV_ASSERT_OK_OR_GOTO(status,
-        memdescAllocList(pCtxMemDesc, memdescU32ToAddrSpaceList(pKernelFalcon->addrSpaceList)),
-        done);
+    memdescTagAllocList(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_115, 
+                        pCtxMemDesc, memdescU32ToAddrSpaceList(pKernelFalcon->addrSpaceList));
+    NV_ASSERT_OK_OR_GOTO(status, status, done);
 
     NV_ASSERT_OK_OR_GOTO(status,
         memmgrMemDescMemSet(GPU_GET_MEMORY_MANAGER(pGpu), pCtxMemDesc, 0,
@@ -173,14 +181,15 @@ static NV_STATUS _kflcnPromoteContext
 {
     RM_API                *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
     RsClient              *pClient = RES_GET_CLIENT(pKernelChannel);
+    Device                *pDevice = GPU_RES_GET_DEVICE(pKernelChannel);
     Subdevice             *pSubdevice;
     RM_ENGINE_TYPE         rmEngineType;
     ENGINE_CTX_DESCRIPTOR *pEngCtx;
     NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS rmCtrlParams = {0};
     OBJGVASPACE           *pGVAS = dynamicCast(pKernelChannel->pVAS, OBJGVASPACE);
 
-    NV_ASSERT_OK_OR_RETURN(subdeviceGetByGpu(pClient, pGpu, &pSubdevice));
     NV_ASSERT_OR_RETURN(gpumgrGetSubDeviceInstanceFromGpu(pGpu) == 0, NV_ERR_INVALID_STATE);
+    NV_ASSERT_OK_OR_RETURN(subdeviceGetByInstance(pClient, RES_GET_HANDLE(pDevice), 0, &pSubdevice));
 
     pEngCtx = pKernelChannel->pKernelChannelGroupApi->pKernelChannelGroup->ppEngCtxDesc[0];
     NV_ASSERT_OR_RETURN(pEngCtx != NULL, NV_ERR_INVALID_ARGUMENT);
@@ -275,6 +284,8 @@ NV_STATUS kflcnAllocContext_IMPL
 
     NV_ASSERT_OK_OR_RETURN(_kflcnAllocAndMapCtxBuffer(pGpu, pKernelFalcon, pKernelChannel));
 
+    NV_CHECK(LEVEL_ERROR, videoEventTraceCtxInit(pGpu, pKernelChannel, pKernelFalcon->physEngDesc) == NV_OK);
+
     return _kflcnPromoteContext(pGpu, pKernelFalcon, pKernelChannel);
 }
 
@@ -286,6 +297,7 @@ NV_STATUS kflcnFreeContext_IMPL
     NvU32          classNum
 )
 {
+    NV_STATUS status = NV_OK;
     MEMORY_DESCRIPTOR *pCtxMemDesc = NULL;
     NV_ASSERT_OR_RETURN(pKernelChannel != NULL, NV_ERR_INVALID_CHANNEL);
 
@@ -308,11 +320,12 @@ NV_STATUS kflcnFreeContext_IMPL
     }
 
     kchannelUnmapEngineCtxBuf(pGpu, pKernelChannel, pKernelFalcon->physEngDesc);
-    kchannelSetEngineContextMemDesc(pGpu, pKernelChannel, pKernelFalcon->physEngDesc, NULL);
+    NV_ASSERT_OK_OR_CAPTURE_FIRST_ERROR(status,
+        kchannelSetEngineContextMemDesc(pGpu, pKernelChannel, pKernelFalcon->physEngDesc, NULL));
     memdescFree(pCtxMemDesc);
     memdescDestroy(pCtxMemDesc);
 
-    return NV_OK;
+    return status;
 }
 
 NV_STATUS gkflcnConstruct_IMPL
@@ -343,10 +356,7 @@ void gkflcnRegisterIntrService_IMPL(OBJGPU *pGpu, GenericKernelFalcon *pGenericK
 
     NV_PRINTF(LEVEL_INFO, "physEngDesc 0x%x\n", pKernelFalcon->physEngDesc);
 
-    if (!IS_NVDEC(pKernelFalcon->physEngDesc) &&
-        pKernelFalcon->physEngDesc != ENG_OFA &&
-        !IS_NVJPEG(pKernelFalcon->physEngDesc) &&
-        !IS_MSENC(pKernelFalcon->physEngDesc))
+    if (!IS_VIDEO_ENGINE(pKernelFalcon->physEngDesc) && pKernelFalcon->physEngDesc != ENG_SEC2)
         return;
 
     // Register to handle nonstalling interrupts of the corresponding physical falcon in kernel rm
@@ -358,7 +368,18 @@ void gkflcnRegisterIntrService_IMPL(OBJGPU *pGpu, GenericKernelFalcon *pGenericK
             ENGINE_INFO_TYPE_ENG_DESC, pKernelFalcon->physEngDesc,
             ENGINE_INFO_TYPE_MC, &mcIdx);
 
-        NV_ASSERT_OR_RETURN_VOID(status == NV_OK);
+        if (IS_VIRTUAL(pGpu) && (status == NV_ERR_OBJECT_NOT_FOUND))
+        {
+            //
+            // In vGPU MIG, the GI does not own all possible engine instances,
+            // so engine list search returns NV_ERR_OBJECT_NOT_FOUND.
+            //
+            return;
+        }
+        else
+        {
+            NV_ASSERT_OR_RETURN_VOID(status == NV_OK);
+        }
 
         NV_PRINTF(LEVEL_INFO, "Registering 0x%x/0x%x to handle nonstall intr\n", pKernelFalcon->physEngDesc, mcIdx);
 
@@ -381,9 +402,11 @@ NV_STATUS gkflcnServiceNotificationInterrupt_IMPL(OBJGPU *pGpu, GenericKernelFal
         NvU32 nvdecIdx = idxMc - MC_ENGINE_IDX_NVDECn(0);
         rmEngineType = RM_ENGINE_TYPE_NVDEC(nvdecIdx);
     }
-    else if (idxMc == MC_ENGINE_IDX_OFA0)
+    else if (MC_ENGINE_IDX_OFA(0) <= idxMc &&
+             idxMc < MC_ENGINE_IDX_OFA(RM_ENGINE_TYPE_OFA_SIZE))
     {
-        rmEngineType = RM_ENGINE_TYPE_OFA;
+        NvU32 ofaIdx = idxMc - MC_ENGINE_IDX_OFA(0);
+        rmEngineType = RM_ENGINE_TYPE_OFA(ofaIdx);
     }
     else if (MC_ENGINE_IDX_NVJPEGn(0) <= idxMc &&
              idxMc < MC_ENGINE_IDX_NVJPEGn(RM_ENGINE_TYPE_NVJPEG_SIZE))
@@ -391,11 +414,15 @@ NV_STATUS gkflcnServiceNotificationInterrupt_IMPL(OBJGPU *pGpu, GenericKernelFal
         NvU32 nvjpgIdx = idxMc - MC_ENGINE_IDX_NVJPEGn(0);
         rmEngineType = RM_ENGINE_TYPE_NVJPEG(nvjpgIdx);
     }
-    else if (MC_ENGINE_IDX_MSENCn(0) <= idxMc &&
-             idxMc < MC_ENGINE_IDX_MSENCn(RM_ENGINE_TYPE_NVENC_SIZE))
+    else if (MC_ENGINE_IDX_NVENCn(0) <= idxMc &&
+             idxMc < MC_ENGINE_IDX_NVENCn(RM_ENGINE_TYPE_NVENC_SIZE))
     {
-        NvU32 msencIdx = idxMc - MC_ENGINE_IDX_MSENCn(0);
+        NvU32 msencIdx = idxMc - MC_ENGINE_IDX_NVENCn(0);
         rmEngineType = RM_ENGINE_TYPE_NVENC(msencIdx);
+    }
+    else if (idxMc == MC_ENGINE_IDX_SEC2)
+    {
+        rmEngineType = RM_ENGINE_TYPE_SEC2;
     }
 
     NV_ASSERT_OR_RETURN(rmEngineType != RM_ENGINE_TYPE_NULL, NV_ERR_INVALID_STATE);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -100,21 +100,12 @@ static void
 initCommonMiscOSFunctionPointers(OBJOS *pOS)
 {
     // Common OS function pointers.
-    pOS->osGetSimulationMode             = osGetSimulationMode;
 }
 
 static void
 initStubMiscOSFunctionPointers(OBJOS *pOS)
 {
     // Stubbed OS function pointers.
-    pOS->osSimEscapeWrite               = stubOsSimEscapeWrite;
-    pOS->osSimEscapeWriteBuffer         = stubOsSimEscapeWriteBuffer;
-    pOS->osSimEscapeRead                = stubOsSimEscapeRead;
-    pOS->osSimEscapeReadBuffer          = stubOsSimEscapeReadBuffer;
-
-    pOS->osCheckCallback                = stubOsCheckCallback;
-    pOS->osRCCallback                   = stubOsRCCallback;
-
     pOS->osPageArrayGetPhysAddr         = stubOsPageArrayGetPhysAddr;
 
     pOS->osInternalReserveAllocCallback = stubOsInternalReserveAllocCallback;
@@ -124,17 +115,6 @@ initStubMiscOSFunctionPointers(OBJOS *pOS)
 static void
 initWinNTStubOSFunctionPointers(OBJOS *pOS)
 {
-    pOS->osQADbgRegistryInit         = stubOsQADbgRegistryInit;
-    pOS->osQueueWorkItem             = stubOsQueueWorkItem;
-    pOS->osQueueWorkItemWithFlags    = stubOsQueueWorkItemWithFlags;
-    pOS->osQueueSystemWorkItem       = stubOsQueueSystemWorkItem;
-    pOS->osCallACPI_NVHG_GPUSTA      = stubOsCallWMI_NVHG_GPUSTA;
-    pOS->osCallACPI_NVHG_MXDS        = stubOsCallWMI_NVHG_MXDS;
-    pOS->osCallACPI_NVHG_MXMX        = stubOsCallWMI_NVHG_MXMX;
-    pOS->osCallACPI_NVHG_DOS         = stubOsCallWMI_NVHG_DOS;
-    pOS->osCallACPI_NVHG_DCS         = stubOsCallWMI_NVHG_DCS;
-    pOS->osSetupVBlank               = stubOsSetupVBlank;
-    pOS->osGetUefiVariable           = stubOsGetUefiVariable;
 }
 
 static void
@@ -145,8 +125,6 @@ initMacOSCoreOSFunctionPointers(OBJOS *pOS)
     pOS->osNv_cpuid                      = stubOsnv_cpuid;
     pOS->osNv_rdmsr                      = stubOsnv_rdmsr;
     pOS->osNv_wrmsr                      = stubOsnv_wrmsr;
-    pOS->osRobustChannelsDefaultState    = stubOsRobustChannelsDefaultState;
-    pOS->osGetUefiVariable               = stubOsGetUefiVariable;
 }
 
 static void
@@ -322,6 +300,11 @@ void vgpuDevWriteReg032(
     NV_ASSERT_OK(kbifGetPciConfigSpacePriMirror_HAL(pGpu, GPU_GET_KERNEL_BIF(pGpu),
                                                     &configSpaceMirrorBase, &configSpaceMirrorSize));
 
+    if (IS_VIRTUAL_WITH_SRIOV(pGpu))
+    {
+        configSpaceSize = configSpaceMirrorSize;
+    }
+    else
     {
         configSpaceSize = NV_CONFIG_PCI_NV_12;
     }
@@ -393,6 +376,11 @@ NvU32 vgpuDevReadReg032(
     NV_ASSERT_OK(kbifGetPciConfigSpacePriMirror_HAL(pGpu, GPU_GET_KERNEL_BIF(pGpu),
                                                     &configSpaceMirrorBase, &configSpaceMirrorSize));
 
+    if (IS_VIRTUAL_WITH_SRIOV(pGpu))
+    {
+        configSpaceSize = configSpaceMirrorSize;
+    }
+    else
     {
         configSpaceSize = NV_CONFIG_PCI_NV_12;
     }

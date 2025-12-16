@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -32,7 +32,6 @@
 #include "gpu/mem_mgr/vaspace_api.h"
 #include "rmapi/rs_utils.h"
 #include "gpu/device/device.h"
-#include "gpu/subdevice/subdevice.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 
 #include "gpu/mem_mgr/virt_mem_allocator.h"
@@ -132,7 +131,7 @@ deviceInitClientShare
     //
     else if (hClientShare == RES_GET_CLIENT_HANDLE(pDevice))
     {
-        NvU32 flags = VASPACE_FLAGS_DEFAULT_PARAMS;
+        NvU32 flags = 0;
         NvU64 vaLimit;
 
         flags |= (deviceAllocFlags & NV_DEVICE_ALLOCATION_FLAGS_VASPACE_SHARED_MANAGEMENT) ?
@@ -152,7 +151,6 @@ deviceInitClientShare
         }
         else
         {
-            flags |= VASPACE_FLAGS_DEFAULT_SIZE; // only needed for Tesla
             vaLimit = 0;
         }
 

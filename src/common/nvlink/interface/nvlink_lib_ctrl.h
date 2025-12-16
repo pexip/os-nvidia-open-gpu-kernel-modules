@@ -24,6 +24,7 @@
 #ifndef _NVLINK_LIB_CTRL_H_
 #define _NVLINK_LIB_CTRL_H_
 
+
 #include "nvtypes.h"
 #include "nvlink_errors.h"
 
@@ -67,6 +68,8 @@
 #define NVLINK_MAX_NVLINK_ENDPOINTS 624
 
 #define NVLINK_VERSION_STRING_LENGTH    64
+
+#define NVLINK_CCI_TRAINING_TIMEOUT_SEC 30          
 
 /*
  * NVLink version consists of,
@@ -156,6 +159,7 @@ typedef enum
     nvlink_link_mode_disable_pm,
     nvlink_link_mode_traffic_setup,
     nvlink_link_mode_contain,
+    nvlink_link_mode_training_cci
 } nvlink_link_mode;
 
 /* sublink tx modes */
@@ -1115,6 +1119,7 @@ typedef struct
     NvlStatus              status;
     nvlink_link_state      endStates[NVLINK_MAX_DEVICE_CONN];
     NvU32                  endStatesCount;
+    NvU64                  time;
 } nvlink_get_device_link_states;
 
 /* 

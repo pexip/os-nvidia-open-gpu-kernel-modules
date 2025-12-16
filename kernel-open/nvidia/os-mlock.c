@@ -251,7 +251,7 @@ NV_STATUS NV_API_CALL os_lock_user_pages(
 
     nv_mmap_read_lock(mm);
     ret = NV_PIN_USER_PAGES((unsigned long)address,
-                            npages, gup_flags, user_pages, NULL);
+                            npages, gup_flags, user_pages);
     if (ret > 0)
     {
         pinned = ret;
@@ -285,7 +285,7 @@ NV_STATUS NV_API_CALL os_lock_user_pages(
             }
 
             ret = NV_PIN_USER_PAGES(((unsigned long) address) + (pinned * PAGE_SIZE),
-                                    npages, gup_flags, &user_pages[pinned], NULL);
+                                    npages, gup_flags, &user_pages[pinned]);
             if (ret <= 0)
             {
                 break;

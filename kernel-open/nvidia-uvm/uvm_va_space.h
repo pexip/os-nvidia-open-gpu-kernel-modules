@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2022 NVIDIA Corporation
+    Copyright (c) 2015-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -159,8 +159,17 @@ struct uvm_va_space_struct
     // processor mask.
     uvm_gpu_t *registered_gpus_table[UVM_ID_MAX_GPUS];
 
-    // Mask of processors registered with the va space that support replayable faults
+    // Mask of processors registered with the va space that support replayable
+    // faults.
     uvm_processor_mask_t faultable_processors;
+
+    // Mask of processors registered with the va space that don't support
+    // faulting.
+    uvm_processor_mask_t non_faultable_processors;
+
+    // This is a count of non fault capable processors with a GPU VA space
+    // registered.
+    NvU32 num_non_faultable_gpu_va_spaces;
 
     // Semaphore protecting the state of the va space
     uvm_rw_semaphore_t lock;
@@ -221,9 +230,11 @@ struct uvm_va_space_struct
     uvm_processor_mask_t accessible_from[UVM_ID_MAX_PROCESSORS];
 
     // Pre-computed masks that contain, for each processor memory, a mask with
-    // the processors that can directly copy to and from its memory. This is
-    // almost the same as accessible_from masks, but also requires peer identity
-    // mappings to be supported for peer access.
+    // the processors that can directly copy to and from its memory, using the
+    // Copy Engine. These masks are usually the same as accessible_from masks.
+    //
+    // In certain configurations, peer identity mappings must be created to
+    // enable CE copies between peers.
     uvm_processor_mask_t can_copy_from[UVM_ID_MAX_PROCESSORS];
 
     // Pre-computed masks that contain, for each processor, a mask of processors
@@ -256,8 +267,24 @@ struct uvm_va_space_struct
     // Mask of processors that are participating in system-wide atomics
     uvm_processor_mask_t system_wide_atomics_enabled_processors;
 
-    // Mask of GPUs where access counters are enabled on this VA space
-    uvm_processor_mask_t access_counters_enabled_processors;
+    // Temporary copy of registered_gpus used to avoid allocation during VA
+    // space destroy.
+    uvm_processor_mask_t registered_gpus_teardown;
+
+    // Allocated in uvm_va_space_register_gpu(), used and free'd in
+    // uvm_va_space_unregister_gpu().
+    uvm_processor_mask_t *peers_to_release[UVM_ID_MAX_PROCESSORS];
+
+    // Mask of processors to unmap. Used in range_unmap().
+    uvm_processor_mask_t unmap_mask;
+
+    // Available as scratch space for the internal APIs. This is like a caller-
+    // save register: it shouldn't be used across function calls which also take
+    // this va_space.
+    uvm_processor_mask_t scratch_processor_mask;
+
+    // Mask of physical GPUs where access counters are enabled on this VA space
+    uvm_parent_processor_mask_t access_counters_enabled_processors;
 
     // Array with information regarding CPU/GPU NUMA affinity. There is one
     // entry per CPU NUMA node. Entries in the array are populated sequentially
@@ -303,7 +330,8 @@ struct uvm_va_space_struct
 
         // Lists of counters listening for events on this VA space
         struct list_head counters[UVM_TOTAL_COUNTERS];
-        struct list_head queues[UvmEventNumTypesAll];
+        struct list_head queues_v1[UvmEventNumTypesAll];
+        struct list_head queues_v2[UvmEventNumTypesAll];
 
         // Node for this va_space in global subscribers list
         struct list_head node;
@@ -324,7 +352,7 @@ struct uvm_va_space_struct
     // Block context used for GPU unmap operations so that allocation is not
     // required on the teardown path. This can only be used while the VA space
     // lock is held in write mode. Access using uvm_va_space_block_context().
-    uvm_va_block_context_t va_block_context;
+    uvm_va_block_context_t *va_block_context;
 
     NvU64 initialization_flags;
 
@@ -341,6 +369,20 @@ struct uvm_va_space_struct
 
     struct
     {
+        // Temporary mask used to calculate closest_processors in
+        // uvm_processor_mask_find_closest_id.
+        uvm_processor_mask_t mask;
+
+        // Temporary mask to hold direct_peers in
+        // uvm_processor_mask_find_closest_id.
+        uvm_processor_mask_t direct_peers;
+
+        // Protects the mask and direct_peers above.
+        uvm_mutex_t mask_mutex;
+    } closest_processors;
+
+    struct
+    {
         bool  page_prefetch_enabled;
         bool  skip_migrate_vma;
 
@@ -354,6 +396,10 @@ struct uvm_va_space_struct
         atomic64_t destroy_gpu_va_space_delay_us;
 
         atomic64_t split_invalidate_delay_us;
+
+        bool force_cpu_to_cpu_copy_with_ce;
+
+        bool allow_allocation_from_movable;
     } test;
 
     // Queue item for deferred f_ops->release() handling
@@ -369,7 +415,7 @@ static uvm_gpu_t *uvm_va_space_get_gpu(uvm_va_space_t *va_space, uvm_gpu_id_t gp
     gpu = va_space->registered_gpus_table[uvm_id_gpu_index(gpu_id)];
 
     UVM_ASSERT(gpu);
-    UVM_ASSERT(uvm_gpu_get(gpu->global_id) == gpu);
+    UVM_ASSERT(uvm_gpu_get(gpu->id) == gpu);
 
     return gpu;
 }
@@ -390,7 +436,7 @@ static void uvm_va_space_processor_uuid(uvm_va_space_t *va_space, NvProcessorUui
     else {
         uvm_gpu_t *gpu = uvm_va_space_get_gpu(va_space, id);
         UVM_ASSERT(gpu);
-        memcpy(uuid, uvm_gpu_uuid(gpu), sizeof(*uuid));
+        memcpy(uuid, &gpu->uuid, sizeof(*uuid));
     }
 }
 
@@ -463,9 +509,9 @@ void uvm_va_space_destroy(uvm_va_space_t *va_space);
         uvm_mutex_unlock(&(__va_space)->serialize_writers_lock);        \
     } while (0)
 
-// Get a registered gpu by uuid. This restricts the search for GPUs, to those that
-// have been registered with a va_space. This returns NULL if the GPU is not present, or not
-// registered with the va_space.
+// Get a registered gpu by uuid. This restricts the search for GPUs, to those
+// that have been registered with a va_space. This returns NULL if the GPU is
+// not present, or not registered with the va_space.
 //
 // LOCKING: The VA space lock must be held.
 uvm_gpu_t *uvm_va_space_get_gpu_by_uuid(uvm_va_space_t *va_space, const NvProcessorUuid *gpu_uuid);
@@ -492,13 +538,19 @@ bool uvm_va_space_can_read_duplicate(uvm_va_space_t *va_space, uvm_gpu_t *changi
 // Register a gpu in the va space
 // Note that each gpu can be only registered once in a va space
 //
+// The input gpu_uuid is for the phyisical GPU. The user_rm_va_space argument
+// identifies the SMC partition if provided and SMC is enabled.
+//
 // This call returns whether the GPU memory is a NUMA node in the kernel and the
 // corresponding node id.
+// It also returns the GI UUID (if gpu_uuid is a SMC partition) or a copy of
+// gpu_uuid if the GPU is not SMC capable or SMC is not enabled.
 NV_STATUS uvm_va_space_register_gpu(uvm_va_space_t *va_space,
                                     const NvProcessorUuid *gpu_uuid,
                                     const uvm_rm_user_object_t *user_rm_va_space,
                                     NvBool *numa_enabled,
-                                    NvS32 *numa_node_id);
+                                    NvS32 *numa_node_id,
+                                    NvProcessorUuid *uuid_out);
 
 // Unregister a gpu from the va space
 NV_STATUS uvm_va_space_unregister_gpu(uvm_va_space_t *va_space, const NvProcessorUuid *gpu_uuid);
@@ -531,7 +583,7 @@ void uvm_va_space_detach_all_user_channels(uvm_va_space_t *va_space, struct list
 
 // Returns whether peer access between these two GPUs has been enabled in this
 // VA space. Both GPUs must be registered in the VA space.
-bool uvm_va_space_peer_enabled(uvm_va_space_t *va_space, uvm_gpu_t *gpu1, uvm_gpu_t *gpu2);
+bool uvm_va_space_peer_enabled(uvm_va_space_t *va_space, const uvm_gpu_t *gpu0, const uvm_gpu_t *gpu1);
 
 // Returns the va_space this file points to. Returns NULL if this file
 // does not point to a va_space.
@@ -565,8 +617,8 @@ static uvm_va_block_context_t *uvm_va_space_block_context(uvm_va_space_t *va_spa
     if (mm)
         uvm_assert_mmap_lock_locked(mm);
 
-    uvm_va_block_context_init(&va_space->va_block_context, mm);
-    return &va_space->va_block_context;
+    uvm_va_block_context_init(va_space->va_block_context, mm);
+    return va_space->va_block_context;
 }
 
 // Retains the GPU VA space memory object. destroy_gpu_va_space and
@@ -594,22 +646,10 @@ static uvm_gpu_va_space_state_t uvm_gpu_va_space_state(uvm_gpu_va_space_t *gpu_v
     return gpu_va_space->state;
 }
 
-static uvm_gpu_va_space_t *uvm_gpu_va_space_get_by_parent_gpu(uvm_va_space_t *va_space, uvm_parent_gpu_t *parent_gpu)
-{
-    uvm_gpu_va_space_t *gpu_va_space;
-
-    uvm_assert_rwsem_locked(&va_space->lock);
-
-    if (!parent_gpu || !uvm_processor_mask_test(&va_space->registered_gpu_va_spaces, parent_gpu->id))
-        return NULL;
-
-    gpu_va_space = va_space->gpu_va_spaces[uvm_id_gpu_index(parent_gpu->id)];
-    UVM_ASSERT(uvm_gpu_va_space_state(gpu_va_space) == UVM_GPU_VA_SPACE_STATE_ACTIVE);
-    UVM_ASSERT(gpu_va_space->va_space == va_space);
-    UVM_ASSERT(gpu_va_space->gpu->parent == parent_gpu);
-
-    return gpu_va_space;
-}
+// Return the GPU VA space for the given physical GPU.
+// Locking: the va_space lock must be held.
+uvm_gpu_va_space_t *uvm_gpu_va_space_get_by_parent_gpu(uvm_va_space_t *va_space,
+                                                       uvm_parent_gpu_t *parent_gpu);
 
 static uvm_gpu_va_space_t *uvm_gpu_va_space_get(uvm_va_space_t *va_space, uvm_gpu_t *gpu)
 {
@@ -713,23 +753,6 @@ static uvm_gpu_t *uvm_processor_mask_find_next_va_space_gpu(const uvm_processor_
 #define for_each_va_space_gpu(gpu, va_space) \
     for_each_va_space_gpu_in_mask(gpu, va_space, &(va_space)->registered_gpus)
 
-static void uvm_va_space_global_gpus_in_mask(uvm_va_space_t *va_space,
-                                             uvm_global_processor_mask_t *global_mask,
-                                             const uvm_processor_mask_t *mask)
-{
-    uvm_gpu_t *gpu;
-
-    uvm_global_processor_mask_zero(global_mask);
-
-    for_each_va_space_gpu_in_mask(gpu, va_space, mask)
-        uvm_global_processor_mask_set(global_mask, gpu->global_id);
-}
-
-static void uvm_va_space_global_gpus(uvm_va_space_t *va_space, uvm_global_processor_mask_t *global_mask)
-{
-    uvm_va_space_global_gpus_in_mask(va_space, global_mask, &va_space->registered_gpus);
-}
-
 // Return the processor in the candidates mask that is "closest" to src, or
 // UVM_ID_MAX_PROCESSORS if candidates is empty. The order is:
 // - src itself
@@ -828,6 +851,10 @@ NV_STATUS uvm_test_get_pageable_mem_access_type(UVM_TEST_GET_PAGEABLE_MEM_ACCESS
 NV_STATUS uvm_test_enable_nvlink_peer_access(UVM_TEST_ENABLE_NVLINK_PEER_ACCESS_PARAMS *params, struct file *filp);
 NV_STATUS uvm_test_disable_nvlink_peer_access(UVM_TEST_DISABLE_NVLINK_PEER_ACCESS_PARAMS *params, struct file *filp);
 NV_STATUS uvm_test_destroy_gpu_va_space_delay(UVM_TEST_DESTROY_GPU_VA_SPACE_DELAY_PARAMS *params, struct file *filp);
+NV_STATUS uvm_test_force_cpu_to_cpu_copy_with_ce(UVM_TEST_FORCE_CPU_TO_CPU_COPY_WITH_CE_PARAMS *params,
+                                                 struct file *filp);
+NV_STATUS uvm_test_va_space_allow_movable_allocations(UVM_TEST_VA_SPACE_ALLOW_MOVABLE_ALLOCATIONS_PARAMS *params,
+                                                      struct file *filp);
 
 // Handle a CPU fault in the given VA space for a managed allocation,
 // performing any operations necessary to establish a coherent CPU mapping

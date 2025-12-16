@@ -48,11 +48,16 @@ extern "C" {
 /*!
  * RM internal class representing NV9010_VBLANK_CALLBACK
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_VBLANK_CALLBACK_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct VblankCallback {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct GpuResource __nvoc_base_GpuResource;
@@ -66,7 +71,7 @@ struct VblankCallback {
     NvBool (*__vblcbShareCallback__)(struct VblankCallback *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__vblcbCheckMemInterUnmap__)(struct VblankCallback *, NvBool);
     NV_STATUS (*__vblcbMapTo__)(struct VblankCallback *, RS_RES_MAP_TO_PARAMS *);
-    NV_STATUS (*__vblcbGetMapAddrSpace__)(struct VblankCallback *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NV_STATUS (*__vblcbGetMapAddrSpace__)(struct VblankCallback *, struct CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
     NvU32 (*__vblcbGetRefCount__)(struct VblankCallback *);
     void (*__vblcbAddAdditionalDependants__)(struct RsClient *, struct VblankCallback *, RsResourceRef *);
     NV_STATUS (*__vblcbControl_Prologue__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
@@ -74,19 +79,19 @@ struct VblankCallback {
     NV_STATUS (*__vblcbInternalControlForward__)(struct VblankCallback *, NvU32, void *, NvU32);
     NV_STATUS (*__vblcbUnmapFrom__)(struct VblankCallback *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__vblcbControl_Epilogue__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vblcbControlLookup__)(struct VblankCallback *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NvHandle (*__vblcbGetInternalObjectHandle__)(struct VblankCallback *);
-    NV_STATUS (*__vblcbControl__)(struct VblankCallback *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vblcbUnmap__)(struct VblankCallback *, CALL_CONTEXT *, RsCpuMapping *);
+    NV_STATUS (*__vblcbControl__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NV_STATUS (*__vblcbUnmap__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RsCpuMapping *);
     NV_STATUS (*__vblcbGetMemInterMapParams__)(struct VblankCallback *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__vblcbGetMemoryMappingDescriptor__)(struct VblankCallback *, struct MEMORY_DESCRIPTOR **);
     NV_STATUS (*__vblcbControlFilter__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__vblcbControlSerialization_Prologue__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__vblcbCanCopy__)(struct VblankCallback *);
+    NvBool (*__vblcbIsPartialUnmapSupported__)(struct VblankCallback *);
     void (*__vblcbPreDestruct__)(struct VblankCallback *);
     NV_STATUS (*__vblcbIsDuplicate__)(struct VblankCallback *, NvHandle, NvBool *);
     void (*__vblcbControlSerialization_Epilogue__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vblcbMap__)(struct VblankCallback *, CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, RsCpuMapping *);
+    NV_STATUS (*__vblcbMap__)(struct VblankCallback *, struct CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, struct RsCpuMapping *);
     NvBool (*__vblcbAccessCallback__)(struct VblankCallback *, struct RsClient *, void *, RsAccessRight);
     VBLANKCALLBACK CallBack;
     OSVBLANKCALLBACKPROC pProc;
@@ -135,7 +140,6 @@ NV_STATUS __nvoc_objCreate_VblankCallback(VblankCallback**, Dynamic*, NvU32, CAL
 #define vblcbInternalControlForward(pGpuResource, command, pParams, size) vblcbInternalControlForward_DISPATCH(pGpuResource, command, pParams, size)
 #define vblcbUnmapFrom(pResource, pParams) vblcbUnmapFrom_DISPATCH(pResource, pParams)
 #define vblcbControl_Epilogue(pResource, pCallContext, pParams) vblcbControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define vblcbControlLookup(pResource, pParams, ppEntry) vblcbControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define vblcbGetInternalObjectHandle(pGpuResource) vblcbGetInternalObjectHandle_DISPATCH(pGpuResource)
 #define vblcbControl(pGpuResource, pCallContext, pParams) vblcbControl_DISPATCH(pGpuResource, pCallContext, pParams)
 #define vblcbUnmap(pGpuResource, pCallContext, pCpuMapping) vblcbUnmap_DISPATCH(pGpuResource, pCallContext, pCpuMapping)
@@ -144,6 +148,7 @@ NV_STATUS __nvoc_objCreate_VblankCallback(VblankCallback**, Dynamic*, NvU32, CAL
 #define vblcbControlFilter(pResource, pCallContext, pParams) vblcbControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define vblcbControlSerialization_Prologue(pResource, pCallContext, pParams) vblcbControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define vblcbCanCopy(pResource) vblcbCanCopy_DISPATCH(pResource)
+#define vblcbIsPartialUnmapSupported(pResource) vblcbIsPartialUnmapSupported_DISPATCH(pResource)
 #define vblcbPreDestruct(pResource) vblcbPreDestruct_DISPATCH(pResource)
 #define vblcbIsDuplicate(pResource, hMemory, pDuplicate) vblcbIsDuplicate_DISPATCH(pResource, hMemory, pDuplicate)
 #define vblcbControlSerialization_Epilogue(pResource, pCallContext, pParams) vblcbControlSerialization_Epilogue_DISPATCH(pResource, pCallContext, pParams)
@@ -167,7 +172,7 @@ static inline NV_STATUS vblcbMapTo_DISPATCH(struct VblankCallback *pResource, RS
     return pResource->__vblcbMapTo__(pResource, pParams);
 }
 
-static inline NV_STATUS vblcbGetMapAddrSpace_DISPATCH(struct VblankCallback *pGpuResource, CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
+static inline NV_STATUS vblcbGetMapAddrSpace_DISPATCH(struct VblankCallback *pGpuResource, struct CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
     return pGpuResource->__vblcbGetMapAddrSpace__(pGpuResource, pCallContext, mapFlags, pAddrSpace);
 }
 
@@ -199,19 +204,15 @@ static inline void vblcbControl_Epilogue_DISPATCH(struct VblankCallback *pResour
     pResource->__vblcbControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS vblcbControlLookup_DISPATCH(struct VblankCallback *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__vblcbControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NvHandle vblcbGetInternalObjectHandle_DISPATCH(struct VblankCallback *pGpuResource) {
     return pGpuResource->__vblcbGetInternalObjectHandle__(pGpuResource);
 }
 
-static inline NV_STATUS vblcbControl_DISPATCH(struct VblankCallback *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
+static inline NV_STATUS vblcbControl_DISPATCH(struct VblankCallback *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pGpuResource->__vblcbControl__(pGpuResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS vblcbUnmap_DISPATCH(struct VblankCallback *pGpuResource, CALL_CONTEXT *pCallContext, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS vblcbUnmap_DISPATCH(struct VblankCallback *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__vblcbUnmap__(pGpuResource, pCallContext, pCpuMapping);
 }
 
@@ -235,6 +236,10 @@ static inline NvBool vblcbCanCopy_DISPATCH(struct VblankCallback *pResource) {
     return pResource->__vblcbCanCopy__(pResource);
 }
 
+static inline NvBool vblcbIsPartialUnmapSupported_DISPATCH(struct VblankCallback *pResource) {
+    return pResource->__vblcbIsPartialUnmapSupported__(pResource);
+}
+
 static inline void vblcbPreDestruct_DISPATCH(struct VblankCallback *pResource) {
     pResource->__vblcbPreDestruct__(pResource);
 }
@@ -247,7 +252,7 @@ static inline void vblcbControlSerialization_Epilogue_DISPATCH(struct VblankCall
     pResource->__vblcbControlSerialization_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS vblcbMap_DISPATCH(struct VblankCallback *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS vblcbMap_DISPATCH(struct VblankCallback *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__vblcbMap__(pGpuResource, pCallContext, pParams, pCpuMapping);
 }
 
@@ -269,4 +274,5 @@ void vblcbDestruct_IMPL(struct VblankCallback *pVblankCallback);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_VBLANK_CALLBACK_NVOC_H_

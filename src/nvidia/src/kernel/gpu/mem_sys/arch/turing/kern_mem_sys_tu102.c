@@ -22,12 +22,17 @@
  */
 
 #include "core/core.h"
+#include "g_kern_mem_sys_nvoc.h"
 #include "gpu/gpu.h"
 #include "gpu/mem_sys/kern_mem_sys.h"
+#include "gpu/bus/kern_bus.h"
+#include "gpu/bif/kernel_bif.h"
 
+#include "nvtypes.h"
 #include "published/turing/tu102/dev_vm.h"
 #include "published/turing/tu102/hwproject.h"
 #include "published/turing/tu102/dev_fbpa.h"
+#include "published/turing/tu102/dev_fb.h"
 #include "published/turing/tu102/dev_ltc.h"
 
 void

@@ -1,3 +1,206 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1) trixie-backports; urgency=medium
+
+  * Rebuild for trixie-backports.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 16 Dec 2025 16:38:44 +0100
+
+nvidia-open-gpu-kernel-modules (550.163.01-4) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.  (Closes: #1120470, #1116955)
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Nov 2025 00:08:25 +0100
+
+nvidia-open-gpu-kernel-modules (550.163.01-3) unstable; urgency=medium
+
+  * Backport NV_DMA_BUF_HAS_DYNAMIC_ATTACHMENT changes from 535.261.03 to fix
+    open kernel module build for Linux 6.16.  (Closes: #1112186)
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 28 Aug 2025 09:22:01 +0200
+
+nvidia-open-gpu-kernel-modules (550.163.01-2) unstable; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 21 Jul 2025 23:45:24 +0200
+
+nvidia-open-gpu-kernel-modules (550.163.01-1) unstable; urgency=medium
+
+  * New upstream production and Tesla branch release 550.163.01 (2025-04-17).
+    * Fixed CVE-2025-23244.  (Closes: #1104076)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5630
+  * Sync with src:nvidia-graphics-drivers.
+  * Upload to unstable.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 11 Jun 2025 22:32:55 +0200
+
+nvidia-open-gpu-kernel-modules (550.144.03-2) experimental; urgency=medium
+
+  * Backport page_pgmap and hmm_make_device_exclusive_range changes from
+    570.153.02 to fix open kernel module build for Linux 6.15.
+  * Sync with src:nvidia-graphics-drivers.
+  * Upload to experimental.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 10 Jun 2025 09:42:04 +0200
+
+nvidia-open-gpu-kernel-modules (550.144.03-1) unstable; urgency=medium
+
+  * New upstream production and Tesla branch release 550.144.03 (2025-01-16).
+    * Fixed CVE-2024-0150, CVE-2024-0147, CVE-2024-53869, CVE-2024-0131,
+      CVE-2024-0149.  (Closes: #1093916)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5614
+  * New upstream production branch release 550.142 (2024-12-17).
+  * Sync with src:nvidia-graphics-drivers.
+  * Upload to unstable.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 22 May 2025 08:05:14 +0200
+
+nvidia-open-gpu-kernel-modules (550.135-1) experimental; urgency=medium
+
+  * New upstream production branch release 550.135 (2024-11-19).
+  * New upstream Tesla branch release 550.127.08 (2024-11-19).
+  * Sync with src:nvidia-graphics-drivers.  (Closes: #1090361)
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 19 May 2025 21:31:11 +0200
+
+nvidia-open-gpu-kernel-modules (550.127.05-1) experimental; urgency=medium
+
+  * New upstream production and Tesla branch release 550.127.05 (2024-10-22).
+    * Fixed CVE-2024-0126.  (Closes: #1085976)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5586
+  * New upstream production branch release 550.120 (2024-09-19).
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sun, 18 May 2025 19:06:54 +0200
+
+nvidia-open-gpu-kernel-modules (550.107.02-1) experimental; urgency=medium
+
+  * New upstream production branch release 550.107.02 (2024-07-29).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 17 May 2025 01:59:44 +0200
+
+nvidia-open-gpu-kernel-modules (550.100-1) UNRELEASED; urgency=medium
+
+  * New upstream production branch release 550.100 (2024-07-09).
+  * New upstream Tesla branch release 550.90.12 (2024-09-10).
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 17 May 2025 01:02:55 +0200
+
+nvidia-open-gpu-kernel-modules (550.90.07-1) experimental; urgency=medium
+
+  * New upstream production and Tesla branch release 550.90.07 (2024-06-04).
+    * Fixed CVE-2024-0090, CVE-2024-0091, CVE-2024-0092.  (Closes: #1072800)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5551
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 12 May 2025 20:07:19 +0200
+
+nvidia-open-gpu-kernel-modules (550.78-1) experimental; urgency=medium
+
+  * New upstream production branch release 550.78 (2024-04-25).
+  * New upstream production branch release 550.76 (2024-04-16).
+  * New upstream production branch release 550.67 (2024-03-19).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 09 May 2025 18:52:17 +0200
+
+nvidia-open-gpu-kernel-modules (550.54.15-1) experimental; urgency=medium
+
+  * New upstream Tesla branch release 550.54.15 (2024-03-18).
+  * New upstream production and Tesla branch release 550.54.14 (2024-02-23).
+    * Fixed CVE-2024-0074, CVE-2024-0078, CVE-2022-42265.  (Closes: #1064991)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5520
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 29 Apr 2025 13:25:37 +0200
+
+nvidia-open-gpu-kernel-modules (550.40.07-1) experimental; urgency=medium
+
+  * New upstream beta 550.40.07 (2024-01-24).
+  * Sync with src:nvidia-graphics-drivers.
+  * Refresh patches.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 23 Apr 2025 15:13:48 +0200
+
+nvidia-open-gpu-kernel-modules (545.29.06-2) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 16 May 2025 00:21:10 +0200
+
+nvidia-open-gpu-kernel-modules (545.29.06-1) experimental; urgency=medium
+
+  * New upstream new feature branch release 545.29.06 (2023-11-22).
+  * New upstream new feature branch release 545.29.02 (2023-10-31).
+    * Fixed CVE-2023-31022.  (Closes: #1055144)
+      https://nvidia.custhelp.com/app/answers/detail/a_id/5491
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 16 Apr 2025 10:17:58 +0200
+
+nvidia-open-gpu-kernel-modules (545.23.06-6) experimental; urgency=medium
+
+  * Do not add -mfunction-return=thunk-extern flag, breaks backwards
+    compatibility with kernels built without this flag.
+  * Apply both patch sets manually.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 14 Apr 2025 18:42:42 +0200
+
+nvidia-open-gpu-kernel-modules (545.23.06-5) experimental; urgency=medium
+
+  * Backport NV_CRYPTO_AKCIPHER_VERIFY_PRESENT changes from 550.144.03 to fix
+    open kernel module build for Linux 6.13.
+  * Let pahole ignore language c++11 for BTF generation.  (Closes: #1098812)
+  * Fix warnings during open module build.
+  * Build with more kernel hardening flags.
+  * Sync with src:nvidia-graphics-drivers.
+  * Bump Standards-Version to 4.7.2. No changes needed.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 01 Apr 2025 21:00:29 +0200
+
+nvidia-open-gpu-kernel-modules (545.23.06-4) experimental; urgency=medium
+
+  * Backport NV_MODULE_IMPORT_NS_TAKES_STRING_LITERAL changes from 550.144.03
+    and NV_FOLIO_TEST_SWAPCACHE_PRESENT changes from 565.57.01 to fix open
+    kernel module build for Linux 6.13.
+  * Work around a pahole deadlock while generating btf debug info for the open
+    kernel module.  (Closes: #1098812)
+  * Fix warnings during open module build.
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sun, 16 Mar 2025 20:00:14 +0100
+
+nvidia-open-gpu-kernel-modules (545.23.06-3) experimental; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Feb 2025 21:21:38 +0100
+
+nvidia-open-gpu-kernel-modules (545.23.06-2) experimental; urgency=medium
+
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sun, 10 Nov 2024 21:51:16 +0100
+
+nvidia-open-gpu-kernel-modules (545.23.06-1) experimental; urgency=medium
+
+  * New upstream beta 545.23.06 (2023-10-17).
+  * Sync with src:nvidia-graphics-drivers.
+  * Upload to experimental.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 29 Mar 2024 09:59:11 +0100
+
+nvidia-open-gpu-kernel-modules (535.247.01-1~deb12u1) bookworm; urgency=medium
+
+  * Rebuild for bookworm.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 08 May 2025 22:10:43 +0200
+
 nvidia-open-gpu-kernel-modules (535.247.01-1) unstable; urgency=medium
 
   * New upstream LTS and Tesla branch release 535.247.01 (2025-04-17).
@@ -10,8 +213,8 @@ nvidia-open-gpu-kernel-modules (535.247.01-1) unstable; urgency=medium
 nvidia-open-gpu-kernel-modules (535.230.02-1) unstable; urgency=medium
 
   * New upstream LTS and Tesla branch release 535.230.02 (2025-01-16).
-    * Fixed CVE-2024-0150, CVE-2024-0147, CVE-2024-53869, CVE-2024-0131,
-      CVE-2024-0149.  (Closes: #1093916)
+    * Fixed CVE-2024-0150, CVE-2024-0147, CVE-2024-0131, CVE-2024-0149.
+      (Closes: #1093916)
       https://nvidia.custhelp.com/app/answers/detail/a_id/5614
   * Sync with src:nvidia-graphics-drivers.
 
@@ -92,12 +295,18 @@ nvidia-open-gpu-kernel-modules (535.183.01-1) unstable; urgency=medium
   * New upstream LTS and Tesla branch release 535.183.01 (2024-06-04).
     * Fixed CVE-2024-0090, CVE-2024-0092.  (Closes: #1072800)
       https://nvidia.custhelp.com/app/answers/detail/a_id/5551
+  * Sync with src:nvidia-graphics-drivers.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 04:56:43 +0200
+
+nvidia-open-gpu-kernel-modules (535.179-1) UNRELEASED; urgency=medium
+
   * New upstream long term support branch release 535.179 (2024-05-09).
   * New upstream long term support branch release 535.171.04 (2024-03-21).
   * Sync with src:nvidia-graphics-drivers.
   * Refresh patches.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 04:56:43 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 18 Jun 2024 09:58:53 +0200
 
 nvidia-open-gpu-kernel-modules (535.161.08-1~deb12u1) bookworm; urgency=medium
 

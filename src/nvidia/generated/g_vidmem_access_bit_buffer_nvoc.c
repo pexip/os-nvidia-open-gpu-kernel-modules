@@ -127,7 +127,7 @@ static NV_STATUS __nvoc_thunk_RsResource_vidmemAccessBitBufMapTo(struct VidmemAc
     return resMapTo((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RsResource.offset), pParams);
 }
 
-static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufGetMapAddrSpace(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
+static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufGetMapAddrSpace(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
     return gpuresGetMapAddrSpace((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VidmemAccessBitBuffer_GpuResource.offset), pCallContext, mapFlags, pAddrSpace);
 }
 
@@ -163,19 +163,15 @@ static void __nvoc_thunk_RmResource_vidmemAccessBitBufControl_Epilogue(struct Vi
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RmResource.offset), pCallContext, pParams);
 }
 
-static NV_STATUS __nvoc_thunk_RsResource_vidmemAccessBitBufControlLookup(struct VidmemAccessBitBuffer *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RsResource.offset), pParams, ppEntry);
-}
-
 static NvHandle __nvoc_thunk_GpuResource_vidmemAccessBitBufGetInternalObjectHandle(struct VidmemAccessBitBuffer *pGpuResource) {
     return gpuresGetInternalObjectHandle((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VidmemAccessBitBuffer_GpuResource.offset));
 }
 
-static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufControl(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
+static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufControl(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return gpuresControl((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VidmemAccessBitBuffer_GpuResource.offset), pCallContext, pParams);
 }
 
-static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufUnmap(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, RsCpuMapping *pCpuMapping) {
+static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufUnmap(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RsCpuMapping *pCpuMapping) {
     return gpuresUnmap((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VidmemAccessBitBuffer_GpuResource.offset), pCallContext, pCpuMapping);
 }
 
@@ -203,6 +199,10 @@ static NvBool __nvoc_thunk_RsResource_vidmemAccessBitBufCanCopy(struct VidmemAcc
     return resCanCopy((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RsResource.offset));
 }
 
+static NvBool __nvoc_thunk_RsResource_vidmemAccessBitBufIsPartialUnmapSupported(struct VidmemAccessBitBuffer *pResource) {
+    return resIsPartialUnmapSupported((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RsResource.offset));
+}
+
 static void __nvoc_thunk_RsResource_vidmemAccessBitBufPreDestruct(struct VidmemAccessBitBuffer *pResource) {
     resPreDestruct((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VidmemAccessBitBuffer_RsResource.offset));
 }
@@ -223,7 +223,7 @@ static struct NotifShare *__nvoc_thunk_Notifier_vidmemAccessBitBufGetNotificatio
     return notifyGetNotificationShare((struct Notifier *)(((unsigned char *)pNotifier) + __nvoc_rtti_VidmemAccessBitBuffer_Notifier.offset));
 }
 
-static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufMap(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, RsCpuMapping *pCpuMapping) {
+static NV_STATUS __nvoc_thunk_GpuResource_vidmemAccessBitBufMap(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, struct RsCpuMapping *pCpuMapping) {
     return gpuresMap((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VidmemAccessBitBuffer_GpuResource.offset), pCallContext, pParams, pCpuMapping);
 }
 
@@ -341,8 +341,6 @@ static void __nvoc_init_funcTable_VidmemAccessBitBuffer_1(VidmemAccessBitBuffer 
 
     pThis->__vidmemAccessBitBufControl_Epilogue__ = &__nvoc_thunk_RmResource_vidmemAccessBitBufControl_Epilogue;
 
-    pThis->__vidmemAccessBitBufControlLookup__ = &__nvoc_thunk_RsResource_vidmemAccessBitBufControlLookup;
-
     pThis->__vidmemAccessBitBufGetInternalObjectHandle__ = &__nvoc_thunk_GpuResource_vidmemAccessBitBufGetInternalObjectHandle;
 
     pThis->__vidmemAccessBitBufControl__ = &__nvoc_thunk_GpuResource_vidmemAccessBitBufControl;
@@ -360,6 +358,8 @@ static void __nvoc_init_funcTable_VidmemAccessBitBuffer_1(VidmemAccessBitBuffer 
     pThis->__vidmemAccessBitBufControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_vidmemAccessBitBufControlSerialization_Prologue;
 
     pThis->__vidmemAccessBitBufCanCopy__ = &__nvoc_thunk_RsResource_vidmemAccessBitBufCanCopy;
+
+    pThis->__vidmemAccessBitBufIsPartialUnmapSupported__ = &__nvoc_thunk_RsResource_vidmemAccessBitBufIsPartialUnmapSupported;
 
     pThis->__vidmemAccessBitBufPreDestruct__ = &__nvoc_thunk_RsResource_vidmemAccessBitBufPreDestruct;
 
@@ -396,23 +396,31 @@ void __nvoc_init_VidmemAccessBitBuffer(VidmemAccessBitBuffer *pThis, RmHalspecOw
     __nvoc_init_funcTable_VidmemAccessBitBuffer(pThis, pRmhalspecowner);
 }
 
-NV_STATUS __nvoc_objCreate_VidmemAccessBitBuffer(VidmemAccessBitBuffer **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_VidmemAccessBitBuffer(VidmemAccessBitBuffer **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     VidmemAccessBitBuffer *pThis;
     RmHalspecOwner *pRmhalspecowner;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(VidmemAccessBitBuffer), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(VidmemAccessBitBuffer));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_VidmemAccessBitBuffer);
 
     pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
-    if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
+    // pParent must be a valid object that derives from a halspec owner class.
+    NV_ASSERT_OR_RETURN(pParent != NULL, NV_ERR_INVALID_ARGUMENT);
+
+    // Link the child into the parent unless flagged not to do so.
+    if (!(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
         objAddChild(pParentObj, &pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
@@ -430,16 +438,25 @@ NV_STATUS __nvoc_objCreate_VidmemAccessBitBuffer(VidmemAccessBitBuffer **ppThis,
     status = __nvoc_ctor_VidmemAccessBitBuffer(pThis, pRmhalspecowner, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_VidmemAccessBitBuffer_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_VidmemAccessBitBuffer_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(VidmemAccessBitBuffer));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

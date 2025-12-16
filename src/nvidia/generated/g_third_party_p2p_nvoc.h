@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2009-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2009-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -36,28 +36,34 @@ extern "C" {
 
 #include "rmapi/client.h"
 #include "gpu/mem_mgr/mem_desc.h"
-#include "gpu/subdevice/subdevice.h"
 #include "gpu/gpu_resource.h"
 
 #include <ctrl/ctrl503c.h>
 
-//
-// The third-party P2P token is a 64bit integer.
-//
-// The value may be passed by the RM client enabling the third-party P2P access.
-// Otherwise the P2P token format is:
-//
-//   fn  [  *GPU ID*  ]  [ *UNUSED*  ]  [  *PEER INDEX*  ]
-//   bit 63          32  31          8  7                0
-//
-// The third-party P2P token is a globally unique identifier for one
-// of an attached GPU's several P2P slots.  It is passed, as an
-// opaque handle, to third-party driver stacks to allow the setup
-// of a P2P mapping between a given GPU and a third-party device with
-// NVIDIA P2P capabilities.
-//
+struct Subdevice;
 
-#define CLI_ENCODEP2PTOKEN(gpuId, peerIndex) (((NvU64)gpuId << 32) | peerIndex)
+#ifndef __NVOC_CLASS_Subdevice_TYPEDEF__
+#define __NVOC_CLASS_Subdevice_TYPEDEF__
+typedef struct Subdevice Subdevice;
+#endif /* __NVOC_CLASS_Subdevice_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_Subdevice
+#define __nvoc_class_id_Subdevice 0x4b01b3
+#endif /* __nvoc_class_id_Subdevice */
+
+
+struct Memory;
+
+#ifndef __NVOC_CLASS_Memory_TYPEDEF__
+#define __NVOC_CLASS_Memory_TYPEDEF__
+typedef struct Memory Memory;
+#endif /* __NVOC_CLASS_Memory_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_Memory
+#define __nvoc_class_id_Memory 0x4789f2
+#endif /* __nvoc_class_id_Memory */
+
+
 
 #define CLI_THIRD_PARTY_P2P_FLAGS_INITIALIZED   NVBIT(0)
 
@@ -191,11 +197,16 @@ typedef struct ThirdPartyP2P ThirdPartyP2P;
 #endif /* __nvoc_class_id_ThirdPartyP2P */
 
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_THIRD_PARTY_P2P_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct P2PTokenShare {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct RsShared __nvoc_base_RsShared;
@@ -242,11 +253,16 @@ void shrp2pDestruct_IMPL(struct P2PTokenShare *pP2PTokenShare);
 #undef PRIVATE_FIELD
 
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_THIRD_PARTY_P2P_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct ThirdPartyP2P {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct GpuResource __nvoc_base_GpuResource;
@@ -272,7 +288,6 @@ struct ThirdPartyP2P {
     NV_STATUS (*__thirdpartyp2pInternalControlForward__)(struct ThirdPartyP2P *, NvU32, void *, NvU32);
     NV_STATUS (*__thirdpartyp2pUnmapFrom__)(struct ThirdPartyP2P *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__thirdpartyp2pControl_Epilogue__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__thirdpartyp2pControlLookup__)(struct ThirdPartyP2P *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NvHandle (*__thirdpartyp2pGetInternalObjectHandle__)(struct ThirdPartyP2P *);
     NV_STATUS (*__thirdpartyp2pControl__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__thirdpartyp2pUnmap__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RsCpuMapping *);
@@ -281,6 +296,7 @@ struct ThirdPartyP2P {
     NV_STATUS (*__thirdpartyp2pControlFilter__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__thirdpartyp2pControlSerialization_Prologue__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__thirdpartyp2pCanCopy__)(struct ThirdPartyP2P *);
+    NvBool (*__thirdpartyp2pIsPartialUnmapSupported__)(struct ThirdPartyP2P *);
     void (*__thirdpartyp2pPreDestruct__)(struct ThirdPartyP2P *);
     NV_STATUS (*__thirdpartyp2pIsDuplicate__)(struct ThirdPartyP2P *, NvHandle, NvBool *);
     void (*__thirdpartyp2pControlSerialization_Epilogue__)(struct ThirdPartyP2P *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
@@ -347,7 +363,6 @@ NV_STATUS __nvoc_objCreate_ThirdPartyP2P(ThirdPartyP2P**, Dynamic*, NvU32, struc
 #define thirdpartyp2pInternalControlForward(pGpuResource, command, pParams, size) thirdpartyp2pInternalControlForward_DISPATCH(pGpuResource, command, pParams, size)
 #define thirdpartyp2pUnmapFrom(pResource, pParams) thirdpartyp2pUnmapFrom_DISPATCH(pResource, pParams)
 #define thirdpartyp2pControl_Epilogue(pResource, pCallContext, pParams) thirdpartyp2pControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define thirdpartyp2pControlLookup(pResource, pParams, ppEntry) thirdpartyp2pControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define thirdpartyp2pGetInternalObjectHandle(pGpuResource) thirdpartyp2pGetInternalObjectHandle_DISPATCH(pGpuResource)
 #define thirdpartyp2pControl(pGpuResource, pCallContext, pParams) thirdpartyp2pControl_DISPATCH(pGpuResource, pCallContext, pParams)
 #define thirdpartyp2pUnmap(pGpuResource, pCallContext, pCpuMapping) thirdpartyp2pUnmap_DISPATCH(pGpuResource, pCallContext, pCpuMapping)
@@ -356,6 +371,7 @@ NV_STATUS __nvoc_objCreate_ThirdPartyP2P(ThirdPartyP2P**, Dynamic*, NvU32, struc
 #define thirdpartyp2pControlFilter(pResource, pCallContext, pParams) thirdpartyp2pControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define thirdpartyp2pControlSerialization_Prologue(pResource, pCallContext, pParams) thirdpartyp2pControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define thirdpartyp2pCanCopy(pResource) thirdpartyp2pCanCopy_DISPATCH(pResource)
+#define thirdpartyp2pIsPartialUnmapSupported(pResource) thirdpartyp2pIsPartialUnmapSupported_DISPATCH(pResource)
 #define thirdpartyp2pPreDestruct(pResource) thirdpartyp2pPreDestruct_DISPATCH(pResource)
 #define thirdpartyp2pIsDuplicate(pResource, hMemory, pDuplicate) thirdpartyp2pIsDuplicate_DISPATCH(pResource, hMemory, pDuplicate)
 #define thirdpartyp2pControlSerialization_Epilogue(pResource, pCallContext, pParams) thirdpartyp2pControlSerialization_Epilogue_DISPATCH(pResource, pCallContext, pParams)
@@ -435,10 +451,6 @@ static inline void thirdpartyp2pControl_Epilogue_DISPATCH(struct ThirdPartyP2P *
     pResource->__thirdpartyp2pControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS thirdpartyp2pControlLookup_DISPATCH(struct ThirdPartyP2P *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__thirdpartyp2pControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NvHandle thirdpartyp2pGetInternalObjectHandle_DISPATCH(struct ThirdPartyP2P *pGpuResource) {
     return pGpuResource->__thirdpartyp2pGetInternalObjectHandle__(pGpuResource);
 }
@@ -469,6 +481,10 @@ static inline NV_STATUS thirdpartyp2pControlSerialization_Prologue_DISPATCH(stru
 
 static inline NvBool thirdpartyp2pCanCopy_DISPATCH(struct ThirdPartyP2P *pResource) {
     return pResource->__thirdpartyp2pCanCopy__(pResource);
+}
+
+static inline NvBool thirdpartyp2pIsPartialUnmapSupported_DISPATCH(struct ThirdPartyP2P *pResource) {
+    return pResource->__thirdpartyp2pIsPartialUnmapSupported__(pResource);
 }
 
 static inline void thirdpartyp2pPreDestruct_DISPATCH(struct ThirdPartyP2P *pResource) {
@@ -617,4 +633,5 @@ void                CliUnregisterMemoryFromThirdPartyP2P(struct Memory *pMemory)
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_THIRD_PARTY_P2P_NVOC_H_

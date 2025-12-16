@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -90,7 +90,7 @@ NvBool ceIsCeGrce(OBJGPU *pGpu, RM_ENGINE_TYPE rmCeEngineType)
     // check if gr is in the partnerList
     for (i = 0; i < partnerParams.numPartners; i++)
     {
-        if (partnerParams.partnerList[i] == NV2080_ENGINE_TYPE_GRAPHICS)
+        if (NV2080_ENGINE_TYPE_IS_GR(partnerParams.partnerList[i]))
         {
             return NV_TRUE;
         }
@@ -181,7 +181,7 @@ subdeviceCtrlCmdCeGetAllCaps_IMPL
     OBJGPU *pGpu = GPU_RES_GET_GPU(pSubdevice);
     Device *pDevice = GPU_RES_GET_DEVICE(pSubdevice);
 
-    ct_assert(ENG_CE__SIZE_1 <= sizeof(pCeCapsParams->capsTbl) / sizeof(pCeCapsParams->capsTbl[0]));
+    ct_assert(NV2080_CTRL_MAX_CES  <= sizeof(pCeCapsParams->capsTbl) / sizeof(pCeCapsParams->capsTbl[0]));
 
     if (!RMCFG_FEATURE_PLATFORM_GSP)
     {
@@ -216,7 +216,7 @@ subdeviceCtrlCmdCeGetAllCaps_IMPL
             if (pKCe->bStubbed)
                 continue;
 
-            pCeCapsParams->present |= BIT(kceInst);
+            pCeCapsParams->present |= BIT64(kceInst);
 
             NvU8 *pKCeCaps = pCeCapsParams->capsTbl[kceInst];
 

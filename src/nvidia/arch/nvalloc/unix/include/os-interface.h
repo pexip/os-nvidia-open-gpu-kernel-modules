@@ -67,7 +67,6 @@ typedef struct os_wait_queue os_wait_queue;
  * ---------------------------------------------------------------------------
  */
 
-NvU64       NV_API_CALL  os_get_num_phys_pages       (void);
 NV_STATUS   NV_API_CALL  os_alloc_mem                (void **, NvU64);
 void        NV_API_CALL  os_free_mem                 (void *);
 NV_STATUS   NV_API_CALL  os_get_current_time         (NvU32 *, NvU32 *);
@@ -105,7 +104,6 @@ void*       NV_API_CALL  os_map_kernel_space         (NvU64, NvU64, NvU32);
 void        NV_API_CALL  os_unmap_kernel_space       (void *, NvU64);
 void*       NV_API_CALL  os_map_user_space           (NvU64, NvU64, NvU32, NvU32, void **);
 void        NV_API_CALL  os_unmap_user_space         (void *, NvU64, void *);
-NV_STATUS   NV_API_CALL  os_flush_cpu_cache          (void);
 NV_STATUS   NV_API_CALL  os_flush_cpu_cache_all      (void);
 NV_STATUS   NV_API_CALL  os_flush_user_cache         (void);
 void        NV_API_CALL  os_flush_cpu_write_combine_buffer(void);
@@ -199,6 +197,8 @@ nv_cap_t*   NV_API_CALL  os_nv_cap_create_file_entry  (nv_cap_t *, const char *,
 void        NV_API_CALL  os_nv_cap_destroy_entry      (nv_cap_t *);
 int         NV_API_CALL  os_nv_cap_validate_and_dup_fd(const nv_cap_t *, int);
 void        NV_API_CALL  os_nv_cap_close_fd           (int);
+NvS32       NV_API_CALL  os_imex_channel_get          (NvU64);
+NvS32       NV_API_CALL  os_imex_channel_count        (void);
 
 enum os_pci_req_atomics_type {
     OS_INTF_PCIE_REQ_ATOMICS_32BIT,
@@ -218,8 +218,11 @@ extern NvU32 os_page_size;
 extern NvU64 os_page_mask;
 extern NvU8  os_page_shift;
 extern NvBool os_cc_enabled;
+extern NvBool os_cc_sev_snp_enabled;
+extern NvBool os_cc_snp_vtom_enabled;
 extern NvBool os_cc_tdx_enabled;
 extern NvBool os_dma_buf_enabled;
+extern NvBool os_imex_channel_is_supported;
 
 /*
  * ---------------------------------------------------------------------------

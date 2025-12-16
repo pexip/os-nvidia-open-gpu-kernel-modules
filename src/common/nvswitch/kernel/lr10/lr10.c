@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -36,6 +36,7 @@
 #include "lr10/smbpbi_lr10.h"
 #include "flcn/flcnable_nvswitch.h"
 #include "soe/soe_nvswitch.h"
+#include "lr10/cci_lr10.h"
 
 #include "nvswitch/lr10/dev_nvs_top.h"
 #include "nvswitch/lr10/dev_pri_ringmaster.h"
@@ -837,23 +838,23 @@ nvswitch_read_vbios_link_entries_lr10
         link_entries[i].nvLinkparam6 = (NvU8)vbios_link_entry.nvLinkparam6;
         tblPtr += (sizeof(NVLINK_VBIOS_CONFIG_DATA_LINKENTRY_20)/sizeof(NvU32));
 
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "<<<---- NvLink ID 0x%x ---->>>\n", i);
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 0 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam0, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam0));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 1 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam1, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam1));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 2 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam2, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam2));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 3 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam3, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam3));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 4 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam4, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam4));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 5 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam5, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam5));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "NVLink Params 6 \t0x%x \tBinary:"BYTE_TO_BINARY_PATTERN"\n", vbios_link_entry.nvLinkparam6, BYTE_TO_BINARY(vbios_link_entry.nvLinkparam6));
-        NVSWITCH_PRINT(device, SETUP,
+        NVSWITCH_PRINT(device, NOISY,
             "<<<---- NvLink ID 0x%x ---->>>\n\n", i);
     }
     *identified_link_entriesCount = i;
@@ -914,23 +915,23 @@ _nvswitch_vbios_fetch_nvlink_entries
         goto vbios_fetch_nvlink_entries_done;
     }
 
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "<<<---- NvLink Header ---->>>\n\n");
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Version \t\t 0x%x\n", header.ver_20.Version);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Header Size \t0x%x\n", header.ver_20.HeaderSize);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Base Entry Size \t0x%x\n", header.ver_20.BaseEntrySize);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Base Entry count \t0x%x\n", header.ver_20.BaseEntryCount);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Link Entry Size \t0x%x\n", header.ver_20.LinkEntrySize);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Link Entry Count \t0x%x\n", header.ver_20.LinkEntryCount);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "Reserved \t0x%x\n", header.ver_20.Reserved);
-    NVSWITCH_PRINT(device, SETUP,
+    NVSWITCH_PRINT(device, NOISY,
         "<<<---- NvLink Header ---->>>\n");
     if (header.ver_20.Version == NVLINK_CONFIG_DATA_HEADER_VER_20)
     {
@@ -3719,6 +3720,9 @@ nvswitch_initialize_device_state_lr10
         (NvU64)device->regkeys.link_enable_mask) &
         ((~0ULL) >> (64 - NVSWITCH_LINK_COUNT(device))));
 
+    // Detect TNVL mode
+    nvswitch_detect_tnvl_mode(device);
+
     if (nvswitch_is_soe_supported(device))
     {
         retval = nvswitch_init_soe(device);
@@ -5985,7 +5989,8 @@ NvlStatus
 nvswitch_reset_and_drain_links_lr10
 (
     nvswitch_device *device,
-    NvU64 link_mask
+    NvU64 link_mask,
+    NvBool bForced
 )
 {
     NvlStatus status = -NVL_ERR_GENERIC;
@@ -6679,6 +6684,12 @@ nvswitch_is_soe_supported_lr10
     nvswitch_device *device
 )
 {
+    if (device->regkeys.soe_disable == NV_SWITCH_REGKEY_SOE_DISABLE_YES)
+    {
+        NVSWITCH_PRINT(device, INFO, "SOE is disabled via regkey.\n");
+        return NV_FALSE;
+    }
+
     return NV_TRUE;
 }
 
@@ -7721,11 +7732,11 @@ nvswitch_ctrl_get_err_info_lr10
         }
 
         // TODO NVidia TL not supported
-        NVSWITCH_PRINT(device, WARN,
+        NVSWITCH_PRINT(device, NOISY,
             "%s WARNING: Nvidia %s register %s does not exist!\n",
             __FUNCTION__, "NVLTL", "NV_NVLTL_TL_ERRLOG_REG");
 
-        NVSWITCH_PRINT(device, WARN,
+        NVSWITCH_PRINT(device, NOISY,
             "%s WARNING: Nvidia %s register %s does not exist!\n",
             __FUNCTION__, "NVLTL", "NV_NVLTL_TL_INTEN_REG");
 
@@ -7862,12 +7873,355 @@ nvswitch_ctrl_get_nvlink_error_threshold_lr10
 }
 
 NvlStatus
+nvswitch_get_board_id_lr10
+(
+    nvswitch_device *device,
+    NvU16 *pBoardId
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_ctrl_get_soe_heartbeat_lr10
+(
+    nvswitch_device *device,
+    NVSWITCH_GET_SOE_HEARTBEAT_PARAMS *p
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+static NvlStatus
+nvswitch_cci_reset_and_drain_links_lr10
+(
+    nvswitch_device *device,
+    NvU64 link_mask,
+    NvBool bForced
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+void
+nvswitch_update_link_state_led_lr10
+(
+    nvswitch_device *device
+)
+{
+    return;
+}
+
+void
+nvswitch_led_shutdown_lr10
+(
+    nvswitch_device *device
+)
+{
+    return;
+}
+
+NvlStatus
 nvswitch_check_io_sanity_lr10
 (
     nvswitch_device *device
 )
 {
     return NVL_SUCCESS;
+}
+
+void
+nvswitch_fsp_update_cmdq_head_tail_lr10
+(
+    nvswitch_device *device,
+    NvU32 queueHead,
+    NvU32 queueTail
+)
+{
+    return; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+void
+nvswitch_fsp_get_cmdq_head_tail_lr10
+(
+    nvswitch_device *device,
+    NvU32 *pQueueHead,
+    NvU32 *pQueueTail
+)
+{
+    return; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+void
+nvswitch_fsp_update_msgq_head_tail_lr10
+(
+    nvswitch_device *device,
+    NvU32 msgqHead,
+    NvU32 msgqTail
+)
+{
+    return; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+void
+nvswitch_fsp_get_msgq_head_tail_lr10
+(
+    nvswitch_device *device,
+    NvU32 *pMsgqHead,
+    NvU32 *pMsgqTail
+)
+{
+   return; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvU32
+nvswitch_fsp_get_channel_size_lr10
+(
+    nvswitch_device *device
+)
+{
+    return 0; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvU8
+nvswitch_fsp_nvdm_to_seid_lr10
+(
+    nvswitch_device *device,
+    NvU8 nvdmType
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvU32
+nvswitch_fsp_create_mctp_header_lr10
+(
+    nvswitch_device *device,
+    NvU8 som,
+    NvU8 eom,
+    NvU8 seid,
+    NvU8 seq
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvU32
+nvswitch_fsp_create_nvdm_header_lr10
+(
+    nvswitch_device *device,
+    NvU32 nvdmType
+)
+{
+    return 0; // -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_get_packet_info_lr10
+(
+    nvswitch_device *device,
+    NvU8 *pBuffer,
+    NvU32 size,
+    NvU8 *pPacketState,
+    NvU8 *pTag
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_validate_mctp_payload_header_lr10
+(
+    nvswitch_device  *device,
+    NvU8 *pBuffer,
+    NvU32 size
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_process_nvdm_msg_lr10
+(
+    nvswitch_device *device,
+    NvU8 *pBuffer,
+    NvU32 size
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_process_cmd_response_lr10
+(
+    nvswitch_device *device,
+    NvU8 *pBuffer,
+    NvU32 size
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_config_ememc_lr10
+(
+    nvswitch_device *device,
+    NvU32 offset,
+    NvBool bAincw,
+    NvBool bAincr
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_write_to_emem_lr10
+(
+    nvswitch_device *device,
+    NvU8 *pBuffer,
+    NvU32 size
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_read_from_emem_lr10
+(
+    nvswitch_device *device,
+    NvU8 *pBuffer,
+    NvU32 size
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_fsp_error_code_to_nvlstatus_map_lr10
+(
+    nvswitch_device *device,
+    NvU32 errorCode
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED; 
+}
+
+NvlStatus
+nvswitch_fsprpc_get_caps_lr10
+(
+    nvswitch_device *device,
+    NVSWITCH_FSPRPC_GET_CAPS_PARAMS *params
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_detect_tnvl_mode_lr10
+(
+    nvswitch_device *device
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED; 
+}
+
+NvBool
+nvswitch_is_tnvl_mode_enabled_lr10
+(
+    nvswitch_device *device
+)
+{
+    return NV_FALSE;
+}
+
+NvBool
+nvswitch_is_tnvl_mode_locked_lr10
+(
+    nvswitch_device *device
+)
+{
+    return NV_FALSE;
+}
+
+NvlStatus
+nvswitch_tnvl_get_attestation_certificate_chain_lr10
+(
+    nvswitch_device *device,
+    NVSWITCH_GET_ATTESTATION_CERTIFICATE_CHAIN_PARAMS *params
+)
+{
+    // Not supported in LR10
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_tnvl_get_attestation_report_lr10
+(
+    nvswitch_device *device,
+    NVSWITCH_GET_ATTESTATION_REPORT_PARAMS *params
+)
+{
+    // Not supported in LR10
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_tnvl_send_fsp_lock_config_lr10
+(
+    nvswitch_device *device
+)
+{
+    // Not supported in LR10
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_tnvl_get_status_lr10
+(
+    nvswitch_device *device,
+    NVSWITCH_GET_TNVL_STATUS_PARAMS *params
+)
+{
+    // Not supported in LR10
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_send_tnvl_prelock_cmd_lr10
+(
+    nvswitch_device *device
+)
+{
+   return -NVL_ERR_NOT_SUPPORTED;
+}
+
+void
+nvswitch_tnvl_disable_interrupts_lr10
+(
+    nvswitch_device *device
+)
+{
+    return;
+}
+
+void
+nvswitch_reg_write_32_lr10
+(
+    nvswitch_device *device,
+    NvU32 offset,
+    NvU32 data
+)
+{
+    if (device->nvlink_device->pciInfo.bars[0].pBar == NULL)
+    {
+        NVSWITCH_PRINT(device, ERROR,
+            "%s: register write failed at offset 0x%x\n",
+            __FUNCTION__, offset);
+        return;
+    }
+
+    // Write the register
+    nvswitch_os_mem_write32((NvU8 *)device->nvlink_device->pciInfo.bars[0].pBar + offset, data);
 }
 
 //

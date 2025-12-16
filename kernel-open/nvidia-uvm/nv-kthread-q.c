@@ -201,7 +201,7 @@ static struct task_struct *thread_create_on_node(int (*threadfn)(void *data),
 
         // Ran out of attempts - return thread even if its stack may not be
         // allocated on the preferred node
-        if ((i == (attempts - 1)))
+        if (i == (attempts - 1))
             break;
 
         // Get the NUMA node where the first page of the stack is resident. If
@@ -245,6 +245,11 @@ int nv_kthread_q_init_on_node(nv_kthread_q_t *q, const char *q_name, int preferr
     wake_up_process(q->q_kthread);
 
     return 0;
+}
+
+int nv_kthread_q_init(nv_kthread_q_t *q, const char *qname)
+{
+    return nv_kthread_q_init_on_node(q, qname, NV_KTHREAD_NO_NODE);
 }
 
 // Returns true (non-zero) if the item was actually scheduled, and false if the

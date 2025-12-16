@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -30,10 +30,14 @@
 #include "gpu/fsp/kern_fsp.h"
 #include "gpu/fsp/kern_fsp_retval.h"
 #include "gpu/gsp/kernel_gsp.h"
+#include "gpu/mem_mgr/mem_mgr.h"
+#include "gpu/pmu/kern_pmu.h"
 
 #include "published/hopper/gh100/dev_fsp_pri.h"
 #include "published/hopper/gh100/dev_fsp_addendum.h"
 #include "fsp/fsp_nvdm_format.h"
+#include "published/hopper/gh100/dev_bus.h"
+#include "published/hopper/gh100/dev_bus_addendum.h"
 #include "published/hopper/gh100/dev_gc6_island_addendum.h"
 #include "published/hopper/gh100/dev_falcon_v4.h"
 #include "published/hopper/gh100/dev_gsp.h"
@@ -675,7 +679,6 @@ kfspGetGspUcodeArchive
         {
             if (pCC != NULL && pCC->getProperty(pCC, PDB_PROP_CONFCOMPUTE_CC_FEATURE_ENABLED))
             {
-                NV_PRINTF(LEVEL_ERROR, "GSP-RM image for CC not found\n");
                 return NULL;
             }
             else
@@ -852,7 +855,8 @@ kfspSetupGspImages
                            0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
     NV_ASSERT_OR_GOTO(status == NV_OK, failed);
 
-    status = memdescAlloc(pKernelFsp->pGspFmcMemdesc);
+    memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_7,
+                    pKernelFsp->pGspFmcMemdesc);
     NV_ASSERT_OR_GOTO(status == NV_OK, failed);
 
     status = memdescMap(pKernelFsp->pGspFmcMemdesc, 0, pGspImageMapSize, NV_TRUE,
@@ -977,6 +981,8 @@ kfspDumpDebugState_GH100
                   DRF_VAL(_GFW, _FSP_UCODE_VERSION, _MINOR, fspUcodeVersion));
     }
 
+    NV_PRINTF(LEVEL_ERROR, "GPU %04x:%02x:%02x\n",
+              gpuGetDomain(pGpu), gpuGetBus(pGpu), gpuGetDevice(pGpu));
     NV_PRINTF(LEVEL_ERROR, "NV_PFSP_FALCON_COMMON_SCRATCH_GROUP_2(0) = 0x%x\n",
               GPU_REG_RD32(pGpu, NV_PFSP_FALCON_COMMON_SCRATCH_GROUP_2(0)));
     NV_PRINTF(LEVEL_ERROR, "NV_PFSP_FALCON_COMMON_SCRATCH_GROUP_2(1) = 0x%x\n",
@@ -1006,34 +1012,32 @@ kfspGspFmcIsEnforced_GH100
 }
 
 /*!
- * @brief Send GSP-FMC and FRTS info to FSP
+ * @brief Check if okay to send GSP-FMC and FRTS info to FSP
  *
  * @param[in] pGpu       OBJGPU pointer
  * @param[in] pKernelFsp KernelFsp pointer
  *
- * @return NV_OK, or error if failed
+ * @return NV_OK
+ *     Okay to send boot commands
+ * @return NV_WARN_NOTHING_TO_DO
+ *     No need to send boot commands
+ * @return NV_ERR_NOT_SUPPORTED
+ *     Should not send boot commands
  */
-NV_STATUS
-kfspSendBootCommands_GH100
+static NV_STATUS
+kfspSafeToSendBootCommands
 (
     OBJGPU    *pGpu,
     KernelFsp *pKernelFsp
 )
 {
-    NV_STATUS status = NV_OK;
-    NV_STATUS statusBoot = NV_OK;
-    NvU32 frtsSize = 0;
-    NVDM_PAYLOAD_COT *pCotPayload = NULL;
-    NvP64 pVaKernel = NULL;
-    NvP64 pPrivKernel = NULL;
-
     if (!IS_EMULATION(pGpu) && !IS_SILICON(pGpu))
     {
         //
         // FSP managment partition is only enabled when secure boot is enabled
         // on silicon and certain emulation configs
         //
-        return NV_OK;
+        return NV_WARN_NOTHING_TO_DO;
     }
 
     if (pKernelFsp->getProperty(pKernelFsp, PDB_PROP_KFSP_IS_MISSING))
@@ -1045,16 +1049,7 @@ kfspSendBootCommands_GH100
         }
 
         NV_PRINTF(LEVEL_WARNING, "Secure boot is disabled due to missing FSP.\n");
-        return NV_OK;
-    }
-
-    // Confirm FSP secure boot partition is done
-    statusBoot = kfspWaitForSecureBoot_HAL(pGpu, pKernelFsp);
-
-    if (statusBoot != NV_OK)
-    {
-        NV_PRINTF(LEVEL_ERROR, "FSP secure boot partition timed out.\n");
-        return statusBoot;
+        return NV_WARN_NOTHING_TO_DO;
     }
 
     // Enforce GSP-FMC can only be booted by FSP on silicon.
@@ -1072,18 +1067,64 @@ kfspSendBootCommands_GH100
     {
         NV_PRINTF(LEVEL_WARNING, "Chain-of-trust is disabled via regkey\n");
         pKernelFsp->setProperty(pKernelFsp, PDB_PROP_KFSP_BOOT_COMMAND_OK, NV_TRUE);
-        return NV_OK;
+        return NV_WARN_NOTHING_TO_DO;
     }
 
-    pCotPayload = portMemAllocNonPaged(sizeof(NVDM_PAYLOAD_COT));
-    NV_CHECK_OR_RETURN(LEVEL_ERROR, pCotPayload != NULL, NV_ERR_NO_MEMORY);
-    portMemSet(pCotPayload, 0, sizeof(NVDM_PAYLOAD_COT));
+    return NV_OK;
+}
+
+/*!
+ * @brief Prepare GSP-FMC and FRTS info to send to FSP
+ *
+ * @param[in] pGpu       OBJGPU pointer
+ * @param[in] pKernelFsp KernelFsp pointer
+ *
+ * @return NV_OK
+ *     GSP-FMC and FRTS info ready to send
+ * @return NV_WARN_NOTHING_TO_DO
+ *     Skipped preparing boot commands
+ * @return Other error
+ *     Error preparing GSP-FMC and FRTS info
+ */
+NV_STATUS
+kfspPrepareBootCommands_GH100
+(
+    OBJGPU    *pGpu,
+    KernelFsp *pKernelFsp
+)
+{
+    NV_STATUS status = NV_OK;
+    NV_STATUS statusBoot;
+
+    NvU32 frtsSize = 0;
+    NvP64 pVaKernel = NULL;
+    NvP64 pPrivKernel = NULL;
+
+    status = kfspSafeToSendBootCommands(pGpu, pKernelFsp);
+    if (status != NV_OK)
+    {
+        return status;
+    }
+
+    statusBoot = kfspWaitForSecureBoot_HAL(pGpu, pKernelFsp);
+
+    // Confirm FSP secure boot partition is done
+    if (statusBoot != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "FSP secure boot partition timed out.\n");
+        status = statusBoot;
+        goto failed;
+    }
+
+    pKernelFsp->pCotPayload = portMemAllocNonPaged(sizeof(NVDM_PAYLOAD_COT));
+    NV_CHECK_OR_RETURN(LEVEL_ERROR, pKernelFsp->pCotPayload != NULL, NV_ERR_NO_MEMORY);
+    portMemSet(pKernelFsp->pCotPayload, 0, sizeof(NVDM_PAYLOAD_COT));
 
     frtsSize = NV_PGC6_AON_FRTS_INPUT_WPR_SIZE_SECURE_SCRATCH_GROUP_03_0_WPR_SIZE_1MB_IN_4K << 12;
     NV_ASSERT(frtsSize != 0);
 
-    pCotPayload->version = 1;
-    pCotPayload->size = sizeof(NVDM_PAYLOAD_COT);
+    pKernelFsp->pCotPayload->version = 1;
+    pKernelFsp->pCotPayload->size = sizeof(NVDM_PAYLOAD_COT);
 
     // Set up sysmem for FRTS copy
     if (!pKernelFsp->getProperty(pKernelFsp, PDB_PROP_KFSP_DISABLE_FRTS_SYSMEM))
@@ -1099,7 +1140,8 @@ kfspSendBootCommands_GH100
                                0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
         NV_ASSERT_OR_GOTO(status == NV_OK, failed);
 
-        status = memdescAlloc(pKernelFsp->pSysmemFrtsMemdesc);
+        memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_8,
+                        pKernelFsp->pSysmemFrtsMemdesc);
         NV_ASSERT_OR_GOTO(status == NV_OK, failed);
 
         // Set up a kernel mapping for future use in RM
@@ -1112,8 +1154,12 @@ kfspSendBootCommands_GH100
         memdescSetKernelMapping(pKernelFsp->pSysmemFrtsMemdesc, pVaKernel);
         memdescSetKernelMappingPriv(pKernelFsp->pSysmemFrtsMemdesc, pPrivKernel);
 
-        pCotPayload->frtsSysmemOffset = memdescGetPhysAddr(pKernelFsp->pSysmemFrtsMemdesc, AT_GPU, 0);
-        pCotPayload->frtsSysmemSize = frtsSize;
+        pKernelFsp->pCotPayload->frtsSysmemOffset = memdescGetPhysAddr(pKernelFsp->pSysmemFrtsMemdesc, AT_GPU, 0);
+        pKernelFsp->pCotPayload->frtsSysmemSize = frtsSize;
+
+        NV_ASSERT_OK_OR_GOTO(status,
+            kfspFrtsSysmemLocationProgram_HAL(pGpu, pKernelFsp),
+            failed);
     }
 
     // Set up vidmem for FRTS copy
@@ -1128,9 +1174,15 @@ kfspSendBootCommands_GH100
         // future, this code will need to be updated.
         // Bug 200711957 has more info and tracks longer term improvements.
         //
-        const NvU32 ESTIMATED_RESERVE_FB = 0x200000;
-        NvU64 frtsOffsetFromEnd = ESTIMATED_RESERVE_FB;
 
+        // Offset from end of FB to be used by FSP
+        NvU64 frtsOffsetFromEnd =
+            memmgrGetFBEndReserveSizeEstimate_HAL(pGpu, GPU_GET_MEMORY_MANAGER(pGpu));
+
+        //
+        // Layout: 0|| ....... | FRTS | rsvd est ||END
+        // frtsOffsetFromEnd =        ^ ........ ^
+        //
         KernelGsp *pKernelGsp = GPU_GET_KERNEL_GSP(pGpu);
 
         //
@@ -1145,18 +1197,17 @@ kfspSendBootCommands_GH100
         if (pKernelGsp != NULL)
             frtsOffsetFromEnd += NV_ALIGN_UP64(kgspGetWprEndMargin(pGpu, pKernelGsp), 0x200000U);
 
-        // Offset from end of FB to be used by FSP
-        pCotPayload->frtsVidmemOffset = frtsOffsetFromEnd;
-        pCotPayload->frtsVidmemSize = frtsSize;
+        pKernelFsp->pCotPayload->frtsVidmemOffset = frtsOffsetFromEnd;
+        pKernelFsp->pCotPayload->frtsVidmemSize = frtsSize;
     }
 
-    pCotPayload->gspFmcSysmemOffset = (NvU64)-1;
-    pCotPayload->gspBootArgsSysmemOffset = (NvU64)-1;
+    pKernelFsp->pCotPayload->gspFmcSysmemOffset = (NvU64)-1;
+    pKernelFsp->pCotPayload->gspBootArgsSysmemOffset = (NvU64)-1;
 
     // Set up GSP-FMC for FSP to boot GSP
     if (!pKernelFsp->getProperty(pKernelFsp, PDB_PROP_KFSP_DISABLE_GSPFMC))
     {
-        status = kfspSetupGspImages(pGpu, pKernelFsp, pCotPayload);
+        status = kfspSetupGspImages(pGpu, pKernelFsp, pKernelFsp->pCotPayload);
         if (status!= NV_OK)
         {
             NV_PRINTF(LEVEL_ERROR, "Ucode image preparation failed!\n");
@@ -1164,20 +1215,53 @@ kfspSendBootCommands_GH100
         }
 
     }
+    return NV_OK;
 
-    status = kfspSendAndReadMessage(pGpu, pKernelFsp, (NvU8 *)pCotPayload,
+failed:
+    NV_PRINTF(LEVEL_ERROR, "Preparing FSP boot cmds failed. RM cannot boot.\n");
+
+    kfspCleanupBootState(pGpu, pKernelFsp);
+
+    return status;
+}
+/*!
+ * @brief Send GSP-FMC and FRTS info to FSP
+ *
+ * @param[in] pGpu       OBJGPU pointer
+ * @param[in] pKernelFsp KernelFsp pointer
+ *
+ * @return NV_OK
+ *     GSP-FMC and FRTS info sent to FSP
+ * @return NV_WARN_NOTHING_TO_DO
+ *     Skipped sending boot commands
+ * @return Other error
+ *     Error sending GSP-FMC and FRTS info to FSP
+ */
+NV_STATUS
+kfspSendBootCommands_GH100
+(
+    OBJGPU    *pGpu,
+    KernelFsp *pKernelFsp
+)
+{
+    NV_STATUS status = NV_OK;
+
+    NV_ASSERT_OR_RETURN(pKernelFsp->pCotPayload != NULL, NV_ERR_INVALID_STATE);
+
+    status = kfspSendAndReadMessage(pGpu, pKernelFsp, (NvU8 *)pKernelFsp->pCotPayload,
                                     sizeof(NVDM_PAYLOAD_COT), NVDM_TYPE_COT, NULL, 0);
     if (status != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR, "Sent following content to FSP: \n");
         NV_PRINTF(LEVEL_ERROR, "version=0x%x, size=0x%x, gspFmcSysmemOffset=0x%llx\n",
-            pCotPayload->version, pCotPayload->size, pCotPayload->gspFmcSysmemOffset);
+            pKernelFsp->pCotPayload->version, pKernelFsp->pCotPayload->size,
+            pKernelFsp->pCotPayload->gspFmcSysmemOffset);
         NV_PRINTF(LEVEL_ERROR, "frtsSysmemOffset=0x%llx, frtsSysmemSize=0x%x\n",
-            pCotPayload->frtsSysmemOffset, pCotPayload->frtsSysmemSize);
+            pKernelFsp->pCotPayload->frtsSysmemOffset, pKernelFsp->pCotPayload->frtsSysmemSize);
         NV_PRINTF(LEVEL_ERROR, "frtsVidmemOffset=0x%llx, frtsVidmemSize=0x%x\n",
-            pCotPayload->frtsVidmemOffset, pCotPayload->frtsVidmemSize);
+            pKernelFsp->pCotPayload->frtsVidmemOffset, pKernelFsp->pCotPayload->frtsVidmemSize);
         NV_PRINTF(LEVEL_ERROR, "gspBootArgsSysmemOffset=0x%llx\n",
-            pCotPayload->gspBootArgsSysmemOffset);
+            pKernelFsp->pCotPayload->gspBootArgsSysmemOffset);
         goto failed;
     }
 
@@ -1195,19 +1279,42 @@ kfspSendBootCommands_GH100
 
     // Set property to indicate we only support secure boot at this point
     pKernelFsp->setProperty(pKernelFsp, PDB_PROP_KFSP_BOOT_COMMAND_OK, NV_TRUE);
-    pKernelFsp->pCotPayload = pCotPayload;
     return NV_OK;
 
 failed:
     NV_PRINTF(LEVEL_ERROR, "FSP boot cmds failed. RM cannot boot.\n");
     kfspDumpDebugState_HAL(pGpu, pKernelFsp);
 
-    memdescDestroy(pKernelFsp->pSysmemFrtsMemdesc);
-    pKernelFsp->pSysmemFrtsMemdesc = NULL;
-
-    portMemFree(pCotPayload);
+    kfspCleanupBootState(pGpu, pKernelFsp);
 
     return status;
+}
+
+/*!
+ * @brief Prepare and send GSP-FMC and FRTS info to FSP
+ *
+ * @param[in] pGpu       OBJGPU pointer
+ * @param[in] pKernelFsp KernelFsp pointer
+ *
+ * @return NV_OK
+ *     GSP-FMC and FRTS info sent to FSP or determined okay to skip sending info
+ * @return Other error
+ *     Error preparing or sending GSP-FMC and FRTS info to FSP
+ */
+NV_STATUS
+kfspPrepareAndSendBootCommands_GH100
+(
+    OBJGPU    *pGpu,
+    KernelFsp *pKernelFsp
+)
+{
+    NV_STATUS status;
+    status = kfspPrepareBootCommands_GH100(pGpu, pKernelFsp);
+    if (status != NV_OK)
+    {
+        return (status == NV_WARN_NOTHING_TO_DO) ? NV_OK : status;
+    }
+    return kfspSendBootCommands_GH100(pGpu, pKernelFsp);
 }
 
 NV_STATUS
@@ -1259,4 +1366,57 @@ kfspRequiresBug3957833WAR_GH100
     const NvU32 FSP_BUG_3957833_FIX_VERSION = 0x44C;
     const NvU32 fspUcodeVersion = GPU_REG_RD_DRF(pGpu, _GFW, _FSP_UCODE_VERSION, _FULL);
     return fspUcodeVersion < FSP_BUG_3957833_FIX_VERSION;
+}
+
+NV_STATUS
+kfspFrtsSysmemLocationProgram_GH100
+(
+    OBJGPU *pGpu,
+    KernelFsp *pKernelFsp
+)
+{
+    NV_STATUS status;
+    RmPhysAddr frtsSysmemAddr;
+
+    NV_ASSERT_TRUE_OR_GOTO(status,
+        (pKernelFsp->pSysmemFrtsMemdesc != NULL),
+        NV_ERR_INVALID_STATE,
+        kfspFrtsSysmemLocationProgram_GH100_exit);
+
+    frtsSysmemAddr = memdescGetPhysAddr(
+        pKernelFsp->pSysmemFrtsMemdesc, AT_GPU, 0U);
+
+    GPU_REG_WR32(
+        pGpu, NV_PBUS_SW_FRTS_INSECURE_ADDR_LO32, NvU64_LO32(frtsSysmemAddr));
+    GPU_REG_WR32(
+        pGpu, NV_PBUS_SW_FRTS_INSECURE_ADDR_HI32, NvU64_HI32(frtsSysmemAddr));
+    GPU_REG_WR32(
+        pGpu,
+        NV_PBUS_SW_FRTS_INSECURE_CONFIG,
+        FLD_SET_DRF(
+            _PBUS, _SW_FRTS_INSECURE_CONFIG, _MEDIA_TYPE, _SYSMEM,
+        REF_NUM(
+            NV_PBUS_SW_FRTS_INSECURE_CONFIG_SIZE_4K,
+            (memdescGetSize(pKernelFsp->pSysmemFrtsMemdesc) >>
+                NV_PBUS_SW_FRTS_INSECURE_CONFIG_SIZE_4K_SHIFT))));
+
+kfspFrtsSysmemLocationProgram_GH100_exit:
+    return status;
+}
+
+void
+kfspFrtsSysmemLocationClear_GH100
+(
+    OBJGPU *pGpu,
+    KernelFsp *pKernelFsp
+)
+{
+    GPU_REG_WR32(
+        pGpu,
+        NV_PBUS_SW_FRTS_INSECURE_CONFIG,
+        REF_DEF(NV_PBUS_SW_FRTS_INSECURE_CONFIG_SIZE_4K, _INVALID));
+    GPU_REG_WR32(
+        pGpu, NV_PBUS_SW_FRTS_INSECURE_ADDR_HI32, 0U);
+    GPU_REG_WR32(
+        pGpu, NV_PBUS_SW_FRTS_INSECURE_ADDR_LO32, 0U);
 }

@@ -142,25 +142,21 @@ Description: fix warnings during open module build
  bool libspdm_x509_get_signature_algorithm(const uint8_t *cert,
                                            size_t cert_size, uint8_t *oid,
                                            size_t *oid_size)
---- a/src/common/unix/nvidia-push/interface/nvidia-push-utils.h
-+++ b/src/common/unix/nvidia-push/interface/nvidia-push-utils.h
-@@ -67,7 +67,7 @@ void nvPushAcquireTimelineSemaphore(
-     NvU64 val);
- 
- NvBool nvPushDecodeMethod(NvU32 header, NvU32 *count);
--void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 object[NV_MAX_SUBDEVICES]);
-+void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 *object);
- void nvPushSetSubdeviceMask(NvPushChannelPtr p, NvU32 mask);
- void __nvPushMakeRoom(NvPushChannelPtr, NvU32 count);
- 
---- a/src/common/unix/nvidia-push/src/nvidia-push.c
-+++ b/src/common/unix/nvidia-push/src/nvidia-push.c
-@@ -971,7 +971,7 @@ static NvU32 GetSetObjectHandle(NvPushCh
+@@ -446,6 +456,7 @@ int32_t libspdm_x509_compare_date_time(c
+     return -3;
  }
  
- // Issue a SET_OBJECT method on the specified subchannel.
--void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 object[NV_MAX_SUBDEVICES])
-+void nvPushSetObject(NvPushChannelPtr p, NvU32 subch, NvU32 *object)
++static
+ bool libspdm_gen_x509_csr(size_t hash_nid, size_t asym_nid,
+                           uint8_t *requester_info, size_t requester_info_length,
+                           void *context, char *subject_name,
+--- a/kernel-open/nvidia/libspdm_internal_crypt_lib.c
++++ b/kernel-open/nvidia/libspdm_internal_crypt_lib.c
+@@ -27,6 +27,7 @@
+ #include "os-interface.h"
+ #include "internal_crypt_lib.h"
+ #include "library/cryptlib.h"
++#include "nvspdm_cryptlib_extensions.h"
+ 
+ bool libspdm_check_crypto_backend(void)
  {
-     const NvPushDeviceRec *pDevice = p->pDevice;
-     const NvU32 oldSubDevMask = p->currentSubDevMask;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2013-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2013-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -45,6 +45,11 @@ typedef struct gpuObject        *gpuObjectHandle;
 
 typedef struct gpuRetainedChannel_struct gpuRetainedChannel;
 
+
+NV_STATUS calculatePCIELinkRateMBps(NvU32 lanes,
+                                    NvU32 pciLinkMaxSpeed,
+                                    NvU32 *pcieLinkRate);
+
 NV_STATUS nvGpuOpsCreateSession(struct gpuSession **session);
 
 NV_STATUS nvGpuOpsDestroySession(struct gpuSession *session);
@@ -60,6 +65,7 @@ NV_STATUS nvGpuOpsDeviceDestroy(struct gpuDevice *device);
 NV_STATUS nvGpuOpsAddressSpaceCreate(struct gpuDevice *device,
                                      NvU64 vaBase,
                                      NvU64 vaSize,
+                                     NvBool enableAts,
                                      gpuAddressSpaceHandle *vaSpace,
                                      UvmGpuAddressSpaceInfo *vaSpaceInfo);
 
@@ -92,11 +98,6 @@ NV_STATUS nvGpuOpsPmaPinPages(void *pPma,
                               NvLength pageCount,
                               NvU64 pageSize,
                               NvU32 flags);
-
-NV_STATUS nvGpuOpsPmaUnpinPages(void *pPma,
-                                NvU64 *pPages,
-                                NvLength pageCount,
-                                NvU64 pageSize);
 
 NV_STATUS nvGpuOpsTsgAllocate(gpuAddressSpaceHandle vaSpace,
                               const gpuTsgAllocParams *params,
@@ -277,13 +278,18 @@ NV_STATUS nvGpuOpsPagingChannelPushStream(UvmGpuPagingChannel *channel,
                                           char *methodStream,
                                           NvU32 methodStreamSize);
 
-NV_STATUS nvGpuOpsFlushReplayableFaultBuffer(struct gpuDevice *device);
+NV_STATUS nvGpuOpsFlushReplayableFaultBuffer(gpuFaultInfo *pFaultInfo,
+                                             NvBool bCopyAndFlush);
+
+NV_STATUS nvGpuOpsTogglePrefetchFaults(gpuFaultInfo *pFaultInfo,
+                                       NvBool bEnable);
 
 // Interface used for CCSL
-
 NV_STATUS nvGpuOpsCcslContextInit(struct ccslContext_t **ctx,
                                   gpuChannelHandle channel);
 NV_STATUS nvGpuOpsCcslContextClear(struct ccslContext_t *ctx);
+NV_STATUS nvGpuOpsCcslRotateKey(UvmCslContext *contextList[],
+                                NvU32 contextListCount);
 NV_STATUS nvGpuOpsCcslRotateIv(struct ccslContext_t *ctx,
                                NvU8 direction);
 NV_STATUS nvGpuOpsCcslEncrypt(struct ccslContext_t *ctx,
@@ -301,6 +307,7 @@ NV_STATUS nvGpuOpsCcslDecrypt(struct ccslContext_t *ctx,
                               NvU32 bufferSize,
                               NvU8 const *inputBuffer,
                               NvU8 const *decryptIv,
+                              NvU32 keyRotationId,
                               NvU8 *outputBuffer,
                               NvU8 const *addAuthData,
                               NvU32 addAuthDataSize,
@@ -316,5 +323,8 @@ NV_STATUS nvGpuOpsIncrementIv(struct ccslContext_t *ctx,
                               NvU8 direction,
                               NvU64 increment,
                               NvU8 *iv);
+NV_STATUS nvGpuOpsLogEncryption(struct ccslContext_t *ctx,
+                                NvU8 direction,
+                                NvU32 bufferSize);
 
 #endif /* _NV_GPU_OPS_H_*/

@@ -1,0 +1,59 @@
+From 6537c546d698b1d21074f4a3c9085b9183ea469f Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Thu, 19 Jun 2025 10:23:36 +0200
+Subject: [PATCH] backport NV_DRM_FBDEV_AVAILABLE changes from 570.169
+
+---
+ nvidia-drm/nvidia-drm-conftest.h     | 14 ++++++++++++++
+ nvidia-drm/nvidia-drm-os-interface.h | 10 ----------
+ 2 files changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/nvidia-drm/nvidia-drm-conftest.h b/nvidia-drm/nvidia-drm-conftest.h
+index 54b2a99f..d3274600 100644
+--- a/nvidia-drm/nvidia-drm-conftest.h
++++ b/nvidia-drm/nvidia-drm-conftest.h
+@@ -62,6 +62,20 @@
+ #undef NV_DRM_FENCE_AVAILABLE
+ #endif
+ 
++#if defined(NV_DRM_FBDEV_GENERIC_SETUP_PRESENT) &&                             \
++    defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT)
++#define NV_DRM_FBDEV_AVAILABLE
++#define NV_DRM_FBDEV_GENERIC_AVAILABLE
++#endif
++
++#if defined(NV_DRM_FBDEV_TTM_SETUP_PRESENT) &&                                 \
++    defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT)
++#if IS_ENABLED(CONFIG_DRM_TTM_HELPER)
++#define NV_DRM_FBDEV_AVAILABLE
++#define NV_DRM_FBDEV_TTM_AVAILABLE
++#endif
++#endif
++
+ #if defined(NV_DRM_CLIENT_SETUP_PRESENT) &&                                    \
+     (defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT) ||   \
+      defined(NV_APERTURE_REMOVE_CONFLICTING_PCI_DEVICES_PRESENT))
+diff --git a/nvidia-drm/nvidia-drm-os-interface.h b/nvidia-drm/nvidia-drm-os-interface.h
+index 25c366f2..993678ee 100644
+--- a/nvidia-drm/nvidia-drm-os-interface.h
++++ b/nvidia-drm/nvidia-drm-os-interface.h
+@@ -58,16 +58,6 @@ typedef struct nv_timer nv_drm_timer;
+ #error "Need to define kernel timer callback primitives for this OS"
+ #endif
+ 
+-#if defined(NV_DRM_FBDEV_GENERIC_SETUP_PRESENT) && defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT)
+-#define NV_DRM_FBDEV_AVAILABLE
+-#define NV_DRM_FBDEV_GENERIC_AVAILABLE
+-#endif
+-
+-#if defined(NV_DRM_FBDEV_TTM_SETUP_PRESENT) && defined(NV_DRM_APERTURE_REMOVE_CONFLICTING_PCI_FRAMEBUFFERS_PRESENT)
+-#define NV_DRM_FBDEV_AVAILABLE
+-#define NV_DRM_FBDEV_TTM_AVAILABLE
+-#endif
+-
+ struct page;
+ 
+ /* Set to true when the atomic modeset feature is enabled. */
+-- 
+2.39.5
+

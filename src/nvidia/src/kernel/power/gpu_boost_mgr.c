@@ -39,6 +39,7 @@
 #include "vgpu/vgpu_events.h"
 #include "gpu/perf/kern_perf_gpuboostsync.h"
 #include "nvdevid.h"
+#include "platform/sli/sli.h"
 
 /*-----------------------Static Private Method Prototypes---------------------*/
 static NV_STATUS _gpuboostmgrApplyPolicyFilters(NV0000_SYNC_GPU_BOOST_GROUP_CONFIG *);
@@ -667,6 +668,8 @@ _gpuboostmgrApplyPolicyFilters(NV0000_SYNC_GPU_BOOST_GROUP_CONFIG *pBoostConfig)
     for (i = 0; i < pBoostConfig->gpuCount; i++)
     {
         pGpuItr = gpumgrGetGpuFromId(pBoostConfig->gpuIds[i]);
+        NV_ASSERT_OR_RETURN(NULL != pGpuItr, NV_ERR_OBJECT_NOT_FOUND);
+
         if (IsUnlinkedSLIEnabled(pGpuItr))
         {
             continue;
@@ -724,6 +727,7 @@ _gpuboostmgrApplyPolicyFilters(NV0000_SYNC_GPU_BOOST_GROUP_CONFIG *pBoostConfig)
         NvU16 subDeviceItr    = 0;
 
         pGpuItr = gpumgrGetGpuFromId(pBoostConfig->gpuIds[i]);
+        NV_ASSERT_OR_RETURN(NULL != pGpuItr, NV_ERR_OBJECT_NOT_FOUND);
 
         // Extract values for the GPU in the iteration.
         {

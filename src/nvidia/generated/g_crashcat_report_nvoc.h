@@ -36,6 +36,8 @@ extern "C" {
 
 #include "nv-crashcat.h"
 #include "nvoc/object.h"
+#include "utils/nvprintf.h"
+#include "nvlog/nvlog_printf.h"
 
 struct CrashCatEngine;
 
@@ -62,11 +64,16 @@ struct CrashCatReportHal {
 typedef struct CrashCatReportHal CrashCatReportHal;
 void __nvoc_init_halspec_CrashCatReportHal(CrashCatReportHal*, NV_CRASHCAT_PACKET_FORMAT_VERSION, CrashCatImplementer);
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_CRASHCAT_REPORT_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct __nvoc_inner_struc_CrashCatReport_1__ {
     NvCrashCatReport_V1 report;
     NvCrashCatRiscv64CsrState_V1 riscv64CsrState;
@@ -391,16 +398,19 @@ const char *crashcatReportRiscvCauseToString(NvU64 xcause);
 #endif
 
 #define CRASHCAT_REPORT_LOG_PACKET_TYPE(pReport, fmt, ...)                  \
-    crashcatEnginePrintf(pReport->pEngine, NV_FALSE,                        \
-        CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT fmt, ##__VA_ARGS__)
+    portDbgPrintf(CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT fmt, ##__VA_ARGS__);            \
+    NVLOG_PRINTF(NV_PRINTF_MODULE, NVLOG_ROUTE_RM, LEVEL_ERROR,         \
+                CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT fmt, ##__VA_ARGS__)
+
 #define CRASHCAT_REPORT_LOG_DATA(pReport, fmt, ...)                         \
-    crashcatEnginePrintf(pReport->pEngine, NV_FALSE,                        \
-        CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT CRASHCAT_LOG_INDENT fmt,    \
-        ##__VA_ARGS__)
+    portDbgPrintf(CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT CRASHCAT_LOG_INDENT fmt, ##__VA_ARGS__);            \
+    NVLOG_PRINTF(NV_PRINTF_MODULE, NVLOG_ROUTE_RM, LEVEL_ERROR,         \
+                CRASHCAT_LOG_PREFIX CRASHCAT_LOG_INDENT CRASHCAT_LOG_INDENT fmt, ##__VA_ARGS__)
 
 #endif // CRASHCAT_REPORT_H
 
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_CRASHCAT_REPORT_NVOC_H_

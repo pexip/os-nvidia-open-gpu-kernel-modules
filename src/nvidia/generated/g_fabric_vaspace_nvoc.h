@@ -45,7 +45,6 @@ extern "C" {
 #include "core/core.h"
 #include "mem_mgr/vaspace.h"
 #include "mem_mgr/gpu_vaspace.h"
-#include "gpu/mem_mgr/heap.h"
 #include "gpu/mem_mgr/virt_mem_allocator.h"
 #include "ctrl/ctrl0080/ctrl0080dma.h"
 #include "ctrl/ctrl90f1.h"
@@ -67,11 +66,16 @@ typedef struct
 /*!
  * RM-registered/managed Fabric virtual address space.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_FABRIC_VASPACE_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct FABRIC_VASPACE {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct OBJVASPACE __nvoc_base_OBJVASPACE;
@@ -90,7 +94,6 @@ struct FABRIC_VASPACE {
     void (*__fabricvaspaceInvalidateTlb__)(struct FABRIC_VASPACE *, struct OBJGPU *, VAS_PTE_UPDATE_TYPE);
     NvBool (*__fabricvaspaceIsMirrored__)(struct FABRIC_VASPACE *);
     NvBool (*__fabricvaspaceIsExternallyOwned__)(struct FABRIC_VASPACE *);
-    NvBool (*__fabricvaspaceIsInternalVaRestricted__)(struct FABRIC_VASPACE *);
     NvU32 (*__fabricvaspaceGetFlags__)(struct FABRIC_VASPACE *);
     NvBool (*__fabricvaspaceIsAtsEnabled__)(struct FABRIC_VASPACE *);
     NvU64 (*__fabricvaspaceGetBigPageSize__)(struct FABRIC_VASPACE *);
@@ -98,7 +101,7 @@ struct FABRIC_VASPACE {
     NvU64 (*__fabricvaspaceGetVaLimit__)(struct FABRIC_VASPACE *);
     PMEMORY_DESCRIPTOR (*__fabricvaspaceGetPageDirBase__)(struct FABRIC_VASPACE *, struct OBJGPU *);
     PMEMORY_DESCRIPTOR (*__fabricvaspaceGetKernelPageDirBase__)(struct FABRIC_VASPACE *, struct OBJGPU *);
-    NvU64 (*__fabricvaspaceGetMapPageSize__)(struct FABRIC_VASPACE *, struct OBJGPU *, EMEMBLOCK *);
+    NvU64 (*__fabricvaspaceGetMapPageSize__)(struct FABRIC_VASPACE *, struct OBJGPU *, struct EMEMBLOCK *);
     struct OBJEHEAP *(*__fabricvaspaceGetHeap__)(struct FABRIC_VASPACE *);
     NvBool (*__fabricvaspaceIsFaultCapable__)(struct FABRIC_VASPACE *);
     NvU64 (*__fabricvaspaceGetVaStart__)(struct FABRIC_VASPACE *);
@@ -107,7 +110,7 @@ struct FABRIC_VASPACE {
     NV_STATUS (*__fabricvaspaceFreeV2__)(struct FABRIC_VASPACE *, NvU64, NvU64 *);
     NV_STATUS (*__fabricvaspaceGetPasid__)(struct FABRIC_VASPACE *, NvU32 *);
     NV_STATUS (*__fabricvaspaceGetPageTableInfo__)(struct FABRIC_VASPACE *, NV0080_CTRL_DMA_GET_PDE_INFO_PARAMS *);
-    NV_STATUS (*__fabricvaspaceReserveMempool__)(struct FABRIC_VASPACE *, struct OBJGPU *, NvHandle, NvU64, NvU64, NvU32);
+    NV_STATUS (*__fabricvaspaceReserveMempool__)(struct FABRIC_VASPACE *, struct OBJGPU *, struct Device *, NvU64, NvU64, NvU32);
     struct OBJVASPACE *pGVAS;
     NvU32 flags;
     NvHandle hClient;
@@ -161,7 +164,6 @@ NV_STATUS __nvoc_objCreate_FABRIC_VASPACE(FABRIC_VASPACE**, Dynamic*, NvU32);
 #define fabricvaspaceInvalidateTlb(pFabricVAS, pGpu, type) fabricvaspaceInvalidateTlb_DISPATCH(pFabricVAS, pGpu, type)
 #define fabricvaspaceIsMirrored(pVAS) fabricvaspaceIsMirrored_DISPATCH(pVAS)
 #define fabricvaspaceIsExternallyOwned(pVAS) fabricvaspaceIsExternallyOwned_DISPATCH(pVAS)
-#define fabricvaspaceIsInternalVaRestricted(pVAS) fabricvaspaceIsInternalVaRestricted_DISPATCH(pVAS)
 #define fabricvaspaceGetFlags(pVAS) fabricvaspaceGetFlags_DISPATCH(pVAS)
 #define fabricvaspaceIsAtsEnabled(pVAS) fabricvaspaceIsAtsEnabled_DISPATCH(pVAS)
 #define fabricvaspaceGetBigPageSize(pVAS) fabricvaspaceGetBigPageSize_DISPATCH(pVAS)
@@ -178,7 +180,7 @@ NV_STATUS __nvoc_objCreate_FABRIC_VASPACE(FABRIC_VASPACE**, Dynamic*, NvU32);
 #define fabricvaspaceFreeV2(pVAS, vAddr, pSize) fabricvaspaceFreeV2_DISPATCH(pVAS, vAddr, pSize)
 #define fabricvaspaceGetPasid(pVAS, pPasid) fabricvaspaceGetPasid_DISPATCH(pVAS, pPasid)
 #define fabricvaspaceGetPageTableInfo(pVAS, pParams) fabricvaspaceGetPageTableInfo_DISPATCH(pVAS, pParams)
-#define fabricvaspaceReserveMempool(pVAS, pGpu, hClient, size, pageSizeLockMask, flags) fabricvaspaceReserveMempool_DISPATCH(pVAS, pGpu, hClient, size, pageSizeLockMask, flags)
+#define fabricvaspaceReserveMempool(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags) fabricvaspaceReserveMempool_DISPATCH(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags)
 NV_STATUS fabricvaspaceConstruct__IMPL(struct FABRIC_VASPACE *pFabricVAS, NvU32 classId, NvU32 vaspaceId, NvU64 vaStart, NvU64 vaLimit, NvU64 vaStartInternal, NvU64 vaLimitInternal, NvU32 flags);
 
 static inline NV_STATUS fabricvaspaceConstruct__DISPATCH(struct FABRIC_VASPACE *pFabricVAS, NvU32 classId, NvU32 vaspaceId, NvU64 vaStart, NvU64 vaLimit, NvU64 vaStartInternal, NvU64 vaLimitInternal, NvU32 flags) {
@@ -247,10 +249,6 @@ static inline NvBool fabricvaspaceIsExternallyOwned_DISPATCH(struct FABRIC_VASPA
     return pVAS->__fabricvaspaceIsExternallyOwned__(pVAS);
 }
 
-static inline NvBool fabricvaspaceIsInternalVaRestricted_DISPATCH(struct FABRIC_VASPACE *pVAS) {
-    return pVAS->__fabricvaspaceIsInternalVaRestricted__(pVAS);
-}
-
 static inline NvU32 fabricvaspaceGetFlags_DISPATCH(struct FABRIC_VASPACE *pVAS) {
     return pVAS->__fabricvaspaceGetFlags__(pVAS);
 }
@@ -279,7 +277,7 @@ static inline PMEMORY_DESCRIPTOR fabricvaspaceGetKernelPageDirBase_DISPATCH(stru
     return pVAS->__fabricvaspaceGetKernelPageDirBase__(pVAS, pGpu);
 }
 
-static inline NvU64 fabricvaspaceGetMapPageSize_DISPATCH(struct FABRIC_VASPACE *pVAS, struct OBJGPU *pGpu, EMEMBLOCK *pMemBlock) {
+static inline NvU64 fabricvaspaceGetMapPageSize_DISPATCH(struct FABRIC_VASPACE *pVAS, struct OBJGPU *pGpu, struct EMEMBLOCK *pMemBlock) {
     return pVAS->__fabricvaspaceGetMapPageSize__(pVAS, pGpu, pMemBlock);
 }
 
@@ -315,8 +313,8 @@ static inline NV_STATUS fabricvaspaceGetPageTableInfo_DISPATCH(struct FABRIC_VAS
     return pVAS->__fabricvaspaceGetPageTableInfo__(pVAS, pParams);
 }
 
-static inline NV_STATUS fabricvaspaceReserveMempool_DISPATCH(struct FABRIC_VASPACE *pVAS, struct OBJGPU *pGpu, NvHandle hClient, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
-    return pVAS->__fabricvaspaceReserveMempool__(pVAS, pGpu, hClient, size, pageSizeLockMask, flags);
+static inline NV_STATUS fabricvaspaceReserveMempool_DISPATCH(struct FABRIC_VASPACE *pVAS, struct OBJGPU *pGpu, struct Device *pDevice, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
+    return pVAS->__fabricvaspaceReserveMempool__(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags);
 }
 
 static inline NvU64 fabricvaspaceGetUCFlaStart(struct FABRIC_VASPACE *pFabricVAS) {
@@ -487,4 +485,5 @@ static inline NvBool fabricvaspaceIsInUse(struct FABRIC_VASPACE *pFabricVAS) {
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_FABRIC_VASPACE_NVOC_H_

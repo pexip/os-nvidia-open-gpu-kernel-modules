@@ -435,6 +435,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_off
         if (conns[i] == NULL)
             continue;
 
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
+
         // Disable Power Management before moving link out of Active
         conns[i]->end0->link_handlers->set_dl_link_mode(conns[i]->end0,
                                                         NVLINK_LINKSTATE_DISABLE_PM,
@@ -463,6 +469,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_off
     {
         if (conns[i] == NULL)
             continue;
+
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
 
         // Wait for the end0 to go to SWCFG
         status = nvlink_core_poll_link_state(conns[i]->end0,
@@ -521,6 +533,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_off
     {
         if (conns[i] == NULL)
             continue;
+
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
 
         // Wait for sublinks to go to SAFE
         if(conns[i]->end0->inSWCFG == NV_TRUE)
@@ -675,6 +693,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_swcfg
         if (conns[i] == NULL)
             continue;
 
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
+
         // Disable Power Management before moving link out of Active
         conns[i]->end0->link_handlers->set_dl_link_mode(conns[i]->end0,
                                                         NVLINK_LINKSTATE_DISABLE_PM,
@@ -705,6 +729,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_swcfg
     {
         if (conns[i] == NULL)
             continue;
+
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
 
         // Wait for the end0 to go to SWCFG
         status = nvlink_core_poll_link_state(conns[i]->end0,
@@ -751,6 +781,12 @@ nvlink_core_powerdown_intranode_conns_from_active_to_swcfg
     {
         if (conns[i] == NULL)
             continue;
+
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
 
         status = nvlink_core_poll_sublink_state(conns[i]->end0,
                                                 NVLINK_SUBLINK_STATE_TX_SAFE,
@@ -843,6 +879,12 @@ nvlink_core_reset_intranode_conns
         if (conns[i] == NULL)
             continue;
         
+        if (conns[i]->end0->bCciManaged || 
+            conns[i]->end1->bCciManaged)
+        {
+            continue;
+        }
+
         //
         // Reset both ends of this connection.
         // This path should enable/init those link endpoints as well.
@@ -966,6 +1008,7 @@ nvlink_core_powerdown_floorswept_conns_to_off
 
     if (visitedConns == NULL)
     {
+        nvlink_free(connsToShutdown);
         return NVL_NO_MEM;
     }
 

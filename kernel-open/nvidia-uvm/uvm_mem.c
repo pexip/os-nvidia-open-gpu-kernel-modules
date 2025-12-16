@@ -127,12 +127,12 @@ bool uvm_mem_mapped_on_gpu_user(uvm_mem_t *mem, uvm_gpu_t *gpu)
     if (mem->user == NULL)
         return false;
 
-    return uvm_global_processor_mask_test(&mem->user->mapped_on, gpu->global_id);
+    return uvm_processor_mask_test(&mem->user->mapped_on, gpu->id);
 }
 
 bool uvm_mem_mapped_on_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
 {
-    return uvm_global_processor_mask_test(&mem->kernel.mapped_on, gpu->global_id);
+    return uvm_processor_mask_test(&mem->kernel.mapped_on, gpu->id);
 }
 
 bool uvm_mem_mapped_on_cpu_user(uvm_mem_t *mem)
@@ -140,12 +140,12 @@ bool uvm_mem_mapped_on_cpu_user(uvm_mem_t *mem)
     if (mem->user == NULL)
         return false;
 
-    return uvm_global_processor_mask_test(&mem->user->mapped_on, UVM_GLOBAL_ID_CPU);
+    return uvm_processor_mask_test(&mem->user->mapped_on, UVM_ID_CPU);
 }
 
 bool uvm_mem_mapped_on_cpu_kernel(uvm_mem_t *mem)
 {
-    return uvm_global_processor_mask_test(&mem->kernel.mapped_on, UVM_GLOBAL_ID_CPU);
+    return uvm_processor_mask_test(&mem->kernel.mapped_on, UVM_ID_CPU);
 }
 
 static void mem_set_mapped_on_gpu_user(uvm_mem_t *mem, uvm_gpu_t *gpu)
@@ -154,7 +154,7 @@ static void mem_set_mapped_on_gpu_user(uvm_mem_t *mem, uvm_gpu_t *gpu)
     UVM_ASSERT(mem_can_be_mapped_on_gpu_user(mem, gpu));
     UVM_ASSERT(!uvm_mem_mapped_on_gpu_user(mem, gpu));
 
-    uvm_global_processor_mask_set(&mem->user->mapped_on, gpu->global_id);
+    uvm_processor_mask_set(&mem->user->mapped_on, gpu->id);
 }
 
 static void mem_set_mapped_on_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
@@ -162,7 +162,7 @@ static void mem_set_mapped_on_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
     UVM_ASSERT(mem_can_be_mapped_on_gpu_kernel(mem, gpu));
     UVM_ASSERT(!uvm_mem_mapped_on_gpu_kernel(mem, gpu));
 
-    uvm_global_processor_mask_set(&mem->kernel.mapped_on, gpu->global_id);
+    uvm_processor_mask_set(&mem->kernel.mapped_on, gpu->id);
 }
 
 static void mem_set_mapped_on_cpu_user(uvm_mem_t *mem)
@@ -171,7 +171,7 @@ static void mem_set_mapped_on_cpu_user(uvm_mem_t *mem)
     UVM_ASSERT(mem_can_be_mapped_on_cpu_user(mem));
     UVM_ASSERT(!uvm_mem_mapped_on_cpu_user(mem));
 
-    uvm_global_processor_mask_set(&mem->user->mapped_on, UVM_GLOBAL_ID_CPU);
+    uvm_processor_mask_set(&mem->user->mapped_on, UVM_ID_CPU);
 }
 
 static void mem_set_mapped_on_cpu_kernel(uvm_mem_t *mem)
@@ -179,38 +179,38 @@ static void mem_set_mapped_on_cpu_kernel(uvm_mem_t *mem)
     UVM_ASSERT(mem_can_be_mapped_on_cpu_kernel(mem));
     UVM_ASSERT(!uvm_mem_mapped_on_cpu_kernel(mem));
 
-    uvm_global_processor_mask_set(&mem->kernel.mapped_on, UVM_GLOBAL_ID_CPU);
+    uvm_processor_mask_set(&mem->kernel.mapped_on, UVM_ID_CPU);
 }
 
 static void mem_clear_mapped_on_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
 {
-    uvm_global_processor_mask_clear(&mem->kernel.mapped_on, gpu->global_id);
+    uvm_processor_mask_clear(&mem->kernel.mapped_on, gpu->id);
 }
 
 static void mem_clear_mapped_on_gpu_user(uvm_mem_t *mem, uvm_gpu_t *gpu)
 {
     UVM_ASSERT(mem->user != NULL);
 
-    uvm_global_processor_mask_clear(&mem->user->mapped_on, gpu->global_id);
+    uvm_processor_mask_clear(&mem->user->mapped_on, gpu->id);
 }
 
 static void mem_clear_mapped_on_cpu_user(uvm_mem_t *mem)
 {
     UVM_ASSERT(mem->user != NULL);
 
-    uvm_global_processor_mask_clear(&mem->user->mapped_on, UVM_GLOBAL_ID_CPU);
+    uvm_processor_mask_clear(&mem->user->mapped_on, UVM_ID_CPU);
 }
 
 static void mem_clear_mapped_on_cpu_kernel(uvm_mem_t *mem)
 {
-    uvm_global_processor_mask_clear(&mem->kernel.mapped_on, UVM_GLOBAL_ID_CPU);
+    uvm_processor_mask_clear(&mem->kernel.mapped_on, UVM_ID_CPU);
 }
 
 static bool sysmem_mapped_on_gpu_phys(uvm_mem_t *sysmem, uvm_gpu_t *gpu)
 {
     UVM_ASSERT(uvm_mem_is_sysmem(sysmem));
 
-    return uvm_global_processor_mask_test(&sysmem->sysmem.mapped_on_phys, gpu->global_id);
+    return uvm_processor_mask_test(&sysmem->sysmem.mapped_on_phys, gpu->id);
 }
 
 static void sysmem_set_mapped_on_gpu_phys(uvm_mem_t *sysmem, uvm_gpu_t *gpu)
@@ -218,14 +218,14 @@ static void sysmem_set_mapped_on_gpu_phys(uvm_mem_t *sysmem, uvm_gpu_t *gpu)
     UVM_ASSERT(uvm_mem_is_sysmem(sysmem));
     UVM_ASSERT(!sysmem_mapped_on_gpu_phys(sysmem, gpu));
 
-    uvm_global_processor_mask_set(&sysmem->sysmem.mapped_on_phys, gpu->global_id);
+    uvm_processor_mask_set(&sysmem->sysmem.mapped_on_phys, gpu->id);
 }
 
 static void sysmem_clear_mapped_on_gpu_phys(uvm_mem_t *sysmem, uvm_gpu_t *gpu)
 {
     UVM_ASSERT(uvm_mem_is_sysmem(sysmem));
 
-    uvm_global_processor_mask_clear(&sysmem->sysmem.mapped_on_phys, gpu->global_id);
+    uvm_processor_mask_clear(&sysmem->sysmem.mapped_on_phys, gpu->id);
 }
 
 NV_STATUS uvm_mem_translate_gpu_attributes(const UvmGpuMappingAttributes *attrs,
@@ -366,7 +366,7 @@ static void mem_free_sysmem_dma_chunks(uvm_mem_t *mem)
     NvU32 gpu_index;
 
     UVM_ASSERT(uvm_mem_is_sysmem_dma(mem));
-    gpu_index = uvm_global_id_gpu_index(mem->dma_owner->global_id);
+    gpu_index = uvm_id_gpu_index(mem->dma_owner->id);
 
     if (!mem->sysmem.pages || !mem->sysmem.va)
         goto end;
@@ -375,9 +375,9 @@ static void mem_free_sysmem_dma_chunks(uvm_mem_t *mem)
         if (!mem->sysmem.va[i])
             break;
 
-        uvm_gpu_dma_free_page(mem->dma_owner->parent,
-                              mem->sysmem.va[i],
-                              mem->sysmem.dma_addrs[gpu_index][i]);
+        uvm_parent_gpu_dma_free_page(mem->dma_owner->parent,
+                                     mem->sysmem.va[i],
+                                     mem->sysmem.dma_addrs[gpu_index][i]);
     }
 
 end:
@@ -425,7 +425,7 @@ static void mem_free_chunks(uvm_mem_t *mem)
 static NV_STATUS mem_alloc_dma_addrs(uvm_mem_t *mem, const uvm_gpu_t *gpu)
 {
     NvU64 *dma_addrs = NULL;
-    NvU32 gpu_index = uvm_global_id_gpu_index(gpu->global_id);
+    NvU32 gpu_index = uvm_id_gpu_index(gpu->id);
 
     dma_addrs = uvm_kvmalloc_zero(sizeof(*dma_addrs) * mem->chunks_count);
     if (!dma_addrs)
@@ -480,10 +480,10 @@ static NV_STATUS mem_alloc_sysmem_dma_chunks(uvm_mem_t *mem, gfp_t gfp_flags)
     if (status != NV_OK)
         goto error;
 
-    dma_addrs = mem->sysmem.dma_addrs[uvm_global_id_gpu_index(mem->dma_owner->global_id)];
+    dma_addrs = mem->sysmem.dma_addrs[uvm_id_gpu_index(mem->dma_owner->id)];
 
     for (i = 0; i < mem->chunks_count; ++i) {
-        mem->sysmem.va[i] = uvm_gpu_dma_alloc_page(mem->dma_owner->parent, gfp_flags, &dma_addrs[i]);
+        mem->sysmem.va[i] = uvm_parent_gpu_dma_alloc_page(mem->dma_owner->parent, gfp_flags, &dma_addrs[i]);
         if (!mem->sysmem.va[i])
             goto err_no_mem;
 
@@ -599,7 +599,7 @@ static NV_STATUS mem_alloc_chunks(uvm_mem_t *mem, struct mm_struct *mm, bool zer
     return mem_alloc_vidmem_chunks(mem, zero, is_unprotected);
 }
 
-NV_STATUS uvm_mem_map_kernel(uvm_mem_t *mem, const uvm_global_processor_mask_t *mask)
+NV_STATUS uvm_mem_map_kernel(uvm_mem_t *mem, const uvm_processor_mask_t *mask)
 {
     uvm_gpu_t *gpu;
     NV_STATUS status;
@@ -607,13 +607,13 @@ NV_STATUS uvm_mem_map_kernel(uvm_mem_t *mem, const uvm_global_processor_mask_t *
     if (!mask)
         return NV_OK;
 
-    if (uvm_global_processor_mask_test(mask, UVM_GLOBAL_ID_CPU)) {
+    if (uvm_processor_mask_test(mask, UVM_ID_CPU)) {
         status = uvm_mem_map_cpu_kernel(mem);
         if (status != NV_OK)
             return status;
     }
 
-    for_each_global_gpu_in_mask(gpu, mask) {
+    for_each_gpu_in_mask(gpu, mask) {
         status = uvm_mem_map_gpu_kernel(mem, gpu);
         if (status != NV_OK)
             return status;
@@ -695,7 +695,7 @@ static void mem_deinit_user_mapping(uvm_mem_t *mem)
     if (mem->user == NULL)
         return;
 
-    if (!uvm_global_processor_mask_empty(&mem->user->mapped_on))
+    if (!uvm_processor_mask_empty(&mem->user->mapped_on))
         return;
 
     uvm_kvfree(mem->user);
@@ -894,7 +894,7 @@ NV_STATUS uvm_mem_map_cpu_kernel(uvm_mem_t *mem)
 
 static void sysmem_unmap_gpu_phys(uvm_mem_t *mem, uvm_gpu_t *gpu)
 {
-    NvU64 *dma_addrs = mem->sysmem.dma_addrs[uvm_global_id_gpu_index(gpu->global_id)];
+    NvU64 *dma_addrs = mem->sysmem.dma_addrs[uvm_id_gpu_index(gpu->id)];
     NvU32 i;
 
     UVM_ASSERT(uvm_mem_is_sysmem(mem));
@@ -907,12 +907,12 @@ static void sysmem_unmap_gpu_phys(uvm_mem_t *mem, uvm_gpu_t *gpu)
             // partial map_gpu_sysmem_iommu() operation.
             break;
         }
-        uvm_gpu_unmap_cpu_pages(gpu->parent, dma_addrs[i], mem->chunk_size);
+        uvm_parent_gpu_unmap_cpu_pages(gpu->parent, dma_addrs[i], mem->chunk_size);
         dma_addrs[i] = 0;
     }
 
     uvm_kvfree(dma_addrs);
-    mem->sysmem.dma_addrs[uvm_global_id_gpu_index(gpu->global_id)] = NULL;
+    mem->sysmem.dma_addrs[uvm_id_gpu_index(gpu->id)] = NULL;
 }
 
 static NV_STATUS sysmem_map_gpu_phys(uvm_mem_t *mem, uvm_gpu_t *gpu)
@@ -928,10 +928,10 @@ static NV_STATUS sysmem_map_gpu_phys(uvm_mem_t *mem, uvm_gpu_t *gpu)
         return status;
 
     for (i = 0; i < mem->chunks_count; ++i) {
-        status = uvm_gpu_map_cpu_pages(gpu->parent,
-                                       mem->sysmem.pages[i],
-                                       mem->chunk_size,
-                                       &mem->sysmem.dma_addrs[uvm_global_id_gpu_index(gpu->global_id)][i]);
+        status = uvm_parent_gpu_map_cpu_pages(gpu->parent,
+                                              mem->sysmem.pages[i],
+                                              mem->chunk_size,
+                                              &mem->sysmem.dma_addrs[uvm_id_gpu_index(gpu->id)][i]);
         if (status != NV_OK)
             goto error;
     }
@@ -963,7 +963,7 @@ static uvm_gpu_phys_address_t mem_gpu_physical_vidmem(uvm_mem_t *mem, size_t off
 
 static uvm_gpu_phys_address_t mem_gpu_physical_sysmem(uvm_mem_t *mem, uvm_gpu_t *gpu, size_t offset)
 {
-    NvU64 *dma_addrs = mem->sysmem.dma_addrs[uvm_global_id_gpu_index(gpu->global_id)];
+    NvU64 *dma_addrs = mem->sysmem.dma_addrs[uvm_id_gpu_index(gpu->id)];
     NvU64 dma_addr = dma_addrs[offset / mem->chunk_size];
 
     UVM_ASSERT(uvm_mem_is_sysmem(mem));
@@ -1121,7 +1121,7 @@ static void mem_deinit_gpu_kernel_range(uvm_mem_t *mem)
 
     // Do not remove the range allocation if there is any GPU where the memory
     // is still mapped on kernel space.
-    if (UVM_GLOBAL_ID_IS_VALID(uvm_global_processor_mask_find_first_gpu_id(&mem->kernel.mapped_on)))
+    if (UVM_ID_IS_VALID(uvm_processor_mask_find_first_gpu_id(&mem->kernel.mapped_on)))
         return;
 
     uvm_range_allocator_free(&g_free_ranges, &mem->kernel.range_alloc);
@@ -1151,7 +1151,7 @@ NV_STATUS uvm_mem_map_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
         return status;
 
     gpu_va = reserved_gpu_va(mem, gpu);
-    range_vec = &mem->kernel.range_vecs[uvm_global_id_gpu_index(gpu->global_id)];
+    range_vec = &mem->kernel.range_vecs[uvm_id_gpu_index(gpu->id)];
 
     status = mem_map_gpu(mem, gpu, gpu_va, &gpu->address_space_tree, &attrs, range_vec);
     if (status != NV_OK)
@@ -1197,7 +1197,7 @@ NV_STATUS uvm_mem_map_gpu_user(uvm_mem_t *mem,
         return status;
 
     gpu_va_space = uvm_gpu_va_space_get(mem->user->va_space, gpu);
-    range_vec = &mem->user->range_vecs[uvm_global_id_gpu_index(gpu->global_id)];
+    range_vec = &mem->user->range_vecs[uvm_id_gpu_index(gpu->id)];
 
     status = mem_map_gpu(mem, gpu, gpu_va, &gpu_va_space->page_tables, attrs, range_vec);
     if (status != NV_OK)
@@ -1217,7 +1217,7 @@ void uvm_mem_unmap_gpu_user(uvm_mem_t *mem, uvm_gpu_t *gpu)
     if (!uvm_mem_mapped_on_gpu_user(mem, gpu))
         return;
 
-    mem_unmap_gpu(mem, gpu, &mem->user->range_vecs[uvm_global_id_gpu_index(gpu->global_id)]);
+    mem_unmap_gpu(mem, gpu, &mem->user->range_vecs[uvm_id_gpu_index(gpu->id)]);
     mem_clear_mapped_on_gpu_user(mem, gpu);
     mem_deinit_user_mapping(mem);
 }
@@ -1227,7 +1227,7 @@ void uvm_mem_unmap_gpu_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
     if (!uvm_mem_mapped_on_gpu_kernel(mem, gpu))
         return;
 
-    mem_unmap_gpu(mem, gpu, &mem->kernel.range_vecs[uvm_global_id_gpu_index(gpu->global_id)]);
+    mem_unmap_gpu(mem, gpu, &mem->kernel.range_vecs[uvm_id_gpu_index(gpu->id)]);
     mem_clear_mapped_on_gpu_kernel(mem, gpu);
     mem_deinit_gpu_kernel_range(mem);
 }
@@ -1297,7 +1297,7 @@ void uvm_mem_free(uvm_mem_t *mem)
     uvm_mem_unmap_cpu_kernel(mem);
 
     if (mem->user != NULL) {
-        for_each_global_gpu_in_mask(gpu, &mem->user->mapped_on) {
+        for_each_gpu_in_mask(gpu, &mem->user->mapped_on) {
             uvm_mem_unmap_gpu_user(mem, gpu);
 
             // If we unmapped the last device, the user mapping is freed, so
@@ -1307,11 +1307,11 @@ void uvm_mem_free(uvm_mem_t *mem)
         }
     }
 
-    for_each_global_gpu_in_mask(gpu, &mem->kernel.mapped_on)
+    for_each_gpu_in_mask(gpu, &mem->kernel.mapped_on)
         uvm_mem_unmap_gpu_kernel(mem, gpu);
 
     if (uvm_mem_is_sysmem(mem)) {
-        for_each_global_gpu_in_mask(gpu, &mem->sysmem.mapped_on_phys)
+        for_each_gpu_in_mask(gpu, &mem->sysmem.mapped_on_phys)
             uvm_mem_unmap_gpu_phys(mem, gpu);
     }
 
@@ -1337,15 +1337,19 @@ NvU64 uvm_mem_get_gpu_va_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
 uvm_gpu_address_t uvm_mem_gpu_address_virtual_kernel(uvm_mem_t *mem, uvm_gpu_t *gpu)
 {
     uvm_gpu_address_t addr = uvm_gpu_address_virtual(uvm_mem_get_gpu_va_kernel(mem, gpu));
-    if (uvm_conf_computing_mode_enabled(gpu) && mem->dma_owner)
+
+    if (g_uvm_global.conf_computing_enabled && mem->dma_owner)
         addr.is_unprotected = true;
+
     return addr;
 }
 
 uvm_gpu_address_t uvm_mem_gpu_address_physical(uvm_mem_t *mem, uvm_gpu_t *gpu, NvU64 offset, NvU64 size)
 {
     uvm_gpu_address_t addr = uvm_gpu_address_from_phys(uvm_mem_gpu_physical(mem, gpu, offset, size));
-    if (uvm_conf_computing_mode_enabled(gpu) && mem->dma_owner)
+
+    if (g_uvm_global.conf_computing_enabled && mem->dma_owner)
         addr.is_unprotected = true;
+
     return addr;
 }

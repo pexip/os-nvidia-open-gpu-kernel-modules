@@ -23,12 +23,14 @@
 
 #include "kernel/core/core.h"
 #include "kernel/core/locks.h"
+#include "gpu/subdevice/subdevice.h"
 #include "kernel/gpu/mem_mgr/heap.h"
 #include "kernel/gpu/mem_mgr/mem_mgr.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
 #include "kernel/gpu/rc/kernel_rc.h"
 #include "kernel/gpu/bif/kernel_bif.h"
 #include "kernel/os/os.h"
+#include "platform/sli/sli.h"
 
 #include "class/cl0000.h" // NV01_NULL_OBJECT
 #include "class/cl0002.h" // NV01_CONTEXT_DMA
@@ -389,9 +391,7 @@ krcWatchdogShutdown_IMPL
         return NV_OK;
 
     krcWatchdogDisable(pKernelRc);
-    osRemove1SecondRepeatingCallback(pGpu,
-                                     krcWatchdogTimerProc,
-                                     NULL /* pData */);
+    osRemove1HzCallback(pGpu, krcWatchdogTimerProc, NULL /* pData */);
 
     // This should free the client and all associated resources
     pRmApi->Free(pRmApi,
@@ -477,11 +477,23 @@ krcWatchdogInit_IMPL
 
     if (bClientUserd)
     {
-        Heap *pHeap = GPU_GET_HEAP(pGpu);
-        if (pHeap->pmaObject.bNuma)
+        MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+
+        if (memmgrIsPmaInitialized(pMemoryManager))
         {
-            // PMA can't be used until it's onlined
-            bClientUserd = NV_FALSE;
+            Heap *pHeap = GPU_GET_HEAP(pGpu);
+            NvU32 pmaConfig = PMA_QUERY_NUMA_ENABLED | PMA_QUERY_NUMA_ONLINED;
+
+            if (pmaQueryConfigs(&pHeap->pmaObject, &pmaConfig) == NV_OK)
+            {
+                // PMA can't be used until it's onlined
+                if (pmaConfig & PMA_QUERY_NUMA_ENABLED)
+                {
+                    // PMA can't be used until it's onlined
+                    if (!(pmaConfig & PMA_QUERY_NUMA_ONLINED))
+                        bClientUserd = NV_FALSE;
+                }
+            }
         }
     }
 
@@ -1164,10 +1176,10 @@ krcWatchdogInit_IMPL
     pKernelRc->watchdog.flags |= WATCHDOG_FLAGS_INITIALIZED;
 
     // Hook into the 1 Hz OS timer
-    osSchedule1SecondCallback(pGpu,
-                              krcWatchdogTimerProc,
-                              NULL /* pData */,
-                              NV_OS_1HZ_REPEAT);
+    osSchedule1HzCallback(pGpu,
+                          krcWatchdogTimerProc,
+                          NULL /* pData */,
+                          NV_OS_1HZ_REPEAT);
 
     // Schedule next interval to run immediately
     pKernelRc->watchdogPersistent.nextRunTime = 0;

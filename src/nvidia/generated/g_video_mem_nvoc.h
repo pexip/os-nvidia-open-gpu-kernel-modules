@@ -51,11 +51,16 @@ typedef struct Device Device;
 
 
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_VIDEO_MEM_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct VideoMemory {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct StandardMemory __nvoc_base_StandardMemory;
@@ -71,13 +76,13 @@ struct VideoMemory {
     NvBool (*__vidmemShareCallback__)(struct VideoMemory *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__vidmemMapTo__)(struct VideoMemory *, RS_RES_MAP_TO_PARAMS *);
     NV_STATUS (*__vidmemGetMapAddrSpace__)(struct VideoMemory *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NvBool (*__vidmemIsExportAllowed__)(struct VideoMemory *);
     NvU32 (*__vidmemGetRefCount__)(struct VideoMemory *);
     void (*__vidmemAddAdditionalDependants__)(struct RsClient *, struct VideoMemory *, RsResourceRef *);
     NV_STATUS (*__vidmemControl_Prologue__)(struct VideoMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__vidmemIsGpuMapAllowed__)(struct VideoMemory *, struct OBJGPU *);
     NV_STATUS (*__vidmemUnmapFrom__)(struct VideoMemory *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__vidmemControl_Epilogue__)(struct VideoMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vidmemControlLookup__)(struct VideoMemory *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__vidmemControl__)(struct VideoMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__vidmemUnmap__)(struct VideoMemory *, CALL_CONTEXT *, RsCpuMapping *);
     NV_STATUS (*__vidmemGetMemInterMapParams__)(struct VideoMemory *, RMRES_MEM_INTER_MAP_PARAMS *);
@@ -85,6 +90,7 @@ struct VideoMemory {
     NV_STATUS (*__vidmemControlFilter__)(struct VideoMemory *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__vidmemControlSerialization_Prologue__)(struct VideoMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__vidmemCanCopy__)(struct VideoMemory *);
+    NvBool (*__vidmemIsPartialUnmapSupported__)(struct VideoMemory *);
     NV_STATUS (*__vidmemIsReady__)(struct VideoMemory *, NvBool);
     void (*__vidmemPreDestruct__)(struct VideoMemory *);
     NV_STATUS (*__vidmemIsDuplicate__)(struct VideoMemory *, NvHandle, NvBool *);
@@ -126,13 +132,13 @@ NV_STATUS __nvoc_objCreate_VideoMemory(VideoMemory**, Dynamic*, NvU32, CALL_CONT
 #define vidmemShareCallback(pResource, pInvokingClient, pParentRef, pSharePolicy) vidmemShareCallback_DISPATCH(pResource, pInvokingClient, pParentRef, pSharePolicy)
 #define vidmemMapTo(pResource, pParams) vidmemMapTo_DISPATCH(pResource, pParams)
 #define vidmemGetMapAddrSpace(pMemory, pCallContext, mapFlags, pAddrSpace) vidmemGetMapAddrSpace_DISPATCH(pMemory, pCallContext, mapFlags, pAddrSpace)
+#define vidmemIsExportAllowed(pMemory) vidmemIsExportAllowed_DISPATCH(pMemory)
 #define vidmemGetRefCount(pResource) vidmemGetRefCount_DISPATCH(pResource)
 #define vidmemAddAdditionalDependants(pClient, pResource, pReference) vidmemAddAdditionalDependants_DISPATCH(pClient, pResource, pReference)
 #define vidmemControl_Prologue(pResource, pCallContext, pParams) vidmemControl_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define vidmemIsGpuMapAllowed(pMemory, pGpu) vidmemIsGpuMapAllowed_DISPATCH(pMemory, pGpu)
 #define vidmemUnmapFrom(pResource, pParams) vidmemUnmapFrom_DISPATCH(pResource, pParams)
 #define vidmemControl_Epilogue(pResource, pCallContext, pParams) vidmemControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define vidmemControlLookup(pResource, pParams, ppEntry) vidmemControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define vidmemControl(pMemory, pCallContext, pParams) vidmemControl_DISPATCH(pMemory, pCallContext, pParams)
 #define vidmemUnmap(pMemory, pCallContext, pCpuMapping) vidmemUnmap_DISPATCH(pMemory, pCallContext, pCpuMapping)
 #define vidmemGetMemInterMapParams(pMemory, pParams) vidmemGetMemInterMapParams_DISPATCH(pMemory, pParams)
@@ -140,6 +146,7 @@ NV_STATUS __nvoc_objCreate_VideoMemory(VideoMemory**, Dynamic*, NvU32, CALL_CONT
 #define vidmemControlFilter(pResource, pCallContext, pParams) vidmemControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define vidmemControlSerialization_Prologue(pResource, pCallContext, pParams) vidmemControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define vidmemCanCopy(pStandardMemory) vidmemCanCopy_DISPATCH(pStandardMemory)
+#define vidmemIsPartialUnmapSupported(pResource) vidmemIsPartialUnmapSupported_DISPATCH(pResource)
 #define vidmemIsReady(pMemory, bCopyConstructorContext) vidmemIsReady_DISPATCH(pMemory, bCopyConstructorContext)
 #define vidmemPreDestruct(pResource) vidmemPreDestruct_DISPATCH(pResource)
 #define vidmemIsDuplicate(pMemory, hMemory, pDuplicate) vidmemIsDuplicate_DISPATCH(pMemory, hMemory, pDuplicate)
@@ -168,6 +175,10 @@ static inline NV_STATUS vidmemGetMapAddrSpace_DISPATCH(struct VideoMemory *pMemo
     return pMemory->__vidmemGetMapAddrSpace__(pMemory, pCallContext, mapFlags, pAddrSpace);
 }
 
+static inline NvBool vidmemIsExportAllowed_DISPATCH(struct VideoMemory *pMemory) {
+    return pMemory->__vidmemIsExportAllowed__(pMemory);
+}
+
 static inline NvU32 vidmemGetRefCount_DISPATCH(struct VideoMemory *pResource) {
     return pResource->__vidmemGetRefCount__(pResource);
 }
@@ -190,10 +201,6 @@ static inline NV_STATUS vidmemUnmapFrom_DISPATCH(struct VideoMemory *pResource, 
 
 static inline void vidmemControl_Epilogue_DISPATCH(struct VideoMemory *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     pResource->__vidmemControl_Epilogue__(pResource, pCallContext, pParams);
-}
-
-static inline NV_STATUS vidmemControlLookup_DISPATCH(struct VideoMemory *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__vidmemControlLookup__(pResource, pParams, ppEntry);
 }
 
 static inline NV_STATUS vidmemControl_DISPATCH(struct VideoMemory *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
@@ -222,6 +229,10 @@ static inline NV_STATUS vidmemControlSerialization_Prologue_DISPATCH(struct Vide
 
 static inline NvBool vidmemCanCopy_DISPATCH(struct VideoMemory *pStandardMemory) {
     return pStandardMemory->__vidmemCanCopy__(pStandardMemory);
+}
+
+static inline NvBool vidmemIsPartialUnmapSupported_DISPATCH(struct VideoMemory *pResource) {
+    return pResource->__vidmemIsPartialUnmapSupported__(pResource);
 }
 
 static inline NV_STATUS vidmemIsReady_DISPATCH(struct VideoMemory *pMemory, NvBool bCopyConstructorContext) {
@@ -254,9 +265,9 @@ NV_STATUS vidmemConstruct_IMPL(struct VideoMemory *arg_pVideoMemory, CALL_CONTEX
 void vidmemDestruct_IMPL(struct VideoMemory *pVideoMemory);
 
 #define __nvoc_vidmemDestruct(pVideoMemory) vidmemDestruct_IMPL(pVideoMemory)
-struct Heap *vidmemGetHeap_IMPL(struct OBJGPU *pGpu, struct Device *pDevice, NvBool bSubheap);
+struct Heap *vidmemGetHeap_IMPL(struct OBJGPU *pGpu, struct Device *pDevice, NvBool bSubheap, NvBool bForceGlobalHeap);
 
-#define vidmemGetHeap(pGpu, pDevice, bSubheap) vidmemGetHeap_IMPL(pGpu, pDevice, bSubheap)
+#define vidmemGetHeap(pGpu, pDevice, bSubheap, bForceGlobalHeap) vidmemGetHeap_IMPL(pGpu, pDevice, bSubheap, bForceGlobalHeap)
 #undef PRIVATE_FIELD
 
 
@@ -271,4 +282,5 @@ NV_STATUS vidmemAllocResources(OBJGPU *pGpu, struct MemoryManager *pMemoryManage
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_VIDEO_MEM_NVOC_H_

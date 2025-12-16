@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -60,6 +60,7 @@ static inline pgprot_t pgprot_modify_writecombine(pgprot_t old_prot)
 #endif /* !defined(NV_VMWARE) */
 
 #if defined(NVCPU_AARCH64)
+extern NvBool nvos_is_chipset_io_coherent(void);
 /*
  * Don't rely on the kernel's definition of pgprot_noncached(), as on 64-bit
  * ARM that's not for system memory, but device memory instead. For I/O cache
@@ -119,6 +120,13 @@ static inline pgprot_t pgprot_modify_writecombine(pgprot_t old_prot)
 #define NV_PGPROT_WRITE_COMBINED(old_prot)    old_prot
 #define NV_PGPROT_READ_ONLY(old_prot)                                         \
     __pgprot(pgprot_val((old_prot)) & ~NV_PAGE_RW)
+#elif defined(NVCPU_RISCV64)
+#define NV_PGPROT_WRITE_COMBINED_DEVICE(old_prot)                             \
+    pgprot_writecombine(old_prot)
+/* Don't attempt to mark sysmem pages as write combined on riscv */
+#define NV_PGPROT_WRITE_COMBINED(old_prot)     old_prot
+#define NV_PGPROT_READ_ONLY(old_prot)                                         \
+            __pgprot(pgprot_val((old_prot)) & ~_PAGE_WRITE)
 #else
 /* Writecombine is not supported */
 #undef NV_PGPROT_WRITE_COMBINED_DEVICE(old_prot)

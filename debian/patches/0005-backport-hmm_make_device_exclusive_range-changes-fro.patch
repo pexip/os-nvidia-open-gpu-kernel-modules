@@ -1,0 +1,71 @@
+From 8f3b5bade67e59fe26a7ecd2b8ae6c39edb88f6e Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Thu, 5 Jun 2025 21:59:36 +0200
+Subject: [PATCH] backport hmm_make_device_exclusive_range changes from
+ 570.153.02
+
+---
+ kernel-open/nvidia-uvm/uvm_hmm.c | 38 +++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/kernel-open/nvidia-uvm/uvm_hmm.c b/kernel-open/nvidia-uvm/uvm_hmm.c
+index ebd827cf..60f9c154 100644
+--- a/kernel-open/nvidia-uvm/uvm_hmm.c
++++ b/kernel-open/nvidia-uvm/uvm_hmm.c
+@@ -2428,6 +2428,39 @@ static void hmm_release_atomic_pages(uvm_va_block_t *va_block,
+     }
+ }
+ 
++static int hmm_make_device_exclusive_range(struct mm_struct *mm,
++                                           unsigned long start,
++                                           unsigned long end,
++                                           struct page **pages)
++{
++#if NV_IS_EXPORT_SYMBOL_PRESENT_make_device_exclusive
++    unsigned long addr;
++    int npages = 0;
++
++    for (addr = start; addr < end; addr += PAGE_SIZE) {
++        struct folio *folio;
++        struct page *page;
++
++        page = make_device_exclusive(mm, addr, &g_uvm_global, &folio);
++        if (IS_ERR(page)) {
++            while (npages) {
++                page = pages[--npages];
++                unlock_page(page);
++                put_page(page);
++            }
++            npages = PTR_ERR(page);
++            break;
++        }
++
++        pages[npages++] = page;
++    }
++
++    return npages;
++#else
++    return make_device_exclusive_range(mm, start, end, pages, &g_uvm_global);
++#endif
++}
++
+ static NV_STATUS hmm_block_atomic_fault_locked(uvm_processor_id_t processor_id,
+                                                uvm_va_block_t *va_block,
+                                                uvm_va_block_retry_t *va_block_retry,
+@@ -2481,11 +2514,10 @@ static NV_STATUS hmm_block_atomic_fault_locked(uvm_processor_id_t processor_id,
+ 
+     uvm_mutex_unlock(&va_block->lock);
+ 
+-    npages = make_device_exclusive_range(service_context->block_context->mm,
++    npages = hmm_make_device_exclusive_range(service_context->block_context->mm,
+         uvm_va_block_cpu_page_address(va_block, region.first),
+         uvm_va_block_cpu_page_address(va_block, region.outer - 1) + PAGE_SIZE,
+-        pages + region.first,
+-        &g_uvm_global);
++        pages + region.first);
+ 
+     uvm_mutex_lock(&va_block->lock);
+ 
+-- 
+2.39.5
+

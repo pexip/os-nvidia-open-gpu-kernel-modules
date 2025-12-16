@@ -41,11 +41,16 @@ extern "C" {
  * client instead of a device. This object can be used for memory allocations
  * that should survive device teardown.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_NO_DEVICE_MEM_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct NoDeviceMemory {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Memory __nvoc_base_Memory;
@@ -59,13 +64,13 @@ struct NoDeviceMemory {
     NV_STATUS (*__nodevicememCheckMemInterUnmap__)(struct NoDeviceMemory *, NvBool);
     NvBool (*__nodevicememShareCallback__)(struct NoDeviceMemory *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__nodevicememMapTo__)(struct NoDeviceMemory *, RS_RES_MAP_TO_PARAMS *);
+    NvBool (*__nodevicememIsExportAllowed__)(struct NoDeviceMemory *);
     NvU32 (*__nodevicememGetRefCount__)(struct NoDeviceMemory *);
     void (*__nodevicememAddAdditionalDependants__)(struct RsClient *, struct NoDeviceMemory *, RsResourceRef *);
     NV_STATUS (*__nodevicememControl_Prologue__)(struct NoDeviceMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__nodevicememIsGpuMapAllowed__)(struct NoDeviceMemory *, struct OBJGPU *);
     NV_STATUS (*__nodevicememUnmapFrom__)(struct NoDeviceMemory *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__nodevicememControl_Epilogue__)(struct NoDeviceMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__nodevicememControlLookup__)(struct NoDeviceMemory *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__nodevicememControl__)(struct NoDeviceMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__nodevicememUnmap__)(struct NoDeviceMemory *, CALL_CONTEXT *, RsCpuMapping *);
     NV_STATUS (*__nodevicememGetMemInterMapParams__)(struct NoDeviceMemory *, RMRES_MEM_INTER_MAP_PARAMS *);
@@ -73,6 +78,7 @@ struct NoDeviceMemory {
     NV_STATUS (*__nodevicememControlFilter__)(struct NoDeviceMemory *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__nodevicememControlSerialization_Prologue__)(struct NoDeviceMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__nodevicememCanCopy__)(struct NoDeviceMemory *);
+    NvBool (*__nodevicememIsPartialUnmapSupported__)(struct NoDeviceMemory *);
     NV_STATUS (*__nodevicememIsReady__)(struct NoDeviceMemory *, NvBool);
     NV_STATUS (*__nodevicememCheckCopyPermissions__)(struct NoDeviceMemory *, struct OBJGPU *, struct Device *);
     void (*__nodevicememPreDestruct__)(struct NoDeviceMemory *);
@@ -114,13 +120,13 @@ NV_STATUS __nvoc_objCreate_NoDeviceMemory(NoDeviceMemory**, Dynamic*, NvU32, CAL
 #define nodevicememCheckMemInterUnmap(pMemory, bSubdeviceHandleProvided) nodevicememCheckMemInterUnmap_DISPATCH(pMemory, bSubdeviceHandleProvided)
 #define nodevicememShareCallback(pResource, pInvokingClient, pParentRef, pSharePolicy) nodevicememShareCallback_DISPATCH(pResource, pInvokingClient, pParentRef, pSharePolicy)
 #define nodevicememMapTo(pResource, pParams) nodevicememMapTo_DISPATCH(pResource, pParams)
+#define nodevicememIsExportAllowed(pMemory) nodevicememIsExportAllowed_DISPATCH(pMemory)
 #define nodevicememGetRefCount(pResource) nodevicememGetRefCount_DISPATCH(pResource)
 #define nodevicememAddAdditionalDependants(pClient, pResource, pReference) nodevicememAddAdditionalDependants_DISPATCH(pClient, pResource, pReference)
 #define nodevicememControl_Prologue(pResource, pCallContext, pParams) nodevicememControl_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define nodevicememIsGpuMapAllowed(pMemory, pGpu) nodevicememIsGpuMapAllowed_DISPATCH(pMemory, pGpu)
 #define nodevicememUnmapFrom(pResource, pParams) nodevicememUnmapFrom_DISPATCH(pResource, pParams)
 #define nodevicememControl_Epilogue(pResource, pCallContext, pParams) nodevicememControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define nodevicememControlLookup(pResource, pParams, ppEntry) nodevicememControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define nodevicememControl(pMemory, pCallContext, pParams) nodevicememControl_DISPATCH(pMemory, pCallContext, pParams)
 #define nodevicememUnmap(pMemory, pCallContext, pCpuMapping) nodevicememUnmap_DISPATCH(pMemory, pCallContext, pCpuMapping)
 #define nodevicememGetMemInterMapParams(pMemory, pParams) nodevicememGetMemInterMapParams_DISPATCH(pMemory, pParams)
@@ -128,6 +134,7 @@ NV_STATUS __nvoc_objCreate_NoDeviceMemory(NoDeviceMemory**, Dynamic*, NvU32, CAL
 #define nodevicememControlFilter(pResource, pCallContext, pParams) nodevicememControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define nodevicememControlSerialization_Prologue(pResource, pCallContext, pParams) nodevicememControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define nodevicememCanCopy(pResource) nodevicememCanCopy_DISPATCH(pResource)
+#define nodevicememIsPartialUnmapSupported(pResource) nodevicememIsPartialUnmapSupported_DISPATCH(pResource)
 #define nodevicememIsReady(pMemory, bCopyConstructorContext) nodevicememIsReady_DISPATCH(pMemory, bCopyConstructorContext)
 #define nodevicememCheckCopyPermissions(pMemory, pDstGpu, pDstDevice) nodevicememCheckCopyPermissions_DISPATCH(pMemory, pDstGpu, pDstDevice)
 #define nodevicememPreDestruct(pResource) nodevicememPreDestruct_DISPATCH(pResource)
@@ -153,6 +160,10 @@ static inline NV_STATUS nodevicememMapTo_DISPATCH(struct NoDeviceMemory *pResour
     return pResource->__nodevicememMapTo__(pResource, pParams);
 }
 
+static inline NvBool nodevicememIsExportAllowed_DISPATCH(struct NoDeviceMemory *pMemory) {
+    return pMemory->__nodevicememIsExportAllowed__(pMemory);
+}
+
 static inline NvU32 nodevicememGetRefCount_DISPATCH(struct NoDeviceMemory *pResource) {
     return pResource->__nodevicememGetRefCount__(pResource);
 }
@@ -175,10 +186,6 @@ static inline NV_STATUS nodevicememUnmapFrom_DISPATCH(struct NoDeviceMemory *pRe
 
 static inline void nodevicememControl_Epilogue_DISPATCH(struct NoDeviceMemory *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     pResource->__nodevicememControl_Epilogue__(pResource, pCallContext, pParams);
-}
-
-static inline NV_STATUS nodevicememControlLookup_DISPATCH(struct NoDeviceMemory *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__nodevicememControlLookup__(pResource, pParams, ppEntry);
 }
 
 static inline NV_STATUS nodevicememControl_DISPATCH(struct NoDeviceMemory *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
@@ -207,6 +214,10 @@ static inline NV_STATUS nodevicememControlSerialization_Prologue_DISPATCH(struct
 
 static inline NvBool nodevicememCanCopy_DISPATCH(struct NoDeviceMemory *pResource) {
     return pResource->__nodevicememCanCopy__(pResource);
+}
+
+static inline NvBool nodevicememIsPartialUnmapSupported_DISPATCH(struct NoDeviceMemory *pResource) {
+    return pResource->__nodevicememIsPartialUnmapSupported__(pResource);
 }
 
 static inline NV_STATUS nodevicememIsReady_DISPATCH(struct NoDeviceMemory *pMemory, NvBool bCopyConstructorContext) {
@@ -251,4 +262,5 @@ void nodevicememDestruct_IMPL(struct NoDeviceMemory *pNoDeviceMemory);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_NO_DEVICE_MEM_NVOC_H_

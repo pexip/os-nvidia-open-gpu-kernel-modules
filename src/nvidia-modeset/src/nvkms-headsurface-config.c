@@ -271,9 +271,10 @@ static NvBool HsConfigInitModesetOneHeadWarpAndBlendSurface(
         return TRUE;
     }
 
-    *ppSurface = nvEvoGetSurfaceFromHandleNoCtxDmaOk(pDevEvo,
-                                                     pOpenDevSurfaceHandles,
-                                                     handle);
+    *ppSurface =
+        nvEvoGetSurfaceFromHandleNoDispHWAccessOk(pDevEvo,
+                                                  pOpenDevSurfaceHandles,
+                                                  handle);
 
     return *ppSurface != NULL;
 }
@@ -302,9 +303,10 @@ static NvBool HsConfigInitModesetWarpMesh(
         return TRUE;
     }
 
-    pSurface = nvEvoGetSurfaceFromHandleNoCtxDmaOk(pDevEvo,
-                                                   pOpenDevSurfaceHandles,
-                                                   p->warpMesh.surfaceHandle);
+    pSurface =
+        nvEvoGetSurfaceFromHandleNoDispHWAccessOk(pDevEvo,
+                                                  pOpenDevSurfaceHandles,
+                                                  p->warpMesh.surfaceHandle);
     if (pSurface == NULL) {
         return FALSE;
     }
@@ -1435,7 +1437,7 @@ static NvBool HsConfigAllocSurfacesOneBuf(
             HsConfigAllocSurfacesOneSurface(pDevEvo,
                                             pHsConfig,
                                             apiHead,
-                                            TRUE, /* requireCtxDma */
+                                            TRUE, /* requireDisplayHardwareAccess */
                                             pWorkArea->headSurfaceSize,
                                             pWorkArea->format);
         if (pSurface[eye] == NULL) {
@@ -2604,7 +2606,7 @@ NvBool nvHsConfigPatchSetModeRequest(const NVDevEvoRec *pDevEvo,
                         NVSurfaceEvoRec *pSurfaceEvo =
                             nvHsGetNvKmsSurface(pDevEvo,
                                                 pHsSurface->nvKmsHandle,
-                                                TRUE /* requireCtxDma */);
+                                                TRUE /* requireDisplayHardwareAccess */);
                         nvAssert(pSurfaceEvo != NULL);
 
                         pRequestHead->flip.layer[layer].surface.handle[eye] =
