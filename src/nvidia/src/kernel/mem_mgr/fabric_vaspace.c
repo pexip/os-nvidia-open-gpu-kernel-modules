@@ -44,8 +44,6 @@
 #include "class/cl00fc.h"    // FABRIC_VASPACE_A
 #include "class/cl0040.h"    // NV01_MEMORY_LOCAL_USER
 #include "class/cl0080.h"    // NV01_DEVICE_0
-#include "gpu/device/device.h"
-#include "gpu/subdevice/subdevice.h"
 #include "deprecated/rmapi_deprecated.h"
 #include "rmapi/rs_utils.h"
 #include "vgpu/vgpu_events.h"
@@ -508,8 +506,7 @@ fabricvaspaceFree_IMPL
     NV_ASSERT(vaspaceFreeV2(pFabricVAS->pGVAS, vAddr, &blockSize) == NV_OK);
 
     kbusFlush_HAL(pGpu, pKernelBus, (BUS_FLUSH_VIDEO_MEMORY |
-                                     BUS_FLUSH_SYSTEM_MEMORY |
-                                     BUS_FLUSH_USE_PCIE_READ));
+                                     BUS_FLUSH_SYSTEM_MEMORY));
 
     fabricvaspaceInvalidateTlb(pFabricVAS, pGpu, PTE_DOWNGRADE);
 
@@ -645,8 +642,7 @@ fabricvaspaceBatchFree_IMPL
     }
 
     kbusFlush_HAL(pGpu, pKernelBus, (BUS_FLUSH_VIDEO_MEMORY |
-                                     BUS_FLUSH_SYSTEM_MEMORY |
-                                     BUS_FLUSH_USE_PCIE_READ));
+                                     BUS_FLUSH_SYSTEM_MEMORY));
 
     fabricvaspaceInvalidateTlb(pFabricVAS, pGpu, PTE_DOWNGRADE);
 
@@ -985,6 +981,7 @@ fabricvaspaceUnmapPhysMemdesc_IMPL
     NvU64 mapLength;
     FABRIC_VASPACE_MAPPING_REGIONS regions;
     NvU32 numRegions;
+    RmPhysAddr *pFabricPteArray;
 
     fabricPageSize = memdescGetPageSize(pFabricMemDesc, AT_GPU);
 
@@ -994,6 +991,8 @@ fabricvaspaceUnmapPhysMemdesc_IMPL
     _fabricvaspaceGetMappingRegions(fabricOffset, fabricPageSize, physMapLength,
                                     &regions, &numRegions);
     NV_ASSERT_OR_RETURN_VOID(numRegions != 0);
+
+    pFabricPteArray = memdescGetPteArray(pFabricMemDesc, AT_GPU);
 
     for (i = 0; i < numRegions; i++)
     {
@@ -1010,12 +1009,12 @@ fabricvaspaceUnmapPhysMemdesc_IMPL
         {
             if (fabricPageCount == 1)
             {
-                fabricAddr = pFabricMemDesc->_pteArray[0] + fabricOffset;
+                fabricAddr = pFabricPteArray[0] + fabricOffset;
             }
             else
             {
-                fabricAddr = pFabricMemDesc->_pteArray[fabricOffset /
-                                        pFabricMemDesc->pageArrayGranularity];
+                fabricAddr = pFabricPteArray[fabricOffset /
+                    pFabricMemDesc->pageArrayGranularity];
             }
 
             vaspaceUnmap(pFabricVAS->pGVAS, pPhysMemDesc->pGpu, fabricAddr,
@@ -1061,6 +1060,9 @@ fabricvaspaceMapPhysMemdesc_IMPL
     NvU32 numRegions;
     MEMORY_DESCRIPTOR *pTempMemdesc;
     NvU32 aperture;
+    NvU32 peerNumber = BUS_INVALID_PEER;
+    RmPhysAddr *pFabricPteArray;
+    RmPhysAddr *pPhysPteArray;
 
     NV_ASSERT_OR_RETURN(pFabricMemDesc != NULL, NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN(pPhysMemDesc != NULL,   NV_ERR_INVALID_ARGUMENT);
@@ -1093,6 +1095,16 @@ fabricvaspaceMapPhysMemdesc_IMPL
     {
         aperture = NV_MMU_PTE_APERTURE_VIDEO_MEMORY;
     }
+    else if (memdescIsEgm(pPhysMemDesc))
+    {
+        aperture = NV_MMU_PTE_APERTURE_PEER_MEMORY;
+        //
+        // Make sure that we receive a mapping request for EGM memory
+        // only if local EGM is enabled.
+        //
+        NV_ASSERT_OR_RETURN(pMemoryManager->bLocalEgmEnabled, NV_ERR_INVALID_STATE);
+        peerNumber = pMemoryManager->localEgmPeerId;
+    }
     else if (memdescGetAddressSpace(pPhysMemDesc) == ADDR_SYSMEM)
     {
         if (memdescGetCpuCacheAttrib(pPhysMemDesc) == NV_MEMORY_CACHED)
@@ -1114,6 +1126,9 @@ fabricvaspaceMapPhysMemdesc_IMPL
                                     &regions, &numRegions);
     NV_ASSERT_OR_RETURN(numRegions != 0, NV_ERR_INVALID_ARGUMENT);
 
+    pFabricPteArray = memdescGetPteArray(pFabricMemDesc, AT_GPU);
+    pPhysPteArray = memdescGetPteArray(pPhysMemDesc, AT_GPU);
+
     for (i = 0; i < numRegions; i++)
     {
         fabricPageCount = ((memdescGetPteArraySize(pFabricMemDesc, AT_GPU) == 1) ||
@@ -1130,23 +1145,23 @@ fabricvaspaceMapPhysMemdesc_IMPL
         {
             if (fabricPageCount == 1)
             {
-                fabricAddr = pFabricMemDesc->_pteArray[0] + fabricOffset;
+                fabricAddr = pFabricPteArray[0] + fabricOffset;
             }
             else
             {
-                fabricAddr = pFabricMemDesc->_pteArray[fabricOffset /
-                                        pFabricMemDesc->pageArrayGranularity];
+                fabricAddr = pFabricPteArray[fabricOffset /
+                    pFabricMemDesc->pageArrayGranularity];
             }
 
             if (pageArray.count == 1)
             {
-                physAddr = pPhysMemDesc->_pteArray[0] + physOffset;
+                physAddr = pPhysPteArray[0] + physOffset;
                 pageArray.pData = &physAddr;
             }
             else
             {
-                pageArray.pData = &pPhysMemDesc->_pteArray[physOffset /
-                                            pPhysMemDesc->pageArrayGranularity];
+                pageArray.pData = &pPhysPteArray[physOffset /
+                    pPhysMemDesc->pageArrayGranularity];
             }
 
             //
@@ -1175,7 +1190,7 @@ fabricvaspaceMapPhysMemdesc_IMPL
                                       mapFlags, &pageArray, 0, &comprInfo, 0,
                                       NV_MMU_PTE_VALID_TRUE,
                                       aperture,
-                                      BUS_INVALID_PEER, NVLINK_INVALID_FABRIC_ADDR,
+                                      peerNumber, NVLINK_INVALID_FABRIC_ADDR,
                                       DMA_DEFER_TLB_INVALIDATE, NV_FALSE,
                                       memdescGetPageSize(pTempMemdesc, AT_GPU));
 
@@ -1223,6 +1238,14 @@ fabricvaspaceInitUCRange_IMPL
         pFabricVAS->ucFabricLimit = fabricBase + fabricSize - 1;
         pFabricVAS->ucFabricInUseSize = 0;
         pFabricVAS->ucFabricFreeSize = fabricSize;
+
+        if (IS_VIRTUAL(pGpu))
+        {
+            VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+
+            pVSI->flaInfo.base = fabricBase;
+            pVSI->flaInfo.size = fabricSize;
+        }
     }
 
     return NV_OK;

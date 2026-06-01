@@ -35,7 +35,7 @@
 #include "nvcfg_sdk.h"
 #include "nvstatus.h"
 
-#define NV_GRID_LICENSE_INFO_MAX_LENGTH                     (128)
+#define NV_GRID_LICENSE_INFO_MAX_LENGTH (128)
 
 /* License info strings for vGPU products */
 #define NV_GRID_LICENSE_FEATURE_VPC_EDITION                 "GRID-Virtual-PC,2.0;Quadro-Virtual-DWS,5.0;GRID-Virtual-WS,2.0;GRID-Virtual-WS-Ext,2.0"
@@ -53,11 +53,6 @@
 
 
 /* NV20_SUBDEVICE_XX gpu control commands and parameters */
-
-/* Valid feature values */
-#define NV2080_CTRL_GPU_GET_FEATURES_CLK_ARCH_DOMAINS                     0:0
-#define NV2080_CTRL_GPU_GET_FEATURES_CLK_ARCH_DOMAINS_FALSE (0x00000000U)
-#define NV2080_CTRL_GPU_GET_FEATURES_CLK_ARCH_DOMAINS_TRUE  (0x00000001U)
 
 
 
@@ -112,7 +107,10 @@ typedef NVXXXX_CTRL_XXX_INFO NV2080_CTRL_GPU_INFO;
 
 
 #define NV2080_CTRL_GPU_INFO_INDEX_IS_RESETLESS_MIG_SUPPORTED          (0x0000003fU)
-#define NV2080_CTRL_GPU_INFO_MAX_LIST_SIZE                             (0x00000040U)
+
+
+
+#define NV2080_CTRL_GPU_INFO_MAX_LIST_SIZE                             (0x00000041U)
 
 /* valid minor revision extended values */
 #define NV2080_CTRL_GPU_INFO_MINOR_REVISION_EXT_NONE                   (0x00000000U)
@@ -750,7 +748,7 @@ typedef struct NV2080_CTRL_GPU_GET_ENGINES_PARAMS {
 #define NV2080_CTRL_CMD_GPU_GET_ENGINES_V2 (0x20800170U) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_ENGINES_V2_PARAMS_MESSAGE_ID" */
 
 /* Must match NV2080_ENGINE_TYPE_LAST from cl2080.h */
-#define NV2080_GPU_MAX_ENGINES_LIST_SIZE   0x3EU
+#define NV2080_GPU_MAX_ENGINES_LIST_SIZE   0x40U
 
 #define NV2080_CTRL_GPU_GET_ENGINES_V2_PARAMS_MESSAGE_ID (0x70U)
 
@@ -1123,7 +1121,7 @@ typedef struct NV2080_CTRL_GPU_QUERY_ECC_INTR_PARAMS {
 #define NV2080_CTRL_CMD_GPU_QUERY_ECC_STATUS                   (0x2080012fU) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS_MESSAGE_ID" */
 
 
-#define NV2080_CTRL_GPU_ECC_UNIT_COUNT                         (0x00000018U)
+#define NV2080_CTRL_GPU_ECC_UNIT_COUNT                         (0x00000019U)
 
 
 
@@ -2244,16 +2242,6 @@ typedef struct NV2080_CTRL_GPU_GET_OEM_INFO_PARAMS {
     NvU8 oemInfo[NV2080_GPU_MAX_OEM_INFO_LENGTH];
 } NV2080_CTRL_GPU_GET_OEM_INFO_PARAMS;
 
-/* NV2080_CTRL_CMD_GPU_PROCESS_POST_GC6_EXIT_TASKS
- *
- * Complete any pending tasks the need to be run after GC6 exit is complete at OS/KMD level
- *
- * Possible status return values are:
- *   NV_OK
- *   NV_ERR_NOT_READY
- */
-#define NV2080_CTRL_CMD_GPU_PROCESS_POST_GC6_EXIT_TASKS (0x2080016aU) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | 0x6A" */
-
 /*
  * NV2080_CTRL_CMD_GPU_GET_VPR_INFO
  *
@@ -2286,7 +2274,7 @@ typedef struct NV2080_CTRL_GPU_GET_OEM_INFO_PARAMS {
  *   NV_OK
  *   NV_ERR_NOT_SUPPORTED
  */
-#define NV2080_CTRL_CMD_GPU_GET_VPR_INFO                (0x2080016bU) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_VPR_INFO_PARAMS_MESSAGE_ID" */
+#define NV2080_CTRL_CMD_GPU_GET_VPR_INFO (0x2080016bU) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_VPR_INFO_PARAMS_MESSAGE_ID" */
 
 
 typedef enum NV2080_CTRL_VPR_INFO_QUERY_TYPE {
@@ -2315,6 +2303,8 @@ typedef struct NV2080_CTRL_GPU_GET_VPR_INFO_PARAMS {
  *              H.264 encoding capacity on this GPU.
  *       2. NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_HEVC: Use this to query the
  *              H.265/HEVC encoding capacity on this GPU.
+ *       3. NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_AV1: Use this to query the
+ *              AV1 encoding capacity on this GPU.
  *
  *   encoderCapacity [out]
  *     Encoder capacity value from 0 to 100. Value of 0x00 indicates encoder performance
@@ -2330,6 +2320,7 @@ typedef struct NV2080_CTRL_GPU_GET_VPR_INFO_PARAMS {
 typedef enum NV2080_CTRL_ENCODER_CAPACITY_QUERY_TYPE {
     NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_H264 = 0,
     NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_HEVC = 1,
+    NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_AV1 = 2,
 } NV2080_CTRL_ENCODER_CAPACITY_QUERY_TYPE;
 
 #define NV2080_CTRL_GPU_GET_ENCODER_CAPACITY_PARAMS_MESSAGE_ID (0x6CU)
@@ -2527,6 +2518,8 @@ typedef struct NV2080_CTRL_GPU_PARTITION_SPAN {
     NV_DECLARE_ALIGNED(NvU64 hi, 8);
 } NV2080_CTRL_GPU_PARTITION_SPAN;
 
+#define NV_GI_UUID_LEN 16U
+
 /*
  * NV2080_CTRL_GPU_SET_PARTITION_INFO
  *
@@ -2546,6 +2539,9 @@ typedef struct NV2080_CTRL_GPU_PARTITION_SPAN {
  *   swizzId[IN/OUT]
  *      - PartitionID associated with a newly created partition. Input in case
  *        of partition invalidation.
+ *
+ *   uuid[OUT]
+ *      - Uuid of a newly created partition.
  *
  *   partitionFlag[IN]
  *      - Flags to determine if GPU is requested to be partitioned in FULL,
@@ -2575,6 +2571,7 @@ typedef struct NV2080_CTRL_GPU_PARTITION_SPAN {
  */
 typedef struct NV2080_CTRL_GPU_SET_PARTITION_INFO {
     NvU32  swizzId;
+    NvU8   uuid[NV_GI_UUID_LEN];
     NvU32  partitionFlag;
     NvBool bValid;
     NV_DECLARE_ALIGNED(NV2080_CTRL_GPU_PARTITION_SPAN placement, 8);
@@ -2706,6 +2703,9 @@ typedef struct NV2080_CTRL_GPU_SET_PARTITIONS_PARAMS {
  *   validCTSIdMask[OUT]
  *      - Mask of CTS IDs usable by this partition, not reflecting current allocations
  *
+ *   validGfxCTSIdMask[OUT]
+ *      - Mask of CTS IDs that contain Gfx capable Grs usable by this partition, not reflecting current allocations
+ *
  * Possible status values returned are:
  *   NV_OK
  *   NV_ERR_INVALID_ARGUMENT
@@ -2735,6 +2735,7 @@ typedef struct NV2080_CTRL_GPU_GET_PARTITION_INFO {
     NvBool bValid;
     NvBool bPartitionError;
     NV_DECLARE_ALIGNED(NvU64 validCTSIdMask, 8);
+    NV_DECLARE_ALIGNED(NvU64 validGfxCTSIdMask, 8);
 } NV2080_CTRL_GPU_GET_PARTITION_INFO;
 
 /*
@@ -3829,7 +3830,7 @@ typedef struct NV2080_CTRL_GPU_SET_EGM_GPA_FABRIC_BASE_ADDR_PARAMS {
  */
 #define NV2080_CTRL_CMD_GPU_GET_ENGINE_LOAD_TIMES (0x2080019bU) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_ENGINE_LOAD_TIMES_PARAMS_MESSAGE_ID" */
 
-#define NV2080_CTRL_GPU_MAX_ENGINE_OBJECTS        0xC0U
+#define NV2080_CTRL_GPU_MAX_ENGINE_OBJECTS        0xC8U
 
 #define NV2080_CTRL_GPU_GET_ENGINE_LOAD_TIMES_PARAMS_MESSAGE_ID (0x9BU)
 
@@ -4041,7 +4042,16 @@ typedef struct NV2080_CTRL_GPU_GET_COMPUTE_PROFILES_PARAMS {
 
 #define NV2080_GPU_FABRIC_CLUSTER_UUID_LEN             16U
 
-#define NV2080_CTRL_GPU_FABRIC_PROBE_CAP_MC_SUPPORTED NVBIT64(0)
+#define NV2080_CTRL_GPU_FABRIC_PROBE_CAP_MC_SUPPORTED           NVBIT64(0)
+
+#define NV2080_CTRL_GPU_FABRIC_PROBE_CAP_MC_MUTLINODE_SUPPORTED NVBIT64(1)
+
+
+
+#define NV2080_CTRL_GPU_FABRIC_HEALTH_MASK_DEGRADED_BW 1:0
+#define NV2080_CTRL_GPU_FABRIC_HEALTH_MASK_DEGRADED_BW_NOT_SUPPORTED 0
+#define NV2080_CTRL_GPU_FABRIC_HEALTH_MASK_DEGRADED_BW_TRUE          1
+#define NV2080_CTRL_GPU_FABRIC_HEALTH_MASK_DEGRADED_BW_FALSE         2
 
 /*!
  * NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO_PARAMS
@@ -4070,6 +4080,10 @@ typedef struct NV2080_CTRL_GPU_GET_COMPUTE_PROFILES_PARAMS {
  *      - Summary of fabric capabilities received from probe resp
  *        Possible values are
  *            NV2080_CTRL_GPU_FABRIC_PROBE_CAP_*
+ *  fabricCliqueId[OUT]
+ *      - Unique ID of a set of GPUs within a fabric partition that can perform P2P
+ *  fabricHealthMask[OUT]
+ *      - Mask where bits indicate different status about the health of the fabric
  */
 #define NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO_PARAMS_MESSAGE_ID (0xA3U)
 
@@ -4079,6 +4093,8 @@ typedef struct NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO_PARAMS {
     NvU8      clusterUuid[NV2080_GPU_FABRIC_CLUSTER_UUID_LEN];
     NvU16     fabricPartitionId;
     NV_DECLARE_ALIGNED(NvU64 fabricCaps, 8);
+    NvU32     fabricCliqueId;
+    NvU32     fabricHealthMask;
 } NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO_PARAMS;
 
 #define NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO (0x208001a3) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_CMD_GET_GPU_FABRIC_PROBE_INFO_PARAMS_MESSAGE_ID" */
@@ -4308,5 +4324,40 @@ typedef struct NV2080_CTRL_GPU_GET_TPC_RECONFIG_MASK_PARAMS {
     NvU32 gpc;
     NvU32 tpcReconfigMask;
 } NV2080_CTRL_GPU_GET_TPC_RECONFIG_MASK_PARAMS;
+
+typedef struct NV2080_CTRL_GPU_CONSTRUCTED_FALCON_INFO {
+    NvU32 engDesc;
+    NvU32 ctxAttr;
+    NvU32 ctxBufferSize;
+    NvU32 addrSpaceList;
+    NvU32 registerBase;
+} NV2080_CTRL_GPU_CONSTRUCTED_FALCON_INFO;
+#define NV2080_CTRL_GPU_MAX_CONSTRUCTED_FALCONS         0x40
+
+#define NV2080_CTRL_CMD_GPU_GET_CONSTRUCTED_FALCON_INFO (0x208001b0) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS_MESSAGE_ID" */
+
+#define NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS_MESSAGE_ID (0xB0U)
+
+typedef struct NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS {
+    NvU32                                   numConstructedFalcons;
+    NV2080_CTRL_GPU_CONSTRUCTED_FALCON_INFO constructedFalconsTable[NV2080_CTRL_GPU_MAX_CONSTRUCTED_FALCONS];
+} NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS;
+
+/*
+ * NV2080_CTRL_GPU_GET_FIPS_STATUS
+ *
+ * @brief get FIPS status (enabled/disabled) from GSP-RM
+ *
+ *
+ * @return NV_OK on success
+ * @return NV_ERR_ otherwise
+ */
+#define NV2080_CTRL_GPU_GET_FIPS_STATUS_PARAMS_MESSAGE_ID (0xe4U)
+
+typedef struct NV2080_CTRL_GPU_GET_FIPS_STATUS_PARAMS {
+    NvBool bFipsEnabled;
+} NV2080_CTRL_GPU_GET_FIPS_STATUS_PARAMS;
+#define NV2080_CTRL_GPU_GET_FIPS_STATUS (0x208001e4) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_GPU_INTERFACE_ID << 8) | NV2080_CTRL_GPU_GET_FIPS_STATUS_PARAMS_MESSAGE_ID" */
+
 
 /* _ctrl2080gpu_h_ */

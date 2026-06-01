@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -89,6 +89,8 @@
  *          Dev tools mode is used for debugging/profiling
  *          Dev tools mode is set at system level and implies that all GPUs in
  *          the system have this mode enabled/disabled
+ *      multiGpuMode: [OUT]
+ *          Specifies the mode in which a multi gpu system is operating
  *
  *      cpuCapability, gpusCapability & environment are determined by the
  *       driver and cannot be modified later on
@@ -101,26 +103,31 @@
  *   NV_ERR_INVALID_CLIENT
  *   NV_ERR_OBJECT_NOT_FOUND
  */
-#define NV_CONF_COMPUTE_CTRL_CMD_SYSTEM_GET_CAPABILITIES (0xcb330101) /* finn: Evaluated from "(FINN_NV_CONFIDENTIAL_COMPUTE_CONF_COMPUTE_INTERFACE_ID << 8) | 0x1" */
+#define NV_CONF_COMPUTE_CTRL_CMD_SYSTEM_GET_CAPABILITIES     (0xcb330101) /* finn: Evaluated from "(FINN_NV_CONFIDENTIAL_COMPUTE_CONF_COMPUTE_INTERFACE_ID << 8) | 0x1" */
 
-#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_NONE       0
-#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_AMD_SEV    1
-#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_INTEL_TDX  2
+#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_NONE           0
+#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_AMD_SEV        1
+#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_INTEL_TDX      2
+#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_AMD_SEV_SNP    3
+#define NV_CONF_COMPUTE_SYSTEM_CPU_CAPABILITY_AMD_SNP_VTOM   4
 
-#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_NONE      0
-#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_APM       1
-#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_HCC       2
+#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_NONE          0
+#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_APM           1
+#define NV_CONF_COMPUTE_SYSTEM_GPUS_CAPABILITY_HCC           2
 
-#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_UNAVAILABLE   0
-#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_SIM           1
-#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_PROD          2
+#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_UNAVAILABLE       0
+#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_SIM               1
+#define NV_CONF_COMPUTE_SYSTEM_ENVIRONMENT_PROD              2
 
-#define NV_CONF_COMPUTE_SYSTEM_FEATURE_DISABLED          0
-#define NV_CONF_COMPUTE_SYSTEM_FEATURE_APM_ENABLED       1
-#define NV_CONF_COMPUTE_SYSTEM_FEATURE_HCC_ENABLED       2
+#define NV_CONF_COMPUTE_SYSTEM_FEATURE_DISABLED              0
+#define NV_CONF_COMPUTE_SYSTEM_FEATURE_APM_ENABLED           1
+#define NV_CONF_COMPUTE_SYSTEM_FEATURE_HCC_ENABLED           2
 
-#define NV_CONF_COMPUTE_SYSTEM_DEVTOOLS_MODE_DISABLED    0
-#define NV_CONF_COMPUTE_SYSTEM_DEVTOOLS_MODE_ENABLED     1
+#define NV_CONF_COMPUTE_SYSTEM_DEVTOOLS_MODE_DISABLED        0
+#define NV_CONF_COMPUTE_SYSTEM_DEVTOOLS_MODE_ENABLED         1
+
+#define NV_CONF_COMPUTE_SYSTEM_MULTI_GPU_MODE_NONE           0
+#define NV_CONF_COMPUTE_SYSTEM_MULTI_GPU_MODE_PROTECTED_PCIE 1
 
 typedef struct NV_CONF_COMPUTE_CTRL_CMD_SYSTEM_GET_CAPABILITIES_PARAMS {
     NvU8 cpuCapability;
@@ -128,6 +135,7 @@ typedef struct NV_CONF_COMPUTE_CTRL_CMD_SYSTEM_GET_CAPABILITIES_PARAMS {
     NvU8 environment;
     NvU8 ccFeature;
     NvU8 devToolsMode;
+    NvU8 multiGpuMode;
 } NV_CONF_COMPUTE_CTRL_CMD_SYSTEM_GET_CAPABILITIES_PARAMS;
 
 /*
@@ -380,6 +388,37 @@ typedef struct NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_NUM_SECURE_CHANNELS_PARAMS {
     NvU32    maxSec2Channels;
     NvU32    maxCeChannels;
 } NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_NUM_SECURE_CHANNELS_PARAMS;
+
+/*
+ * NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_KEY_ROTATION_STATE
+ *   This control call returns if key rotation is enabled.
+ *
+ *      hSubDevice: [IN]
+ *          subdevice handle for the GPU queried
+ *      keyRotationState: [OUT]
+ *          NV_CONF_COMPUTE_CTRL_CMD_GPU_KEY_ROTATION_* value
+ *
+ * Possible return values:
+ *   NV_OK
+ *   NV_ERR_NOT_SUPPORTED
+ *   NV_ERR_INVALID_ARGUMENT
+ *   NV_ERR_INVALID_OBJECT_HANDLE
+ *   NV_ERR_INVALID_CLIENT
+ *   NV_ERR_OBJECT_NOT_FOUND
+ */
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_KEY_ROTATION_STATE    (0xcb33010c) /* finn: Evaluated from "(FINN_NV_CONFIDENTIAL_COMPUTE_CONF_COMPUTE_INTERFACE_ID << 8) | 0xC" */
+
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_KEY_ROTATION_DISABLED     0       // key rotation is disabled
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_KEY_ROTATION_KERN_ENABLED 1       // key rotation enabled for kernel keys
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_KEY_ROTATION_USER_ENABLED 2       // key rotation enabled for user keys
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_KEY_ROTATION_BOTH_ENABLED 3       // key rotation enabled for both keys
+
+#define NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_KEY_ROTATION_STATE_PARAMS_MESSAGE_ID (0xCU)
+
+typedef struct NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_KEY_ROTATION_STATE_PARAMS {
+    NvHandle hSubDevice;
+    NvU32    keyRotationState;
+} NV_CONF_COMPUTE_CTRL_CMD_GPU_GET_KEY_ROTATION_STATE_PARAMS;
 
 /* _ctrlcb33_h_ */
 

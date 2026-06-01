@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -64,6 +64,7 @@ static nv_cap_table_entry_t g_nv_cap_mig_table[] =
 
 static nv_cap_table_entry_t g_nv_cap_sys_table[] =
 {
+    {"/driver/nvidia/capabilities/fabric-imex-mgmt"}
 };
 
 #define NV_CAP_MIG_CI_ENTRIES(_gi)  \
@@ -490,6 +491,7 @@ static struct file_operations g_nv_cap_drv_fops;
 
 int NV_API_CALL nv_cap_validate_and_dup_fd(const nv_cap_t *cap, int fd)
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     struct file *file;
     int dup_fd;
     struct inode *inode = NULL;
@@ -558,10 +560,14 @@ int NV_API_CALL nv_cap_validate_and_dup_fd(const nv_cap_t *cap, int fd)
 err:
     fput(file);
     return -1;
+#else
+    return -1;
+#endif
 }
 
 void NV_API_CALL nv_cap_close_fd(int fd)
 {
+#if NV_FILESYSTEM_ACCESS_AVAILABLE
     if (fd == -1)
     {
         return;
@@ -599,6 +605,7 @@ void NV_API_CALL nv_cap_close_fd(int fd)
 #endif
 
     task_unlock(current);
+#endif
 }
 
 static nv_cap_t* nv_cap_alloc(nv_cap_t *parent_cap, const char *name)

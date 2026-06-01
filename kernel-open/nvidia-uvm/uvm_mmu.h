@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2023 NVIDIA Corporation
+    Copyright (c) 2015-2024 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -50,13 +50,13 @@
 // |                |
 // |   (not used)   |
 // |                |
-// ------------------ 64PB + 8TB + 256GB (UVM_GPU_MAX_PHYS_MEM)
+// ------------------ 64PB + 33TB (UVM_GPU_MAX_PHYS_MEM)
 // |     vidmem     |
 // |  flat mapping  | ==> UVM_GPU_MAX_PHYS_MEM
-// |     (256GB)    |
-// ------------------ 64PB + 8TB (flat_vidmem_va_base)
+// |  (up to 1TB)   |
+// ------------------ 64PB + 32TB (flat_vidmem_va_base)
 // |peer ident. maps|
-// |32 * 256GB = 8TB| ==> NV_MAX_DEVICES * UVM_PEER_IDENTITY_VA_SIZE
+// |32 * 1TB = 32TB | ==> NV_MAX_DEVICES * UVM_PEER_IDENTITY_VA_SIZE
 // ------------------ 64PB
 // |                |
 // |  rm_mem(64PB)  | (rm_va_size)
@@ -78,13 +78,13 @@
 // |                |
 // |   (not used)   |
 // |                |
-// ------------------ 136TB + 256GB (UVM_GPU_MAX_PHYS_MEM)
+// ------------------ 161TB
 // |     vidmem     |
 // |  flat mapping  | ==> UVM_GPU_MAX_PHYS_MEM
-// |     (256GB)    |
-// ------------------ 136TB (flat_vidmem_va_base)
+// |  (up to 1TB)   |
+// ------------------ 160TB (flat_vidmem_va_base)
 // |peer ident. maps|
-// |32 * 256GB = 8TB| ==> NV_MAX_DEVICES * UVM_PEER_IDENTITY_VA_SIZE
+// |32 * 1TB = 32TB | ==> NV_MAX_DEVICES * UVM_PEER_IDENTITY_VA_SIZE
 // ------------------ 128TB
 // |                |
 // | rm_mem(128TB)  | (rm_va_size)
@@ -109,7 +109,7 @@
 // +----------------+ 0 (rm_va_base)
 
 // Maximum memory of any GPU.
-#define UVM_GPU_MAX_PHYS_MEM (256 * UVM_SIZE_1GB)
+#define UVM_GPU_MAX_PHYS_MEM (UVM_SIZE_1TB)
 
 // The size of VA that should be reserved per peer identity mapping.
 // This should be at least the maximum amount of memory of any GPU.
@@ -559,15 +559,15 @@ void uvm_mmu_destroy_flat_mappings(uvm_gpu_t *gpu);
 
 // Returns true if a static flat mapping covering the entire vidmem is required
 // for the given GPU.
-bool uvm_mmu_gpu_needs_static_vidmem_mapping(uvm_gpu_t *gpu);
+bool uvm_mmu_parent_gpu_needs_static_vidmem_mapping(uvm_parent_gpu_t *parent_gpu);
 
 // Returns true if an on-demand flat mapping partially covering the GPU memory
 // is required for the given device.
-bool uvm_mmu_gpu_needs_dynamic_vidmem_mapping(uvm_gpu_t *gpu);
+bool uvm_mmu_parent_gpu_needs_dynamic_vidmem_mapping(uvm_parent_gpu_t *parent_gpu);
 
 // Returns true if an on-demand flat mapping partially covering the sysmem
 // address space is required for the given device.
-bool uvm_mmu_gpu_needs_dynamic_sysmem_mapping(uvm_gpu_t *gpu);
+bool uvm_mmu_parent_gpu_needs_dynamic_sysmem_mapping(uvm_parent_gpu_t *parent_gpu);
 
 // Add or remove a (linear) mapping to the root chunk containing the given
 // chunk. The mapping is added to UVM's internal address space in the GPU
@@ -590,15 +590,15 @@ void uvm_mmu_chunk_unmap(uvm_gpu_chunk_t *chunk, uvm_tracker_t *tracker);
 
 // Map a system physical address interval. The mapping is added to UVM's
 // internal address space in the given GPU. The resulting virtual address can be
-// queried via uvm_gpu_address_virtual_from_sysmem_phys.
+// queried via uvm_parent_gpu_address_virtual_from_sysmem_phys.
 //
 // The mapping persists until GPU deinitialization, such that no unmap
 // functionality is exposed. The map operation is synchronous, and internally
 // uses a large mapping granularity that in the common case exceeds the input
 // size.
 //
-// The input address must be a GPU address as returned by uvm_gpu_map_cpu_pages
-// for the given GPU.
+// The input address must be a GPU address as returned by
+// uvm_parent_gpu_map_cpu_pages for the given GPU.
 NV_STATUS uvm_mmu_sysmem_map(uvm_gpu_t *gpu, NvU64 pa, NvU64 size);
 
 static NvU64 uvm_mmu_page_tree_entries(uvm_page_tree_t *tree, NvU32 depth, NvU32 page_size)
@@ -612,6 +612,9 @@ static NvU64 uvm_mmu_pde_coverage(uvm_page_tree_t *tree, NvU32 page_size)
     return uvm_mmu_page_tree_entries(tree, depth, page_size) * page_size;
 }
 
+// Page sizes supported by the GPU. Use uvm_mmu_biggest_page_size() to retrieve
+// the largest page size supported in a given system, which considers the GMMU
+// and vMMU page sizes and segment sizes.
 static bool uvm_mmu_page_size_supported(uvm_page_tree_t *tree, NvU32 page_size)
 {
     UVM_ASSERT_MSG(is_power_of_2(page_size), "0x%x\n", page_size);
@@ -640,11 +643,6 @@ static NvU32 uvm_mmu_biggest_page_size_up_to(uvm_page_tree_t *tree, NvU32 max_pa
     UVM_ASSERT_MSG(uvm_mmu_page_size_supported(tree, page_size), "page_size 0x%x", page_size);
 
     return page_size;
-}
-
-static NvU32 uvm_mmu_biggest_page_size(uvm_page_tree_t *tree)
-{
-    return 1 << __fls(tree->hal->page_sizes());
 }
 
 static NvU32 uvm_mmu_pte_size(uvm_page_tree_t *tree, NvU32 page_size)

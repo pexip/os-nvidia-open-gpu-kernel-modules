@@ -45,11 +45,16 @@ ENGDESCRIPTOR kceGetEngineDescFromAllocParams(struct OBJGPU *pGpu, NvU32 externa
 /*!
  * RM internal class representing XXX_DMA_COPY_A
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_KERNEL_CE_CONTEXT_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct KernelCeContext {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct ChannelDescendant __nvoc_base_ChannelDescendant;
@@ -66,7 +71,7 @@ struct KernelCeContext {
     NvBool (*__kcectxShareCallback__)(struct KernelCeContext *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NvBool (*__kcectxAccessCallback__)(struct KernelCeContext *, struct RsClient *, void *, RsAccessRight);
     NV_STATUS (*__kcectxMapTo__)(struct KernelCeContext *, RS_RES_MAP_TO_PARAMS *);
-    NV_STATUS (*__kcectxGetMapAddrSpace__)(struct KernelCeContext *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NV_STATUS (*__kcectxGetMapAddrSpace__)(struct KernelCeContext *, struct CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
     void (*__kcectxSetNotificationShare__)(struct KernelCeContext *, struct NotifShare *);
     NvU32 (*__kcectxGetRefCount__)(struct KernelCeContext *);
     void (*__kcectxAddAdditionalDependants__)(struct RsClient *, struct KernelCeContext *, RsResourceRef *);
@@ -75,11 +80,10 @@ struct KernelCeContext {
     NV_STATUS (*__kcectxInternalControlForward__)(struct KernelCeContext *, NvU32, void *, NvU32);
     NV_STATUS (*__kcectxUnmapFrom__)(struct KernelCeContext *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__kcectxControl_Epilogue__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__kcectxControlLookup__)(struct KernelCeContext *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__kcectxGetSwMethods__)(struct KernelCeContext *, const METHOD **, NvU32 *);
     NvHandle (*__kcectxGetInternalObjectHandle__)(struct KernelCeContext *);
-    NV_STATUS (*__kcectxControl__)(struct KernelCeContext *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__kcectxUnmap__)(struct KernelCeContext *, CALL_CONTEXT *, RsCpuMapping *);
+    NV_STATUS (*__kcectxControl__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NV_STATUS (*__kcectxUnmap__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RsCpuMapping *);
     NV_STATUS (*__kcectxGetMemInterMapParams__)(struct KernelCeContext *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__kcectxGetMemoryMappingDescriptor__)(struct KernelCeContext *, struct MEMORY_DESCRIPTOR **);
     NvBool (*__kcectxIsSwMethodStalling__)(struct KernelCeContext *, NvU32);
@@ -87,12 +91,13 @@ struct KernelCeContext {
     NV_STATUS (*__kcectxUnregisterEvent__)(struct KernelCeContext *, NvHandle, NvHandle, NvHandle, NvHandle);
     NV_STATUS (*__kcectxControlSerialization_Prologue__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__kcectxCanCopy__)(struct KernelCeContext *);
+    NvBool (*__kcectxIsPartialUnmapSupported__)(struct KernelCeContext *);
     void (*__kcectxPreDestruct__)(struct KernelCeContext *);
     NV_STATUS (*__kcectxIsDuplicate__)(struct KernelCeContext *, NvHandle, NvBool *);
     void (*__kcectxControlSerialization_Epilogue__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     PEVENTNOTIFICATION *(*__kcectxGetNotificationListPtr__)(struct KernelCeContext *);
     struct NotifShare *(*__kcectxGetNotificationShare__)(struct KernelCeContext *);
-    NV_STATUS (*__kcectxMap__)(struct KernelCeContext *, CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, RsCpuMapping *);
+    NV_STATUS (*__kcectxMap__)(struct KernelCeContext *, struct CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, struct RsCpuMapping *);
     NV_STATUS (*__kcectxGetOrAllocNotifShare__)(struct KernelCeContext *, NvHandle, NvHandle, struct NotifShare **);
 };
 
@@ -137,7 +142,6 @@ NV_STATUS __nvoc_objCreate_KernelCeContext(KernelCeContext**, Dynamic*, NvU32, C
 #define kcectxInternalControlForward(pGpuResource, command, pParams, size) kcectxInternalControlForward_DISPATCH(pGpuResource, command, pParams, size)
 #define kcectxUnmapFrom(pResource, pParams) kcectxUnmapFrom_DISPATCH(pResource, pParams)
 #define kcectxControl_Epilogue(pResource, pCallContext, pParams) kcectxControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define kcectxControlLookup(pResource, pParams, ppEntry) kcectxControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define kcectxGetSwMethods(pChannelDescendant, ppMethods, pNumMethods) kcectxGetSwMethods_DISPATCH(pChannelDescendant, ppMethods, pNumMethods)
 #define kcectxGetInternalObjectHandle(pGpuResource) kcectxGetInternalObjectHandle_DISPATCH(pGpuResource)
 #define kcectxControl(pGpuResource, pCallContext, pParams) kcectxControl_DISPATCH(pGpuResource, pCallContext, pParams)
@@ -149,6 +153,7 @@ NV_STATUS __nvoc_objCreate_KernelCeContext(KernelCeContext**, Dynamic*, NvU32, C
 #define kcectxUnregisterEvent(pNotifier, hNotifierClient, hNotifierResource, hEventClient, hEvent) kcectxUnregisterEvent_DISPATCH(pNotifier, hNotifierClient, hNotifierResource, hEventClient, hEvent)
 #define kcectxControlSerialization_Prologue(pResource, pCallContext, pParams) kcectxControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define kcectxCanCopy(pResource) kcectxCanCopy_DISPATCH(pResource)
+#define kcectxIsPartialUnmapSupported(pResource) kcectxIsPartialUnmapSupported_DISPATCH(pResource)
 #define kcectxPreDestruct(pResource) kcectxPreDestruct_DISPATCH(pResource)
 #define kcectxIsDuplicate(pResource, hMemory, pDuplicate) kcectxIsDuplicate_DISPATCH(pResource, hMemory, pDuplicate)
 #define kcectxControlSerialization_Epilogue(pResource, pCallContext, pParams) kcectxControlSerialization_Epilogue_DISPATCH(pResource, pCallContext, pParams)
@@ -172,7 +177,7 @@ static inline NV_STATUS kcectxMapTo_DISPATCH(struct KernelCeContext *pResource, 
     return pResource->__kcectxMapTo__(pResource, pParams);
 }
 
-static inline NV_STATUS kcectxGetMapAddrSpace_DISPATCH(struct KernelCeContext *pGpuResource, CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
+static inline NV_STATUS kcectxGetMapAddrSpace_DISPATCH(struct KernelCeContext *pGpuResource, struct CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
     return pGpuResource->__kcectxGetMapAddrSpace__(pGpuResource, pCallContext, mapFlags, pAddrSpace);
 }
 
@@ -208,10 +213,6 @@ static inline void kcectxControl_Epilogue_DISPATCH(struct KernelCeContext *pReso
     pResource->__kcectxControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS kcectxControlLookup_DISPATCH(struct KernelCeContext *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__kcectxControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NV_STATUS kcectxGetSwMethods_DISPATCH(struct KernelCeContext *pChannelDescendant, const METHOD **ppMethods, NvU32 *pNumMethods) {
     return pChannelDescendant->__kcectxGetSwMethods__(pChannelDescendant, ppMethods, pNumMethods);
 }
@@ -220,11 +221,11 @@ static inline NvHandle kcectxGetInternalObjectHandle_DISPATCH(struct KernelCeCon
     return pGpuResource->__kcectxGetInternalObjectHandle__(pGpuResource);
 }
 
-static inline NV_STATUS kcectxControl_DISPATCH(struct KernelCeContext *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
+static inline NV_STATUS kcectxControl_DISPATCH(struct KernelCeContext *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pGpuResource->__kcectxControl__(pGpuResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS kcectxUnmap_DISPATCH(struct KernelCeContext *pGpuResource, CALL_CONTEXT *pCallContext, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS kcectxUnmap_DISPATCH(struct KernelCeContext *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__kcectxUnmap__(pGpuResource, pCallContext, pCpuMapping);
 }
 
@@ -256,6 +257,10 @@ static inline NvBool kcectxCanCopy_DISPATCH(struct KernelCeContext *pResource) {
     return pResource->__kcectxCanCopy__(pResource);
 }
 
+static inline NvBool kcectxIsPartialUnmapSupported_DISPATCH(struct KernelCeContext *pResource) {
+    return pResource->__kcectxIsPartialUnmapSupported__(pResource);
+}
+
 static inline void kcectxPreDestruct_DISPATCH(struct KernelCeContext *pResource) {
     pResource->__kcectxPreDestruct__(pResource);
 }
@@ -276,7 +281,7 @@ static inline struct NotifShare *kcectxGetNotificationShare_DISPATCH(struct Kern
     return pNotifier->__kcectxGetNotificationShare__(pNotifier);
 }
 
-static inline NV_STATUS kcectxMap_DISPATCH(struct KernelCeContext *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS kcectxMap_DISPATCH(struct KernelCeContext *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__kcectxMap__(pGpuResource, pCallContext, pParams, pCpuMapping);
 }
 
@@ -298,4 +303,5 @@ void kcectxDestruct_IMPL(struct KernelCeContext *pKCeContext);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_KERNEL_CE_CONTEXT_NVOC_H_

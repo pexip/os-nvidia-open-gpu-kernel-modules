@@ -54,6 +54,7 @@
 #include "deprecated/rmapi_deprecated.h"
 #include "rmapi/rs_utils.h"
 #include "gpu/mem_mgr/vaspace_api.h"
+#include "platform/sli/sli.h"
 
 
 
@@ -120,7 +121,7 @@ _gvaspaceFreeVASBlock
 (
     OBJEHEAP  *pHeap,
     void      *pEnv,
-    PEMEMBLOCK pMemBlock,
+    EMEMBLOCK *pMemBlock,
     NvU32     *pContinue,
     NvU32     *pInvalCursor
 );
@@ -1613,8 +1614,7 @@ gvaspaceAlloc_IMPL
 
             // Invalidate TLB to apply new sparse state.
             kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY  |
-                                            BUS_FLUSH_SYSTEM_MEMORY |
-                                            BUS_FLUSH_USE_PCIE_READ);
+                                            BUS_FLUSH_SYSTEM_MEMORY);
             gvaspaceInvalidateTlb(pGVAS, pGpu, PTE_UPGRADE);
         }
         FOR_EACH_GPU_IN_MASK_UC_END
@@ -1641,8 +1641,7 @@ gvaspaceAlloc_IMPL
                 gvaspaceWalkUserCtxRelease(pGVAS, &userCtx);
                 // Invalidate TLB to apply new sparse state.
                 kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY  |
-                                         BUS_FLUSH_SYSTEM_MEMORY |
-                                         BUS_FLUSH_USE_PCIE_READ);
+                                         BUS_FLUSH_SYSTEM_MEMORY);
                 gvaspaceInvalidateTlb(pGVAS, pGpu, PTE_UPGRADE);
             }
             FOR_EACH_GPU_IN_MASK_UC_END
@@ -1780,8 +1779,7 @@ _gvaspaceInternalFree
         {
             KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
             kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY  |
-                                            BUS_FLUSH_SYSTEM_MEMORY |
-                                            BUS_FLUSH_USE_PCIE_READ);
+                                            BUS_FLUSH_SYSTEM_MEMORY);
         }
         FOR_EACH_GPU_IN_MASK_UC_END
     }
@@ -1836,8 +1834,7 @@ _gvaspaceInternalFree
         {
             KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
             kbusFlush_HAL(pGpu, pKernelBus, BUS_FLUSH_VIDEO_MEMORY  |
-                                            BUS_FLUSH_SYSTEM_MEMORY |
-                                            BUS_FLUSH_USE_PCIE_READ);
+                                            BUS_FLUSH_SYSTEM_MEMORY);
             gvaspaceInvalidateTlb(pGVAS, pGpu, PTE_DOWNGRADE);
         }
         FOR_EACH_GPU_IN_MASK_UC_END
@@ -1984,7 +1981,7 @@ gvaspaceIncAllocRefCnt_IMPL
     return NV_OK;
 }
 
-POBJEHEAP
+OBJEHEAP *
 gvaspaceGetHeap_IMPL(OBJGVASPACE *pGVAS)
 {
     return pGVAS->pHeap;
@@ -2079,7 +2076,11 @@ gvaspaceGetPasid_IMPL(OBJGVASPACE *pGVAS, NvU32 *pPasid)
               pGVAS->bIsAtsEnabled, pGVAS->processAddrSpaceId);
 
     NV_ASSERT_OR_RETURN(pGVAS->bIsAtsEnabled, NV_ERR_INVALID_STATE);
-    NV_ASSERT_OR_RETURN(pGVAS->processAddrSpaceId != NV_U32_MAX, NV_ERR_INVALID_STATE);
+    if (pGVAS->processAddrSpaceId == NV_U32_MAX)
+    {
+        return NV_ERR_NOT_READY;
+    }
+
     *pPasid = pGVAS->processAddrSpaceId;
     return NV_OK;
 }
@@ -3403,7 +3404,7 @@ gvaspaceResize_IMPL
     }
     else
     {
-        vaLimitNew = pParams->vaSpaceSize - 1;
+        vaLimitNew = pVAS->vasStart + pParams->vaSpaceSize - 1;
     }
 
     // Abort early if not changing the size.
@@ -4026,6 +4027,7 @@ gvaspaceGetPageLevelInfo_IMPL
                 NV_ASSERT_OR_RETURN(0, NV_ERR_INVALID_STATE);
         }
 
+        pParams->levels[level].entryIndex = mmuFmtVirtAddrToEntryIndex(pLevelFmt, pParams->virtAddress);
         pLevelFmt = mmuFmtGetNextLevel(pLevelFmt, pTargetFmt);
     }
 
@@ -4233,9 +4235,12 @@ vaspaceapiCtrlCmdVaspaceGetPageLevelInfo_IMPL
     OBJGVASPACE *pGVAS = NULL;
     OBJGPU      *pGpu  = NULL;
 
+    NV_ASSERT_OR_RETURN(pPageLevelInfoParams->flags <=
+                NV90F1_CTRL_VASPACE_GET_PAGE_LEVEL_INFO_FLAG_BAR1, NV_ERR_INVALID_ARGUMENT);
+
     NV_ASSERT_OK_OR_RETURN(
-        _gvaspaceControl_Prolog(pVaspaceApi, pPageLevelInfoParams->hSubDevice,
-                                pPageLevelInfoParams->subDeviceId, &pGVAS, &pGpu));
+            _gvaspaceControl_Prolog(pVaspaceApi, pPageLevelInfoParams->hSubDevice,
+                                    pPageLevelInfoParams->subDeviceId, &pGVAS, &pGpu));
 
     if (NULL == pGVAS->pGpuStates)
     {
@@ -4260,6 +4265,21 @@ vaspaceapiCtrlCmdVaspaceGetPageLevelInfo_IMPL
                               status);
             return status;
         }
+    }
+
+    if (pPageLevelInfoParams->flags & NV90F1_CTRL_VASPACE_GET_PAGE_LEVEL_INFO_FLAG_BAR1)
+    {
+        KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
+        RsCpuMapping *pCpuMapping = NULL;
+        NvU64 offset;
+        // switch the vaspace API pointer to bar1 ptr
+        pGVAS = dynamicCast(kbusGetBar1VASpace_HAL(pGpu, pKernelBus), OBJGVASPACE);
+        NV_ASSERT_OR_RETURN(pGVAS != NULL, NV_ERR_INVALID_ARGUMENT);
+        pCpuMapping = CliFindMappingInClient(RES_GET_CLIENT_HANDLE(pVaspaceApi),
+                                             RES_GET_PARENT_HANDLE(pVaspaceApi),
+                                             (NvP64)pPageLevelInfoParams->virtAddress);
+        offset = pPageLevelInfoParams->virtAddress - (NvU64)pCpuMapping->pLinearAddress;
+        pPageLevelInfoParams->virtAddress = pCpuMapping->pPrivate->gpuAddress + offset;
     }
 
     return gvaspaceGetPageLevelInfo(pGVAS, pGpu, pPageLevelInfoParams);
@@ -4515,6 +4535,33 @@ done:
     return status;
 }
 
+NV_STATUS
+vaspaceapiCtrlCmdVaspaceGetHostRmManagedSize_IMPL
+(
+    VaSpaceApi *pVaspaceApi,
+    NV90F1_CTRL_VASPACE_GET_HOST_RM_MANAGED_SIZE_PARAMS *pVaspaceGetHostRmManagedSizeParams
+)
+{
+    OBJGVASPACE      *pGVAS   = NULL;
+    OBJGPU           *pGpu    = NULL;
+
+    NV_ASSERT_OK_OR_RETURN(
+        _gvaspaceControl_Prolog(pVaspaceApi, pVaspaceGetHostRmManagedSizeParams->hSubDevice,
+                                pVaspaceGetHostRmManagedSizeParams->subDeviceId, &pGVAS, &pGpu));
+
+    // If GSP or guest-managed VA space are enabled, then RM requires extra VA range
+    if (IS_GSP_CLIENT(pGpu) || IS_VIRTUAL_WITH_FULL_SRIOV(pGpu))
+    {
+        pVaspaceGetHostRmManagedSizeParams->requiredVaRange = VA_SIZE_FULL_SRIOV_OR_GSP;
+    }
+    else
+    {
+        pVaspaceGetHostRmManagedSizeParams->requiredVaRange = 0;
+    }
+
+    return NV_OK;
+}
+
 /********************Local routines used in this file alone*******************/
 
 /*!
@@ -4586,7 +4633,7 @@ _gvaspacePinLazyPageTables
 )
 {
     NV_STATUS     status = NV_OK;
-    PEMEMBLOCK    pMemBlock;
+    EMEMBLOCK    *pMemBlock;
     PGVAS_BLOCK   pVASBlock;
 
     // Search for the VA block, abort if not found.
@@ -4657,7 +4704,7 @@ _gvaspaceFreeVASBlock
 (
     OBJEHEAP  *pHeap,
     void      *pEnv,
-    PEMEMBLOCK pMemBlock,
+    EMEMBLOCK *pMemBlock,
     NvU32     *pContinue,
     NvU32     *pInvalCursor
 )
@@ -4782,6 +4829,12 @@ _gvaspaceMappingRemove
     NV_STATUS     status    = NV_OK;
     GVAS_MAPPING *pMapNode  = NULL;
     const NvU32   gpuMask   = NVBIT(pGpu->gpuInstance);
+    NvU64 nodeVaLo;
+    NvU64 nodeVaHi;
+    const VAS_MAP_FLAGS flags = { 0 };
+    NvBool bPartialUnmap = NV_FALSE;
+    NvBool bLoEntryAdded = NV_FALSE;
+    NvBool bHiEntryAdded = NV_FALSE;
 
     // Search for existing mapping.
     status = btreeSearch(vaLo, (NODE**)&pMapNode, &pVASBlock->pMapTree->node);
@@ -4789,19 +4842,79 @@ _gvaspaceMappingRemove
 
     // Check for consistency.
     NV_ASSERT_OR_RETURN(gpuMask == (pMapNode->gpuMask & gpuMask), NV_ERR_INVALID_ARGUMENT);
-    NV_ASSERT_OR_RETURN(pMapNode->node.keyStart == vaLo,          NV_ERR_INVALID_ARGUMENT);
-    NV_ASSERT_OR_RETURN(pMapNode->node.keyEnd   == vaHi,          NV_ERR_INVALID_ARGUMENT);
+    if (pMapNode->node.keyStart != vaLo ||
+        pMapNode->node.keyEnd   != vaHi)
+    {
+        // check the entire range falls within the existing mapping
+        NV_ASSERT_OR_RETURN(pMapNode->node.keyStart <= vaLo &&
+                            pMapNode->node.keyEnd >= vaHi, NV_ERR_INVALID_ARGUMENT);
+        // Allow partial unmap only when the mapping is not shared
+        NV_ASSERT_OR_RETURN(pMapNode->gpuMask == gpuMask,
+                            NV_ERR_INVALID_ARGUMENT);
+        NV_PRINTF(LEVEL_INFO, "Partial unmap: Removing vaLo: 0x%llx vaHi: 0x%llx.\n",
+                  vaLo, vaHi);
+        bPartialUnmap = NV_TRUE;
+    }
 
     // Remove GPU from mapping mask.
     pMapNode->gpuMask &= ~gpuMask;
 
+    nodeVaLo = pMapNode->node.keyStart;
+    nodeVaHi = pMapNode->node.keyEnd;
     // Remove mapping if unused.
     if (0 == pMapNode->gpuMask)
     {
         btreeUnlink(&pMapNode->node, (NODE**)&pVASBlock->pMapTree);
-        portMemFree(pMapNode);
     }
 
+    if (nodeVaLo < vaLo)
+    {
+        status = _gvaspaceMappingInsert(pGVAS, pGpu, pVASBlock, nodeVaLo, vaLo - 1, flags);
+        NV_ASSERT_OR_GOTO(NV_OK == status, done);
+        NV_PRINTF(LEVEL_INFO, "Partial unmap: Inserting partial vaLo: 0x%llx "
+                  "vaHi: 0x%llx. status: 0x%x\n", nodeVaLo, vaLo - 1, status);
+        bLoEntryAdded = NV_TRUE;
+    }
+    if (nodeVaHi > vaHi)
+    {
+        status = _gvaspaceMappingInsert(pGVAS, pGpu, pVASBlock, vaHi + 1, nodeVaHi, flags);
+        NV_ASSERT_OR_GOTO(NV_OK == status, done);
+        NV_PRINTF(LEVEL_INFO, "Partial unmap: Inserting partial vaLo: 0x%llx "
+                  "vaHi: 0x%llx. status: 0x%x\n",
+                  vaHi + 1, nodeVaHi, status);
+        bHiEntryAdded = NV_TRUE;
+    }
+
+done:
+    if (bPartialUnmap &&
+        (status != NV_OK))
+    {
+        if (bLoEntryAdded)
+        {
+            NV_ASSERT_OK(_gvaspaceMappingRemove(pGVAS, pGpu, pVASBlock,
+                                                nodeVaLo, vaLo - 1));
+        }
+        if (bHiEntryAdded)
+        {
+            NV_ASSERT_OK(_gvaspaceMappingRemove(pGVAS, pGpu, pVASBlock,
+                                                vaHi + 1, nodeVaHi));
+        }
+
+        // Add the original mapping back
+        portMemSet(pMapNode, 0, sizeof(*pMapNode));
+        pMapNode->node.keyStart = nodeVaLo;
+        pMapNode->node.keyEnd   = nodeVaHi;
+        pMapNode->gpuMask       = gpuMask;
+        NV_ASSERT_OK(btreeInsert(&pMapNode->node, (NODE**)&pVASBlock->pMapTree));
+
+        return status;
+    }
+
+    // Free if unused.
+    if (0 == pMapNode->gpuMask)
+    {
+        portMemFree(pMapNode);
+    }
     return status;
 }
 
@@ -5156,7 +5269,7 @@ gvaspaceReserveMempool_IMPL
 (
     OBJGVASPACE *pGVAS,
     OBJGPU      *pGpu,
-    NvHandle     hClient,
+    Device      *pDevice,
     NvU64        size,
     NvU64        pageSizeLockMask,
     NvU32        flags
@@ -5209,7 +5322,7 @@ gvaspaceReserveMempool_IMPL
                          kgmmuGetSizeOfPageTables(pGpu, pKernelGmmu, pFmt, 0, size - 1,
                                                   pageSizeLockMask);
 
-        NV_ASSERT_OK_OR_RETURN(memmgrPageLevelPoolsGetInfo(pGpu, pMemoryManager, hClient, &pMemPool));
+        NV_ASSERT_OK_OR_RETURN(memmgrPageLevelPoolsGetInfo(pGpu, pMemoryManager, pDevice, &pMemPool));
         status = rmMemPoolReserve(pMemPool, poolSize, pGVAS->flags);
         if ((pGVAS->flags & VASPACE_FLAGS_RETRY_PTE_ALLOC_IN_SYS) &&
             (status == NV_ERR_NO_MEMORY))

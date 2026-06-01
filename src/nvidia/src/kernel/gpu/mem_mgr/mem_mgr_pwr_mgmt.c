@@ -294,8 +294,17 @@ _memmgrAllocFbsrReservedRanges
     // Alloc the Memory descriptors for Fbsr Reserved regions, if not allocated.
     if (pMemoryManager->fbsrReservedRanges[FBSR_RESERVED_INST_MEMORY_BEFORE_BAR2PTE] == NULL)
     {
-        // Allocate Vid Mem descriptor for RM INSTANCE memory from start to BAR2PTE
-        size = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) - pMemoryManager->rsvdMemoryBase;
+        if(IS_VIRTUAL_WITH_SRIOV(pGpu))
+        {
+            // Allocate Vid Mem descriptor for RM INSTANCE memory from start to BAR2 PDE base.
+            size = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPageLevelsMemDesc, AT_GPU, 0) - pMemoryManager->rsvdMemoryBase;
+        }
+        else
+        {
+             // Allocate Vid Mem descriptor for RM INSTANCE memory from start to BAR2PTE
+            size = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) - pMemoryManager->rsvdMemoryBase;
+        }
+
         NV_ASSERT_OK_OR_GOTO(status,
                              memdescCreate(&pMemoryManager->fbsrReservedRanges[FBSR_RESERVED_INST_MEMORY_BEFORE_BAR2PTE],
                                             pGpu, size, 0, NV_TRUE, ADDR_FBMEM,
@@ -308,14 +317,20 @@ _memmgrAllocFbsrReservedRanges
 
     if (pMemoryManager->fbsrReservedRanges[FBSR_RESERVED_INST_MEMORY_AFTER_BAR2PTE] == NULL)
     {
-        // Allocate Mem descriptors for AFTER_BAR2PTE, GSP HEAP, WPR, NON WPR and VGA Workspace regions
+        RmPhysAddr afterBar2PteRegionStart = 0;
+        NvU64 afterBar2PteRegionSize = 0;
+
+        /*
+         * Allocate Mem descriptors for AFTER_BAR2PTE, GSP HEAP, WPR, NON WPR and VGA Workspace regions.
+         */
         if (IS_GSP_CLIENT(pGpu))
         {
             KernelGsp *pKernelGsp              = GPU_GET_KERNEL_GSP(pGpu);
-            RmPhysAddr afterBar2PteRegionStart = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) +
+            NvU64      afterBar2PteRegionEnd   = 0;
+            afterBar2PteRegionStart            = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) +
                                                  pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc->Size;
-            NvU64      afterBar2PteRegionEnd   = pMemoryManager->rsvdMemoryBase + pMemoryManager->rsvdMemorySize;
-            NvU64      afterBar2PteRegionSize  = afterBar2PteRegionEnd - afterBar2PteRegionStart;
+            afterBar2PteRegionEnd              = pMemoryManager->rsvdMemoryBase + pMemoryManager->rsvdMemorySize;
+            afterBar2PteRegionSize             = afterBar2PteRegionEnd - afterBar2PteRegionStart;
             NvU64      gspHeapRegionStart      = afterBar2PteRegionEnd;
             NvU64      gspHeapRegionSize       = pKernelGsp->pWprMeta->gspFwRsvdStart - gspHeapRegionStart;
             NvU64      gspNonWprRegionSize     = pKernelGsp->pWprMeta->gspFwWprStart  - pKernelGsp->pWprMeta->gspFwRsvdStart;
@@ -359,22 +374,38 @@ _memmgrAllocFbsrReservedRanges
                             ADDR_FBMEM,
                             pKernelGsp->pWprMeta->vgaWorkspaceOffset,
                             pKernelGsp->pWprMeta->vgaWorkspaceSize);
-
         }
         // Allocate Vid Mem descriptor for RM INSTANCE memory, specific to VGA  i.e. after BAR2PTE to end.
         else
         {
-            NvU64 fbAddrSpaceSize = _memmgrGetFbEndExcludingLostOnSuspendRegions(pGpu, pMemoryManager);
-            size = (fbAddrSpaceSize) - memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) - pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc->Size;
+            NvU64 fbAddrSpaceSize   = _memmgrGetFbEndExcludingLostOnSuspendRegions(pGpu, pMemoryManager);
+
+            if (IS_VIRTUAL_WITH_SRIOV(pGpu))
+            {
+                /*
+                 * From BAR2 region we skip BAR2 PDEs and CPU visible region PTEs as we rebuild them on restore.
+                 * But we need to save CPU invisible region PTEs across S/R, hence AFTER_BAR2PTE range starts
+                 * after CPU visible region PTEs ends.
+                 */
+                afterBar2PteRegionStart = pKernelBus->bar2[GPU_GFID_PF].pteBase +
+                                          pKernelBus->bar2[GPU_GFID_PF].cpuVisiblePgTblSize;
+            }
+            else
+            {
+                afterBar2PteRegionStart = memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) +
+                                          pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc->Size;
+            }
+
+            afterBar2PteRegionSize  = fbAddrSpaceSize - afterBar2PteRegionStart;
 
             NV_ASSERT_OK_OR_GOTO(status,
                                  memdescCreate(&pMemoryManager->fbsrReservedRanges[FBSR_RESERVED_INST_MEMORY_AFTER_BAR2PTE],
-                                               pGpu, size, 0, NV_TRUE, ADDR_FBMEM,
+                                               pGpu, afterBar2PteRegionSize, 0, NV_TRUE, ADDR_FBMEM,
                                                NV_MEMORY_UNCACHED, MEMDESC_FLAGS_NONE),
                                  fail);
             memdescDescribe(pMemoryManager->fbsrReservedRanges[FBSR_RESERVED_INST_MEMORY_AFTER_BAR2PTE],
                             ADDR_FBMEM,
-                            memdescGetPhysAddr(pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc, AT_GPU, 0) + pKernelBus->virtualBar2[GPU_GFID_PF].pPTEMemDesc->Size, size);
+                            afterBar2PteRegionStart, afterBar2PteRegionSize);
 
         }
     }
@@ -524,7 +555,7 @@ done:
  *              Error otherwise.
  */
 NV_STATUS
-memmgrAddMemNode
+memmgrAddMemNode_IMPL
 (
     OBJGPU            *pGpu,
     MemoryManager     *pMemoryManager,
@@ -632,25 +663,19 @@ memmgrAddMemNodes_IMPL
         // content of memory descriptor, remove MEMDESC_FLAGS_LOST_ON_SUSPEND
         // flag.
         //
-        if (pAllocMemDesc != NULL)
+        if (block->owner != NVOS32_BLOCK_TYPE_FREE && pAllocMemDesc != NULL)
         {
-            //
-            // Save RM_RESERVED_REGION if it is not GSP managed FB region and
-            // - bSaveRmAllocations true or
-            // - MEMDESC_FLAGS_PRESERVE_CONTENT_ON_SUSPEND is set
+            if (memdescGetFlag(pAllocMemDesc, MEMDESC_FLAGS_PRESERVE_CONTENT_ON_SUSPEND))
+            {
+                bSaveNode = NV_TRUE;
+            }
             // TODO: Use LOST_ON_SUSPEND flag to skip GSP managed FB regions
-            //
-            if  ((block->owner == HEAP_OWNER_RM_RESERVED_REGION) &&
+            else if  ((block->owner == HEAP_OWNER_RM_RESERVED_REGION) &&
                  !memmgrIsGspOwnedMemory_HAL(pGpu, pMemoryManager, pAllocMemDesc))
             {
-                if (bSaveAllRmAllocations || memdescGetFlag(pAllocMemDesc, MEMDESC_FLAGS_PRESERVE_CONTENT_ON_SUSPEND))
+                if (bSaveAllRmAllocations)
                     bSaveNode = NV_TRUE;
             }
-            //
-            // Save RM_CHANNEL_CTX_BUFFER or RM_KERNEL_CLIENT regions if
-            // - bSaveRmAllocations true or
-            // - MEMDESC_FLAGS_PRESERVE_LOST_ON_SUSPEND is not set
-            //
             else if ((block->owner == HEAP_OWNER_RM_CHANNEL_CTX_BUFFER) || (block->owner == HEAP_OWNER_RM_KERNEL_CLIENT))
             {
                 if (bSaveAllRmAllocations || (!memdescGetFlag(pAllocMemDesc, MEMDESC_FLAGS_LOST_ON_SUSPEND)))

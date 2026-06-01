@@ -70,8 +70,8 @@ static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceConstruct_(struct OBJVASPACE *p
     return gvaspaceConstruct_((struct OBJGVASPACE *)(((unsigned char *)pGVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset), classId, vaspaceId, vaStart, vaLimit, vaStartInternal, vaLimitInternal, flags);
 }
 
-static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceReserveMempool(struct OBJVASPACE *pGVAS, struct OBJGPU *pGpu, NvHandle hClient, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
-    return gvaspaceReserveMempool((struct OBJGVASPACE *)(((unsigned char *)pGVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset), pGpu, hClient, size, pageSizeLockMask, flags);
+static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceReserveMempool(struct OBJVASPACE *pGVAS, struct OBJGPU *pGpu, struct Device *pDevice, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
+    return gvaspaceReserveMempool((struct OBJGVASPACE *)(((unsigned char *)pGVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset), pGpu, pDevice, size, pageSizeLockMask, flags);
 }
 
 static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceAlloc(struct OBJVASPACE *pVAS, NvU64 size, NvU64 align, NvU64 rangeLo, NvU64 rangeHi, NvU64 pageSizeLockMask, VAS_ALLOC_FLAGS flags, NvU64 *pAddr) {
@@ -102,7 +102,7 @@ static struct OBJEHEAP *__nvoc_thunk_OBJGVASPACE_vaspaceGetHeap(struct OBJVASPAC
     return gvaspaceGetHeap((struct OBJGVASPACE *)(((unsigned char *)pVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset));
 }
 
-static NvU64 __nvoc_thunk_OBJGVASPACE_vaspaceGetMapPageSize(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, EMEMBLOCK *pMemBlock) {
+static NvU64 __nvoc_thunk_OBJGVASPACE_vaspaceGetMapPageSize(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, struct EMEMBLOCK *pMemBlock) {
     return gvaspaceGetMapPageSize((struct OBJGVASPACE *)(((unsigned char *)pVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset), pGpu, pMemBlock);
 }
 
@@ -168,10 +168,6 @@ static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceGetPteInfo(struct OBJVASPACE *p
 
 static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceSetPteInfo(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, NV0080_CTRL_DMA_SET_PTE_INFO_PARAMS *pParams) {
     return gvaspaceSetPteInfo((struct OBJGVASPACE *)(((unsigned char *)pVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset), pGpu, pParams);
-}
-
-static NvBool __nvoc_thunk_OBJGVASPACE_vaspaceIsInternalVaRestricted(struct OBJVASPACE *pGVAS) {
-    return gvaspaceIsInternalVaRestricted((struct OBJGVASPACE *)(((unsigned char *)pGVAS) - __nvoc_rtti_OBJGVASPACE_OBJVASPACE.offset));
 }
 
 static NV_STATUS __nvoc_thunk_OBJGVASPACE_vaspaceFreeV2(struct OBJVASPACE *pGVAS, NvU64 vAddr, NvU64 *pSize) {
@@ -272,8 +268,6 @@ static void __nvoc_init_funcTable_OBJGVASPACE_1(OBJGVASPACE *pThis) {
 
     pThis->__gvaspaceSetPteInfo__ = &gvaspaceSetPteInfo_IMPL;
 
-    pThis->__gvaspaceIsInternalVaRestricted__ = &gvaspaceIsInternalVaRestricted_IMPL;
-
     pThis->__gvaspaceFreeV2__ = &gvaspaceFreeV2_IMPL;
 
     pThis->__nvoc_base_OBJVASPACE.__vaspaceConstruct___ = &__nvoc_thunk_OBJGVASPACE_vaspaceConstruct_;
@@ -328,8 +322,6 @@ static void __nvoc_init_funcTable_OBJGVASPACE_1(OBJGVASPACE *pThis) {
 
     pThis->__nvoc_base_OBJVASPACE.__vaspaceSetPteInfo__ = &__nvoc_thunk_OBJGVASPACE_vaspaceSetPteInfo;
 
-    pThis->__nvoc_base_OBJVASPACE.__vaspaceIsInternalVaRestricted__ = &__nvoc_thunk_OBJGVASPACE_vaspaceIsInternalVaRestricted;
-
     pThis->__nvoc_base_OBJVASPACE.__vaspaceFreeV2__ = &__nvoc_thunk_OBJGVASPACE_vaspaceFreeV2;
 
     pThis->__gvaspaceGetVaLimit__ = &__nvoc_thunk_OBJVASPACE_gvaspaceGetVaLimit;
@@ -350,21 +342,26 @@ void __nvoc_init_OBJGVASPACE(OBJGVASPACE *pThis) {
     __nvoc_init_funcTable_OBJGVASPACE(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_OBJGVASPACE(OBJGVASPACE **ppThis, Dynamic *pParent, NvU32 createFlags) {
+NV_STATUS __nvoc_objCreate_OBJGVASPACE(OBJGVASPACE **ppThis, Dynamic *pParent, NvU32 createFlags)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     OBJGVASPACE *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(OBJGVASPACE), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(OBJGVASPACE));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_OBJGVASPACE);
 
     pThis->__nvoc_base_OBJVASPACE.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -379,16 +376,25 @@ NV_STATUS __nvoc_objCreate_OBJGVASPACE(OBJGVASPACE **ppThis, Dynamic *pParent, N
     status = __nvoc_ctor_OBJGVASPACE(pThis);
     if (status != NV_OK) goto __nvoc_objCreate_OBJGVASPACE_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_OBJGVASPACE_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_OBJVASPACE.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(OBJGVASPACE));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

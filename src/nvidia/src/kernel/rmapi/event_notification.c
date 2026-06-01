@@ -29,6 +29,7 @@
 ****************************************************************************/
 
 #include "core/core.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
 #include "gpu/mem_mgr/mem_desc.h"
 #include "class/cl0000.h"
@@ -38,6 +39,7 @@
 #include "rmapi/rs_utils.h"
 #include "mem_mgr/mem.h"
 #include "kernel/gpu/gpu_engine_type.h"
+#include "platform/sli/sli.h"
 
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
 
@@ -542,8 +544,8 @@ eventGetEngineTypeFromSubNotifyIndex
         case NV2080_NOTIFIERS_NVJPEG7:
             *pRmEngineId = RM_ENGINE_TYPE_NVJPEG7;
             break;
-        case NV2080_NOTIFIERS_OFA:
-            *pRmEngineId = RM_ENGINE_TYPE_OFA;
+        case NV2080_NOTIFIERS_OFA0:
+            *pRmEngineId = RM_ENGINE_TYPE_OFA0;
             break;
         default:
             NV_PRINTF(LEVEL_WARNING,
@@ -618,7 +620,8 @@ NV_STATUS registerEventNotification
             MIG_INSTANCE_REF ref;
 
             NV_CHECK_OK_OR_GOTO(rmStatus, LEVEL_ERROR,
-                kmigmgrGetInstanceRefFromClient(pGpu, pKernelMIGManager, hEventClient, &ref),
+                kmigmgrGetInstanceRefFromDevice(pGpu, pKernelMIGManager,
+                                                GPU_RES_GET_DEVICE(pSubDevice), &ref),
                 free_entry);
 
             NV_CHECK_OK_OR_GOTO(rmStatus, LEVEL_ERROR,
@@ -827,7 +830,8 @@ NV_STATUS unregisterEventNotificationWithData
             MIG_INSTANCE_REF ref;
 
             NV_CHECK_OK_OR_GOTO(rmStatus, LEVEL_ERROR,
-                kmigmgrGetInstanceRefFromClient(pGpu, pKernelMIGManager, hEventClient, &ref),
+                kmigmgrGetInstanceRefFromDevice(pGpu, pKernelMIGManager,
+                                                GPU_RES_GET_DEVICE(pSubDevice), &ref),
                 free_entry);
 
             NV_CHECK_OK_OR_GOTO(rmStatus, LEVEL_ERROR,

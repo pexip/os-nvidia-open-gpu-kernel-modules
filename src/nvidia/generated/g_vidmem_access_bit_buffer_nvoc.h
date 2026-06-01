@@ -76,11 +76,16 @@ typedef struct
 /*!
  * RM internal class representing VIDMEM_ACCESS_BIT_BUFFER
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_VIDMEM_ACCESS_BIT_BUFFER_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct VidmemAccessBitBuffer {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct GpuResource __nvoc_base_GpuResource;
@@ -98,7 +103,7 @@ struct VidmemAccessBitBuffer {
     NV_STATUS (*__vidmemAccessBitBufCheckMemInterUnmap__)(struct VidmemAccessBitBuffer *, NvBool);
     NV_STATUS (*__vidmemAccessBitBufGetOrAllocNotifShare__)(struct VidmemAccessBitBuffer *, NvHandle, NvHandle, struct NotifShare **);
     NV_STATUS (*__vidmemAccessBitBufMapTo__)(struct VidmemAccessBitBuffer *, RS_RES_MAP_TO_PARAMS *);
-    NV_STATUS (*__vidmemAccessBitBufGetMapAddrSpace__)(struct VidmemAccessBitBuffer *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NV_STATUS (*__vidmemAccessBitBufGetMapAddrSpace__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
     void (*__vidmemAccessBitBufSetNotificationShare__)(struct VidmemAccessBitBuffer *, struct NotifShare *);
     NvU32 (*__vidmemAccessBitBufGetRefCount__)(struct VidmemAccessBitBuffer *);
     void (*__vidmemAccessBitBufAddAdditionalDependants__)(struct RsClient *, struct VidmemAccessBitBuffer *, RsResourceRef *);
@@ -107,22 +112,22 @@ struct VidmemAccessBitBuffer {
     NV_STATUS (*__vidmemAccessBitBufInternalControlForward__)(struct VidmemAccessBitBuffer *, NvU32, void *, NvU32);
     NV_STATUS (*__vidmemAccessBitBufUnmapFrom__)(struct VidmemAccessBitBuffer *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__vidmemAccessBitBufControl_Epilogue__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vidmemAccessBitBufControlLookup__)(struct VidmemAccessBitBuffer *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NvHandle (*__vidmemAccessBitBufGetInternalObjectHandle__)(struct VidmemAccessBitBuffer *);
-    NV_STATUS (*__vidmemAccessBitBufControl__)(struct VidmemAccessBitBuffer *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__vidmemAccessBitBufUnmap__)(struct VidmemAccessBitBuffer *, CALL_CONTEXT *, RsCpuMapping *);
+    NV_STATUS (*__vidmemAccessBitBufControl__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NV_STATUS (*__vidmemAccessBitBufUnmap__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RsCpuMapping *);
     NV_STATUS (*__vidmemAccessBitBufGetMemInterMapParams__)(struct VidmemAccessBitBuffer *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__vidmemAccessBitBufGetMemoryMappingDescriptor__)(struct VidmemAccessBitBuffer *, struct MEMORY_DESCRIPTOR **);
     NV_STATUS (*__vidmemAccessBitBufControlFilter__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__vidmemAccessBitBufUnregisterEvent__)(struct VidmemAccessBitBuffer *, NvHandle, NvHandle, NvHandle, NvHandle);
     NV_STATUS (*__vidmemAccessBitBufControlSerialization_Prologue__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__vidmemAccessBitBufCanCopy__)(struct VidmemAccessBitBuffer *);
+    NvBool (*__vidmemAccessBitBufIsPartialUnmapSupported__)(struct VidmemAccessBitBuffer *);
     void (*__vidmemAccessBitBufPreDestruct__)(struct VidmemAccessBitBuffer *);
     NV_STATUS (*__vidmemAccessBitBufIsDuplicate__)(struct VidmemAccessBitBuffer *, NvHandle, NvBool *);
     void (*__vidmemAccessBitBufControlSerialization_Epilogue__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     PEVENTNOTIFICATION *(*__vidmemAccessBitBufGetNotificationListPtr__)(struct VidmemAccessBitBuffer *);
     struct NotifShare *(*__vidmemAccessBitBufGetNotificationShare__)(struct VidmemAccessBitBuffer *);
-    NV_STATUS (*__vidmemAccessBitBufMap__)(struct VidmemAccessBitBuffer *, CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, RsCpuMapping *);
+    NV_STATUS (*__vidmemAccessBitBufMap__)(struct VidmemAccessBitBuffer *, struct CALL_CONTEXT *, struct RS_CPU_MAP_PARAMS *, struct RsCpuMapping *);
     NvBool (*__vidmemAccessBitBufAccessCallback__)(struct VidmemAccessBitBuffer *, struct RsClient *, void *, RsAccessRight);
 };
 
@@ -168,7 +173,6 @@ NV_STATUS __nvoc_objCreate_VidmemAccessBitBuffer(VidmemAccessBitBuffer**, Dynami
 #define vidmemAccessBitBufInternalControlForward(pGpuResource, command, pParams, size) vidmemAccessBitBufInternalControlForward_DISPATCH(pGpuResource, command, pParams, size)
 #define vidmemAccessBitBufUnmapFrom(pResource, pParams) vidmemAccessBitBufUnmapFrom_DISPATCH(pResource, pParams)
 #define vidmemAccessBitBufControl_Epilogue(pResource, pCallContext, pParams) vidmemAccessBitBufControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define vidmemAccessBitBufControlLookup(pResource, pParams, ppEntry) vidmemAccessBitBufControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define vidmemAccessBitBufGetInternalObjectHandle(pGpuResource) vidmemAccessBitBufGetInternalObjectHandle_DISPATCH(pGpuResource)
 #define vidmemAccessBitBufControl(pGpuResource, pCallContext, pParams) vidmemAccessBitBufControl_DISPATCH(pGpuResource, pCallContext, pParams)
 #define vidmemAccessBitBufUnmap(pGpuResource, pCallContext, pCpuMapping) vidmemAccessBitBufUnmap_DISPATCH(pGpuResource, pCallContext, pCpuMapping)
@@ -178,6 +182,7 @@ NV_STATUS __nvoc_objCreate_VidmemAccessBitBuffer(VidmemAccessBitBuffer**, Dynami
 #define vidmemAccessBitBufUnregisterEvent(pNotifier, hNotifierClient, hNotifierResource, hEventClient, hEvent) vidmemAccessBitBufUnregisterEvent_DISPATCH(pNotifier, hNotifierClient, hNotifierResource, hEventClient, hEvent)
 #define vidmemAccessBitBufControlSerialization_Prologue(pResource, pCallContext, pParams) vidmemAccessBitBufControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define vidmemAccessBitBufCanCopy(pResource) vidmemAccessBitBufCanCopy_DISPATCH(pResource)
+#define vidmemAccessBitBufIsPartialUnmapSupported(pResource) vidmemAccessBitBufIsPartialUnmapSupported_DISPATCH(pResource)
 #define vidmemAccessBitBufPreDestruct(pResource) vidmemAccessBitBufPreDestruct_DISPATCH(pResource)
 #define vidmemAccessBitBufIsDuplicate(pResource, hMemory, pDuplicate) vidmemAccessBitBufIsDuplicate_DISPATCH(pResource, hMemory, pDuplicate)
 #define vidmemAccessBitBufControlSerialization_Epilogue(pResource, pCallContext, pParams) vidmemAccessBitBufControlSerialization_Epilogue_DISPATCH(pResource, pCallContext, pParams)
@@ -227,7 +232,7 @@ static inline NV_STATUS vidmemAccessBitBufMapTo_DISPATCH(struct VidmemAccessBitB
     return pResource->__vidmemAccessBitBufMapTo__(pResource, pParams);
 }
 
-static inline NV_STATUS vidmemAccessBitBufGetMapAddrSpace_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
+static inline NV_STATUS vidmemAccessBitBufGetMapAddrSpace_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, NvU32 mapFlags, NV_ADDRESS_SPACE *pAddrSpace) {
     return pGpuResource->__vidmemAccessBitBufGetMapAddrSpace__(pGpuResource, pCallContext, mapFlags, pAddrSpace);
 }
 
@@ -263,19 +268,15 @@ static inline void vidmemAccessBitBufControl_Epilogue_DISPATCH(struct VidmemAcce
     pResource->__vidmemAccessBitBufControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS vidmemAccessBitBufControlLookup_DISPATCH(struct VidmemAccessBitBuffer *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__vidmemAccessBitBufControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NvHandle vidmemAccessBitBufGetInternalObjectHandle_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource) {
     return pGpuResource->__vidmemAccessBitBufGetInternalObjectHandle__(pGpuResource);
 }
 
-static inline NV_STATUS vidmemAccessBitBufControl_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
+static inline NV_STATUS vidmemAccessBitBufControl_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pGpuResource->__vidmemAccessBitBufControl__(pGpuResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS vidmemAccessBitBufUnmap_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS vidmemAccessBitBufUnmap_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__vidmemAccessBitBufUnmap__(pGpuResource, pCallContext, pCpuMapping);
 }
 
@@ -303,6 +304,10 @@ static inline NvBool vidmemAccessBitBufCanCopy_DISPATCH(struct VidmemAccessBitBu
     return pResource->__vidmemAccessBitBufCanCopy__(pResource);
 }
 
+static inline NvBool vidmemAccessBitBufIsPartialUnmapSupported_DISPATCH(struct VidmemAccessBitBuffer *pResource) {
+    return pResource->__vidmemAccessBitBufIsPartialUnmapSupported__(pResource);
+}
+
 static inline void vidmemAccessBitBufPreDestruct_DISPATCH(struct VidmemAccessBitBuffer *pResource) {
     pResource->__vidmemAccessBitBufPreDestruct__(pResource);
 }
@@ -323,7 +328,7 @@ static inline struct NotifShare *vidmemAccessBitBufGetNotificationShare_DISPATCH
     return pNotifier->__vidmemAccessBitBufGetNotificationShare__(pNotifier);
 }
 
-static inline NV_STATUS vidmemAccessBitBufMap_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, RsCpuMapping *pCpuMapping) {
+static inline NV_STATUS vidmemAccessBitBufMap_DISPATCH(struct VidmemAccessBitBuffer *pGpuResource, struct CALL_CONTEXT *pCallContext, struct RS_CPU_MAP_PARAMS *pParams, struct RsCpuMapping *pCpuMapping) {
     return pGpuResource->__vidmemAccessBitBufMap__(pGpuResource, pCallContext, pParams, pCpuMapping);
 }
 
@@ -343,4 +348,5 @@ static inline NV_STATUS __nvoc_vidmemAccessBitBufConstruct(struct VidmemAccessBi
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_VIDMEM_ACCESS_BIT_BUFFER_NVOC_H_

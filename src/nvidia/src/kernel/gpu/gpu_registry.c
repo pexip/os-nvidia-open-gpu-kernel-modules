@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -128,12 +128,18 @@ gpuInitRegistryOverrides_KERNEL
             }
         }
 
+        NV_PRINTF(LEVEL_INFO, "SRIOV status[%d].\n", pGpu->bSriovEnabled);
     }
 
     if (pGpu->bSriovEnabled && (IS_GSP_CLIENT(pGpu) || RMCFG_FEATURE_PLATFORM_GSP))
     {
+        pGpu->bVgpuGspPluginOffloadEnabled = NV_TRUE;
+    }
+    // Do not enable VGPU-GSP plugin offload on guest for MODS, MODS doesn't support GSP
+    if (IS_VIRTUAL_WITH_SRIOV(pGpu) && !gpuIsWarBug200577889SriovHeavyEnabled(pGpu))
+    {
         {
-            pGpu->bVgpuGspPluginOffloadEnabled = NV_TRUE;
+            pGpu->bVgpuGspPluginOffloadEnabled = pGpu->getProperty(pGpu, PDB_PROP_GPU_VGPU_OFFLOAD_CAPABLE);
         }
     }
 
@@ -147,6 +153,14 @@ gpuInitRegistryOverrides_KERNEL
     else if (IS_GSP_CLIENT(pGpu) || RMCFG_FEATURE_PLATFORM_GSP)
     {
         pGpu->bClientRmAllocatedCtxBuffer = NV_TRUE;
+    }
+    else if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ZERO_FB) &&
+        (pGpu->bSriovEnabled || IS_VIRTUAL_WITH_SRIOV(pGpu)))
+    {
+        // For zero-FB config + SRIOV
+        pGpu->bClientRmAllocatedCtxBuffer = NV_TRUE;
+        NV_PRINTF(LEVEL_INFO,
+            "Enabled Client RM managed context buffer for zero-FB + SRIOV.\n");
     }
     else if ( RMCFG_FEATURE_MODS_FEATURES || !(pGpu->bSriovEnabled || IS_VIRTUAL(pGpu)) )
     {
@@ -185,6 +199,18 @@ gpuInitRegistryOverrides_KERNEL
         pGpu->bBf3WarBug4040336Enabled = (data32 == NV_REG_STR_RM_DMA_ADJUST_PEER_MMIO_BF3_ENABLE);
     }
 
+    if (osReadRegistryDword(pGpu, NV_REG_STR_RM_ITERATIVE_MMU_WALKER, &data32) == NV_OK)
+    {
+        pGpu->bIterativeMmuWalker = (data32 == NV_REG_STR_RM_ITERATIVE_MMU_WALKER_ENABLED);
+    }
+
+#if defined(GPU_LOAD_FAILURE_TEST_SUPPORTED)
+    if (osReadRegistryDword(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST, &data32) == NV_OK)
+    {
+        pGpu->loadFailurePathTestControl = data32;
+    }
+#endif
+
     return NV_OK;
 }
 
@@ -199,11 +225,13 @@ gpuInitInstLocOverrides_IMPL
 {
     NvU32 data32 = 0;
     //
-    // If Hopper CC mode is enabled, move all except few buffers to FB
+    // If Hopper CC mode or protected pcie is enabled, move all except few buffers to FB
     //
     if (((osReadRegistryDword(pGpu, NV_REG_STR_RM_CONFIDENTIAL_COMPUTE, &data32) == NV_OK) &&
          FLD_TEST_DRF(_REG_STR, _RM_CONFIDENTIAL_COMPUTE, _ENABLED, _YES, data32) &&
-         pGpu->getProperty(pGpu, PDB_PROP_GPU_CC_FEATURE_CAPABLE)) || gpuIsCCEnabledInHw_HAL(pGpu))
+         pGpu->getProperty(pGpu, PDB_PROP_GPU_CC_FEATURE_CAPABLE)) ||
+        gpuIsCCEnabledInHw_HAL(pGpu) ||
+        gpuIsProtectedPcieEnabledInHw_HAL(pGpu))
     {
 
         pGpu->instLocOverrides  = NV_REG_STR_RM_INST_LOC_ALL_VID;

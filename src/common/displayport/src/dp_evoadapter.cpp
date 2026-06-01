@@ -35,11 +35,10 @@
 #include "dp_vrr.h"
 #include <nvmisc.h>
 
-#include <ctrl/ctrl0073/ctrl0073dfp.h>
-#include <ctrl/ctrl0073/ctrl0073dp.h>
 #include <ctrl/ctrl0073/ctrl0073specific.h>
 #include <ctrl/ctrl0073/ctrl0073system.h>
 #include <ctrl/ctrl5070/ctrl5070or.h>
+
 using namespace DisplayPort;
 
 //
@@ -93,10 +92,11 @@ const struct
     {NV_DP_REGKEY_KEEP_OPT_LINK_ALIVE_SST,          &dpRegkeyDatabase.bOptLinkKeptAliveSst,            DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_FORCE_EDP_ILR,                    &dpRegkeyDatabase.bBypassEDPRevCheck,              DP_REG_VAL_BOOL},
     {NV_DP_DSC_MST_CAP_BUG_3143315,                 &dpRegkeyDatabase.bDscMstCapBug3143315,            DP_REG_VAL_BOOL},
-    {NV_DP_CHECK_FEC_FOR_DDS_DSC_PANEL,             &dpRegkeyDatabase.bCheckFECForDynamicMuxDSCPanel,  DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_POWER_DOWN_PHY,                   &dpRegkeyDatabase.bPowerDownPhyBeforeD3,           DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_REASSESS_MAX_LINK,                &dpRegkeyDatabase.bReassessMaxLink,                DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_MST_PCON_CAPS_READ_DISABLED,      &dpRegkeyDatabase.bMSTPCONCapsReadDisabled,        DP_REG_VAL_BOOL},
+    {NV_DP_REGKEY_FORCE_DSC_ON_SINK,                &dpRegkeyDatabase.bForceDscOnSink,                 DP_REG_VAL_BOOL},
+    {NV_DP_REGKEY_ENABLE_SKIP_DPCD_READS_WAR,       &dpRegkeyDatabase.bSkipFakeDeviceDpcdAccess,       DP_REG_VAL_BOOL},
     {NV_DP_REGKEY_FLUSH_TIMESLOT_INFO_WHEN_DIRTY,   &dpRegkeyDatabase.bFlushTimeslotWhenDirty,         DP_REG_VAL_BOOL}
 };
 
@@ -115,10 +115,12 @@ EvoMainLink::EvoMainLink(EvoInterface * provider, Timer * timer) :
     this->initializeRegkeyDatabase();
     this->applyRegkeyOverrides();
 
-     _isDynamicMuxCapable       = false;
-     _isLTPhyRepeaterSupported  = true;
-     _rmPhyRepeaterCount        = 0;
-     dpMemZero(&_DSC, sizeof(_DSC));
+    _isDynamicMuxCapable       = false;
+    _isLTPhyRepeaterSupported  = true;
+    _rmPhyRepeaterCount        = 0;
+    dpMemZero(&_DSC, sizeof(_DSC));
+    dpMemZero(&dfpParams, sizeof(dfpParams));
+    dpMemZero(&dpParams, sizeof(dpParams));
 
     //
     //  Tell RM to hands off on the DisplayPort hardware
@@ -259,63 +261,60 @@ NvU32 EvoMainLink::headToStream(NvU32 head, DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE
     return streamIndex;
 }
 
-void EvoMainLink::queryGPUCapability()
+bool EvoMainLink::queryGPUCapability()
 {
-    NV0073_CTRL_CMD_DP_GET_CAPS_PARAMS params;
-
-    dpMemZero(&params, sizeof(params));
-    params.subDeviceInstance = subdeviceIndex;
-    params.sorIndex = provider->getSorIndex();
-    NvU32 code = provider->rmControl0073(NV0073_CTRL_CMD_DP_GET_CAPS, &params, sizeof(params));
+    dpMemZero(&dpParams, sizeof(dpParams));
+    dpParams.subDeviceInstance = subdeviceIndex;
+    dpParams.sorIndex = provider->getSorIndex();
+    NvU32 code = provider->rmControl0073(NV0073_CTRL_CMD_DP_GET_CAPS, &dpParams, sizeof(dpParams));
     if (code != NVOS_STATUS_SUCCESS)
     {
         DP_ASSERT(0 && "Unable to process GPU caps");
+        return false;
     }
+    //
+    // Check if MST feature needs to be disabled by regkey. This is requirement by few OEMs, they don't want to support
+    // MST feature on particular sku, whenever requested through INF.
+    //
+    _hasMultistream         = (dpParams.bIsMultistreamSupported == NV_TRUE) && !_isMstDisabledByRegkey;
+
+    _gpuSupportedDpVersions = dpParams.dpVersionsSupported;
+
+    _isStreamCloningEnabled = (dpParams.bIsSCEnabled == NV_TRUE) ? true : false;
+    _hasIncreasedWatermarkLimits     = (dpParams.bHasIncreasedWatermarkLimits == NV_TRUE) ? true : false;
+
+    _isFECSupported         = (dpParams.bFECSupported == NV_TRUE) ? true : false;
+
+    _useDfpMaxLinkRateCaps  = (dpParams.bOverrideLinkBw == NV_TRUE) ? true : false;
+
+    _isLTPhyRepeaterSupported        = (dpParams.bIsTrainPhyRepeater == NV_TRUE) ? true : false;
+
+    if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _1_62, dpParams.maxLinkRate))
+        _maxLinkRateSupportedGpu = RBR; //in Hz
+    else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _2_70, dpParams.maxLinkRate))
+        _maxLinkRateSupportedGpu = HBR; //in Hz
+    else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _5_40, dpParams.maxLinkRate))
+        _maxLinkRateSupportedGpu = HBR2; //in Hz
+    else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _8_10, dpParams.maxLinkRate))
+        _maxLinkRateSupportedGpu = HBR3; //in Hz
     else
     {
-        //
-        // Check if MST feature needs to be disabled by regkey. This is requirement by few OEMs, they don't want to support
-        // MST feature on particular sku, whenever requested through INF.
-        //
-        _hasMultistream         = (params.bIsMultistreamSupported == NV_TRUE) && !_isMstDisabledByRegkey;
-
-        _gpuSupportedDpVersions = params.dpVersionsSupported;
-
-        _isStreamCloningEnabled = (params.bIsSCEnabled == NV_TRUE) ? true : false;
-        _hasIncreasedWatermarkLimits     = (params.bHasIncreasedWatermarkLimits == NV_TRUE) ? true : false;
-
-        _isFECSupported         = (params.bFECSupported == NV_TRUE) ? true : false;
-
-        _useDfpMaxLinkRateCaps  = (params.bOverrideLinkBw == NV_TRUE) ? true : false;
-
-        _isLTPhyRepeaterSupported        = (params.bIsTrainPhyRepeater == NV_TRUE) ? true : false;
-
-        if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _1_62, params.maxLinkRate))
-            _maxLinkRateSupportedGpu = RBR; //in Hz
-        else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _2_70, params.maxLinkRate))
-            _maxLinkRateSupportedGpu = HBR; //in Hz
-        else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _5_40, params.maxLinkRate))
-            _maxLinkRateSupportedGpu = HBR2; //in Hz
-        else if (FLD_TEST_DRF(0073, _CTRL_CMD_DP_GET_CAPS, _MAX_LINK_RATE, _8_10, params.maxLinkRate))
-            _maxLinkRateSupportedGpu = HBR3; //in Hz
-        else
-        {
-            DP_ASSERT(0 && "Unable to get max link rate");
-            // Assume that we can at least support RBR.
-            _maxLinkRateSupportedGpu = RBR;
-        }
-
-        if (!_isDscDisabledByRegkey)
-        {
-            _DSC.isDscSupported = params.DSC.bDscSupported ? true : false;
-            _DSC.encoderColorFormatMask = params.DSC.encoderColorFormatMask;
-            _DSC.lineBufferSizeKB = params.DSC.lineBufferSizeKB;
-            _DSC.rateBufferSizeKB = params.DSC.rateBufferSizeKB;
-            _DSC.bitsPerPixelPrecision = params.DSC.bitsPerPixelPrecision;
-            _DSC.maxNumHztSlices = params.DSC.maxNumHztSlices;
-            _DSC.lineBufferBitDepth = params.DSC.lineBufferBitDepth;
-        }
+        DP_ASSERT(0 && "Unable to get max link rate");
+        // Assume that we can at least support RBR.
+        _maxLinkRateSupportedGpu = RBR;
     }
+
+    if (!_isDscDisabledByRegkey)
+    {
+        _DSC.isDscSupported = dpParams.DSC.bDscSupported ? true : false;
+        _DSC.encoderColorFormatMask = dpParams.DSC.encoderColorFormatMask;
+        _DSC.lineBufferSizeKB = dpParams.DSC.lineBufferSizeKB;
+        _DSC.rateBufferSizeKB = dpParams.DSC.rateBufferSizeKB;
+        _DSC.bitsPerPixelPrecision = dpParams.DSC.bitsPerPixelPrecision;
+        _DSC.maxNumHztSlices = dpParams.DSC.maxNumHztSlices;
+        _DSC.lineBufferBitDepth = dpParams.DSC.lineBufferBitDepth;
+    }
+    return true;
 }
 
 void EvoMainLink::triggerACT()
@@ -645,18 +644,18 @@ bool EvoMainLink::physicalLayerSetTestPattern(PatternInfo * patternInfo)
         {
             ctrlPattern.testPattern = NV0073_CTRL_DP_TESTPATTERN_DATA_CSTM;
 
-            params.cstm.lower = patternInfo->ctsmLower;
-            params.cstm.middle = patternInfo->ctsmMiddle;
-            params.cstm.upper = patternInfo->ctsmUpper;
+            params.cstm.field_31_0 = patternInfo->ctsmLower;
+            params.cstm.field_63_32 = patternInfo->ctsmMiddle;
+            params.cstm.field_95_64 = patternInfo->ctsmUpper;
             break;
         }
 #ifdef NV0073_CTRL_DP_TESTPATTERN_DATA_HBR2COMPLIANCE
         case LINK_QUAL_HBR2_COMPLIANCE_EYE:
         {
             ctrlPattern.testPattern = NV0073_CTRL_DP_TESTPATTERN_DATA_HBR2COMPLIANCE;
-            params.cstm.lower = 0;
-            params.cstm.middle = 0;
-            params.cstm.upper = 0;
+            params.cstm.field_31_0 = 0;
+            params.cstm.field_63_32 = 0;
+            params.cstm.field_95_64 = 0;
             break;
         }
 #endif
@@ -895,7 +894,6 @@ void EvoMainLink::applyRegkeyOverrides()
     _skipPowerdownEDPPanelWhenHeadDetach = dpRegkeyDatabase.bPoweroffEdpInHeadDetachSkipped;
     _applyLinkBwOverrideWarRegVal        = dpRegkeyDatabase.bLinkBwOverrideWarApplied;
     _enableMSAOverrideOverMST            = dpRegkeyDatabase.bMsaOverMstEnabled;
-    _enableFecCheckForDDS                = dpRegkeyDatabase.bCheckFECForDynamicMuxDSCPanel;
     _isMSTPCONCapsReadDisabled           = dpRegkeyDatabase.bMSTPCONCapsReadDisabled;
 }
 
@@ -1239,14 +1237,10 @@ bool EvoMainLink::train(const LinkConfiguration & link, bool force,
     retLink->setLaneRate(requestRmLC.peakRate, result ? requestRmLC.lanes : 0);
     retLink->setLTCounter(ltCounter);
 
-    // For release branch only, check FEC return values and update to "retLink"
-    if (_enableFecCheckForDDS)
+    if (requestRmLC.bEnableFEC && (FLD_TEST_DRF(0073_CTRL_DP, _ERR, _ENABLE_FEC, _ERR, err)))
     {
-        if (requestRmLC.bEnableFEC && (FLD_TEST_DRF(0073_CTRL_DP, _ERR, _ENABLE_FEC, _ERR, err)))
-        {
-            retLink->bEnableFEC = false;
-            DP_ASSERT(0);
-        }
+        retLink->bEnableFEC = false;
+        DP_ASSERT(0);
     }
 
     NV_DPTRACE_INFO(LINK_TRAINING_DONE, status, requestRmLC.peakRate, requestRmLC.lanes);
@@ -1348,7 +1342,17 @@ void EvoMainLink::getLinkConfig(unsigned &laneCount, NvU64 & linkRate)
     if (code == NVOS_STATUS_SUCCESS)
     {
         laneCount = params.laneCount;
-        linkRate = (NvU64)27000000 * params.linkBW;    // BUG: Beware, turbo mode need to be taken into account
+
+        if (params.linkBW != 0)
+        {
+            // BUG: Beware, turbo mode need to be taken into account
+            linkRate = ((NvU64)params.linkBW) * DP_LINK_BW_FREQ_MULTI_MBPS;
+        }
+        else
+        {
+            // No link rate available.
+            linkRate = 0;
+        }
     }
     else
     {
@@ -1371,7 +1375,6 @@ bool EvoMainLink::getMaxLinkConfigFromUefi(NvU8 &linkRate, NvU8 &laneCount)
 
 bool EvoMainLink::queryAndUpdateDfpParams()
 {
-    NV0073_CTRL_DFP_GET_INFO_PARAMS  dfpParams;
     NvU32 dfpFlags;
     dpMemZero(&dfpParams, sizeof(dfpParams));
     dfpParams.subDeviceInstance = subdeviceIndex;
@@ -1420,6 +1423,7 @@ bool EvoMainLink::queryAndUpdateDfpParams()
             _maxLinkRateSupportedDfp = HBR3;
             break;
     }
+
 
     _isDynamicMuxCapable = FLD_TEST_DRF(0073, _CTRL_DFP_FLAGS, _DYNAMIC_MUX_CAPABLE, _TRUE, dfpFlags);
 
@@ -1777,8 +1781,8 @@ bool EvoMainLink::dscCrcTransaction(NvBool bEnable, gpuDscCrc *data, NvU16 *head
 //
 bool EvoMainLink::configureLinkRateTable
 (
-    const NvU16 *pLinkRateTable,
-    LinkRates   *pLinkRates
+    const NvU16     *pLinkRateTable,
+    LinkRates       *pLinkRates
 )
 {
     NV0073_CTRL_CMD_DP_CONFIG_INDEXED_LINK_RATES_PARAMS params;
@@ -1816,9 +1820,8 @@ bool EvoMainLink::configureLinkRateTable
                 case linkBW_4_32Gbps:
                 case linkBW_5_40Gbps:
                 case linkBW_8_10Gbps:
-                    pLinkRates->import(params.linkBwTbl[i]);
+                    pLinkRates->import((NvU8)params.linkBwTbl[i]);
                     break;
-
                 default:
                     DP_LOG(("DP_EVO> %s: Unsupported link rate received",
                            __FUNCTION__));

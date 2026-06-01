@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -46,6 +46,8 @@ extern "C" {
 #include "nvCpuUuid.h"
 #include "os/capability.h"
 #include "containers/btree.h"
+
+#include "containers/multimap.h"
 
 #define SYS_GET_INSTANCE()        (g_pSys)
 #define SYS_GET_GPUMGR(p)         ((p)->pGpuMgr)
@@ -200,18 +202,6 @@ typedef struct GpuDb GpuDb;
 #endif /* __nvoc_class_id_GpuDb */
 
 
-struct OBJSWINSTR;
-
-#ifndef __NVOC_CLASS_OBJSWINSTR_TYPEDEF__
-#define __NVOC_CLASS_OBJSWINSTR_TYPEDEF__
-typedef struct OBJSWINSTR OBJSWINSTR;
-#endif /* __NVOC_CLASS_OBJSWINSTR_TYPEDEF__ */
-
-#ifndef __nvoc_class_id_OBJSWINSTR
-#define __nvoc_class_id_OBJSWINSTR 0xd586f3
-#endif /* __nvoc_class_id_OBJSWINSTR */
-
-
 struct OBJCL;
 
 #ifndef __NVOC_CLASS_OBJCL_TYPEDEF__
@@ -318,19 +308,15 @@ typedef struct SYS_STATIC_CONFIG
     /*! Indicates confidentail compute OS support is enabled or not */
     NvBool bOsCCEnabled;
 
+    /*! Indicates SEV-SNP confidential compute OS support is enabled or not */
+    NvBool bOsCCSevSnpEnabled;
+
+    /*! Indicates SEV-SNP vTOM confidential compute OS support is enabled or not */
+    NvBool bOsCCSnpVtomEnabled;
+
     /*! Indicates Intel TDX confidentail compute OS support is enabled or not */
     NvBool bOsCCTdxEnabled;
 } SYS_STATIC_CONFIG;
-
-typedef enum
-{
-    CPU_VENDOR_UNKNOWN = 0,
-    CPU_VENDOR_INTEL,
-    CPU_VENDOR_AMD,
-    CPU_VENDOR_WINCHIP,
-    CPU_VENDOR_CYRIX,
-    CPU_VENDOR_TRANSM
-} CPU_VENDOR;
 
 typedef struct
 {
@@ -350,7 +336,6 @@ typedef struct
                                    // filled in if CPU has embedded name
     NvU32 family;                  // Vendor defined Family/extended Family
     NvU32 model;                   // Vendor defined Model/extended Model
-    NvU8  vendor;                  // Vendor CPU_VENDOR
     NvU32 coresOnDie;              // # of cores on the die (0 if unknown)
     NvU32 platformID;              // Chip package type
     NvU8 stepping;                 // Silicon stepping
@@ -365,12 +350,23 @@ typedef struct
     NvU32  genRegsMiscIoAdr;
 } SYS_VGA_POST_STATE;
 
+typedef struct
+{
+    void *pData;
+} SysMemExportCacheEntry;
 
+MAKE_MULTIMAP(SYS_MEM_EXPORT_CACHE, SysMemExportCacheEntry);
+
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_SYSTEM_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJSYS {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -407,6 +403,7 @@ struct OBJSYS {
     NvU32 PDB_PROP_SYS_PRIORITY_THROTTLE_DELAY_US;
     NvBool PDB_PROP_SYS_BUGCHECK_ON_TIMEOUT;
     NvBool PDB_PROP_SYS_CLIENT_HANDLE_LOOKUP;
+    NvBool PDB_PROP_SYS_RM_LOCK_TIME_COLLECT;
     NvU32 apiLockMask;
     NvU32 apiLockModuleMask;
     NvU32 gpuLockModuleMask;
@@ -423,11 +420,17 @@ struct OBJSYS {
     NvU32 binMask;
     PNODE pMemFilterList;
     NvBool PDB_PROP_SYS_IS_QSYNC_FW_REVISION_CHECK_DISABLED;
+    NvBool PDB_PROP_SYS_GPU_LOCK_MIDPATH_ENABLED;
+    NvBool PDB_PROP_SYS_DESTRUCTING;
     NvU64 rmInstanceId;
     NvU32 currentCid;
     NvBool bUseDeferredClientListFree;
     NvU32 clientListDeferredFreeLimit;
     OS_RM_CAPS *pOsRmCaps;
+    SYS_MEM_EXPORT_CACHE sysMemExportCache;
+    PORT_RWLOCK *pSysMemExportModuleLock;
+    volatile NvU64 sysExportObjectCounter;
+    NvHandle hSysMemExportClient;
     struct OBJGPUMGR *pGpuMgr;
     struct OBJGSYNCMGR *pGsyncMgr;
     struct OBJVGPUMGR *pVgpuMgr;
@@ -435,7 +438,6 @@ struct OBJSYS {
     struct OBJOS *pOS;
     struct OBJCL *pCl;
     struct OBJPFM *pPfm;
-    struct OBJSWINSTR *pSwInstr;
     struct GpuAccounting *pGpuAcct;
     struct PlatformRequestHandler *pPlatformRequestHandler;
     Journal *pRcDB;
@@ -474,6 +476,8 @@ extern const struct NVOC_CLASS_DEF __nvoc_class_def_OBJSYS;
 #define PDB_PROP_SYS_REGISTRY_OVERRIDES_INITIALIZED_BASE_NAME PDB_PROP_SYS_REGISTRY_OVERRIDES_INITIALIZED
 #define PDB_PROP_SYS_IS_EFI_INIT_BASE_CAST
 #define PDB_PROP_SYS_IS_EFI_INIT_BASE_NAME PDB_PROP_SYS_IS_EFI_INIT
+#define PDB_PROP_SYS_GPU_LOCK_MIDPATH_ENABLED_BASE_CAST
+#define PDB_PROP_SYS_GPU_LOCK_MIDPATH_ENABLED_BASE_NAME PDB_PROP_SYS_GPU_LOCK_MIDPATH_ENABLED
 #define PDB_PROP_SYS_INITIALIZE_SYSTEM_MEMORY_ALLOCATIONS_BASE_CAST
 #define PDB_PROP_SYS_INITIALIZE_SYSTEM_MEMORY_ALLOCATIONS_BASE_NAME PDB_PROP_SYS_INITIALIZE_SYSTEM_MEMORY_ALLOCATIONS
 #define PDB_PROP_SYS_POWER_BATTERY_BASE_CAST
@@ -486,6 +490,8 @@ extern const struct NVOC_CLASS_DEF __nvoc_class_def_OBJSYS;
 #define PDB_PROP_SYS_NVIF_INIT_DONE_BASE_NAME PDB_PROP_SYS_NVIF_INIT_DONE
 #define PDB_PROP_SYS_VALIDATE_CLIENT_HANDLE_STRICT_BASE_CAST
 #define PDB_PROP_SYS_VALIDATE_CLIENT_HANDLE_STRICT_BASE_NAME PDB_PROP_SYS_VALIDATE_CLIENT_HANDLE_STRICT
+#define PDB_PROP_SYS_DESTRUCTING_BASE_CAST
+#define PDB_PROP_SYS_DESTRUCTING_BASE_NAME PDB_PROP_SYS_DESTRUCTING
 #define PDB_PROP_SYS_VALIDATE_KERNEL_BUFFERS_BASE_CAST
 #define PDB_PROP_SYS_VALIDATE_KERNEL_BUFFERS_BASE_NAME PDB_PROP_SYS_VALIDATE_KERNEL_BUFFERS
 #define PDB_PROP_SYS_PRIMARY_VBIOS_STATE_SAVED_BASE_CAST
@@ -526,6 +532,8 @@ extern const struct NVOC_CLASS_DEF __nvoc_class_def_OBJSYS;
 #define PDB_PROP_SYS_IS_AGGRESSIVE_GC6_ENABLED_BASE_NAME PDB_PROP_SYS_IS_AGGRESSIVE_GC6_ENABLED
 #define PDB_PROP_SYS_HASWELL_CPU_C0_STEPPING_BASE_CAST
 #define PDB_PROP_SYS_HASWELL_CPU_C0_STEPPING_BASE_NAME PDB_PROP_SYS_HASWELL_CPU_C0_STEPPING
+#define PDB_PROP_SYS_RM_LOCK_TIME_COLLECT_BASE_CAST
+#define PDB_PROP_SYS_RM_LOCK_TIME_COLLECT_BASE_NAME PDB_PROP_SYS_RM_LOCK_TIME_COLLECT
 #define PDB_PROP_SYS_DEBUGGER_DISABLED_BASE_CAST
 #define PDB_PROP_SYS_DEBUGGER_DISABLED_BASE_NAME PDB_PROP_SYS_DEBUGGER_DISABLED
 #define PDB_PROP_SYS_MXM_THERMAL_CONTROL_PRESENT_BASE_CAST
@@ -630,4 +638,5 @@ extern struct OBJSYS *g_pSys;
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_SYSTEM_NVOC_H_

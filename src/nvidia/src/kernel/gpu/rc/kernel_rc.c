@@ -23,6 +23,7 @@
 
 #include "kernel/gpu/rc/kernel_rc.h"
 
+#include "kernel/core/locks.h"
 #include "kernel/core/system.h"
 #include "kernel/gpu/bif/kernel_bif.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
@@ -184,7 +185,7 @@ _krcInitRegistryOverrides
     {
         pKernelRc->watchdog.flags |= WATCHDOG_FLAGS_DISABLED;
     }
-    else if (gpuIsCCFeatureEnabled(pGpu) && !gpuIsCCDevToolsModeEnabled(pGpu))
+    else if (gpuIsCCFeatureEnabled(pGpu))
     {
         pKernelRc->watchdog.flags |= WATCHDOG_FLAGS_DISABLED;
     }
@@ -203,6 +204,13 @@ _krcInitRegistryOverrides
 #endif
         }
     }
+
+    //
+    // Do RC on BAR faults by default (For bug 1842228).
+    // Only applicable to Volta+ chips.
+    //
+    pKernelRc->bRcOnBar2Fault = NV_TRUE;
+
 }
 
 
@@ -293,17 +301,28 @@ krcReportXid_IMPL
         char pid_string[12] = "'<unknown>'";
 
         //
-        // Get PID of channel creator if available, or get the current PID for
-        // exception types that never have an associated channel
+        // When the channel context is available, use the allocating process'
+        // PID/name, which were populated when the channel was allocated.
+        // For errors without a channel context, use the current process
+        // information, if there's a Resource Server CALL_CONTEXT present
+        // in TLS, indicating we're servicing an RMAPI request.
         //
         if (pKernelChannel != NULL)
         {
+            //
+            // This function executes under (at least) the GPU lock, so the
+            // pKernelChannel resource can be accessed, regardless of whether
+            // the API lock is held: the pKernelChannel can't go away while the
+            // GPU lock is held, so the owning client can't go away either.
+            // Duping requires holding all GPU locks, so the client's process/
+            // name can't change in this context either.
+            //
             RsClient *pClient = RES_GET_CLIENT(pKernelChannel);
             RmClient *pRmClient = dynamicCast(pClient, RmClient);
             procname = pRmClient->name;
             nvDbgSnprintf(pid_string, sizeof(pid_string), "%u", pKernelChannel->ProcessID);
         }
-        else if (exceptType == GSP_RPC_TIMEOUT)
+        else if (resservGetTlsCallContext() != NULL)
         {
             NvU32 current_pid = osGetCurrentProcess();
 

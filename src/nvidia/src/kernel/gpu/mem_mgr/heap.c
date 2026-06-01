@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -41,10 +41,12 @@
 #include "core/locks.h"
 #include "class/cl0040.h" // NV01_MEMORY_LOCAL_USER
 #include "vgpu/rpc.h"
+#include "vgpu/vgpu_util.h"
 #include "gpu/mmu/kern_gmmu.h"
 #include "virtualization/hypervisor/hypervisor.h"
 #include "gpu/device/device.h"
 #include "kernel/gpu/intr/intr.h"
+#include "platform/sli/sli.h"
 
 typedef enum
 {
@@ -57,7 +59,7 @@ typedef enum
 //
 // Statics
 //
-static NV_STATUS _heapBlockFree(OBJGPU *, Heap *, MEM_BLOCK *);
+static NV_STATUS _heapBlockFree(OBJGPU *, Heap *, NvHandle, NvHandle, MEM_BLOCK *);
 static void      _heapSetTexturePlacement(Heap *, NvU32, NvU32, NvBool*,
                                           NvU32*, NvU8*);
 static NV_STATUS _heapGetMaxFree(Heap *, NvU64 *, NvU64 *);
@@ -737,7 +739,7 @@ heapDestruct_IMPL
                 pBlock->allocedMemDesc = NV_FALSE;
             }
 
-            _heapBlockFree(pGpu, pHeap, pBlock);
+            _heapBlockFree(pGpu, pHeap, NV01_NULL_OBJECT, NV01_NULL_OBJECT, pBlock);
 
             // restart scanning the list, if the heap->pBlockList changed
             if (pBlockFirst != pHeap->pBlockList)
@@ -1218,7 +1220,8 @@ _heapBlacklistSingleChunk
         // Allocate memory for this page. This is marked as an internal RM allocation
         // and will be saved/restored during suspend/resume
         //
-        status = memdescAlloc(pBlacklistChunk->pMemDesc);
+        memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_78, 
+                    pBlacklistChunk->pMemDesc);
         if (NV_OK != status)
         {
             // no use for the memdesc if page couldn't be allocated
@@ -1932,6 +1935,8 @@ static NV_STATUS _heapBlockFree
 (
     OBJGPU      *pGpu,
     Heap        *pHeap,
+    NvHandle     hClient,
+    NvHandle     hDevice,
     MEM_BLOCK   *pBlock
 )
 {
@@ -1999,6 +2004,8 @@ static NV_STATUS _heapBlockFree
         pFbAllocInfo->pageFormat->attr  = pBlock->hwResource.attr;
         pFbAllocInfo->pageFormat->attr2 = pBlock->hwResource.attr2;
         pFbAllocInfo->ctagOffset = pBlock->hwResource.ctagOffset;
+        pFbAllocInfo->hClient = hClient;
+        pFbAllocInfo->hDevice = hDevice;
 
         memmgrFreeHwResources(pGpu, pMemoryManager, pFbAllocInfo);
 
@@ -2271,6 +2278,8 @@ heapFree_IMPL
 (
     OBJGPU             *pGpu,
     Heap               *pHeap,
+    NvHandle            hClient,
+    NvHandle            hDevice,
     NvU32               owner,
     MEMORY_DESCRIPTOR  *pMemDesc
 )
@@ -2352,7 +2361,7 @@ heapFree_IMPL
             // pMemDesc->PteKind = 0;
         }
 
-        if ((status = _heapBlockFree(pGpu, pHeap, pBlock)) != NV_OK)
+        if ((status = _heapBlockFree(pGpu, pHeap, hClient, hDevice, pBlock)) != NV_OK)
         {
             NV_ASSERT(0);
         }
@@ -2417,7 +2426,7 @@ heapFree_IMPL
                 continue;
             }
 
-            if (NV_OK != (status = _heapBlockFree(pGpu, pHeap, pBlock)))
+            if (NV_OK != (status = _heapBlockFree(pGpu, pHeap, hClient, hDevice, pBlock)))
                 return status;
 
             // check if we need to dynamically blacklist the page
@@ -2755,7 +2764,6 @@ NV_STATUS heapAllocHint_IMPL
     NvU64                   pageSize            = 0;
     NvU32                   flags;
     NvU32                   owner;
-    NvU32                   tiledAttr;
 
     // Check for valid size.
     NV_ASSERT_OR_RETURN((pAllocHint->pSize != NULL), NV_ERR_INVALID_ARGUMENT);
@@ -2936,28 +2944,7 @@ NV_STATUS heapAllocHint_IMPL
     *pAllocHint->pHeight = pFbAllocInfo->height;
     pAllocHint->pad = pFbAllocInfo->pad;
 
-    // Special Case for Tiled Allocations
-    // Adjust the size so we don't use the partial tile areas
-    tiledAttr = DRF_VAL(OS32, _ATTR, _TILED, *pAllocHint->pAttr);
-    if (tiledAttr)
-    {
-        *pAllocHint->pSize = pFbAllocInfo->pitch * pFbAllocInfo->height;
-        if (pFbAllocInfo->size > *pAllocHint->pSize)
-        {
-            pAllocHint->pad += (pFbAllocInfo->size - *pAllocHint->pSize);
-        }
-        else if (pFbAllocInfo->size != *pAllocHint->pSize)
-        {
-            NV_PRINTF(LEVEL_ERROR,
-                      "nvrm: Hint Allocation Size Error %llx %llx\n",
-                      pFbAllocInfo->size, *pAllocHint->pSize);
-            DBG_BREAKPOINT();
-        }
-    }
-    else
-    {
-        *pAllocHint->pSize       = pFbAllocInfo->size;           // returned to caller
-    }
+    *pAllocHint->pSize = pFbAllocInfo->size;           // returned to caller
 
     pAllocHint->alignAdjust = 0;
 
@@ -2984,7 +2971,6 @@ NV_STATUS heapHwAlloc_IMPL
     NV_STATUS               status = NV_OK;
     FB_ALLOC_INFO          *pFbAllocInfo = NULL;
     FB_ALLOC_PAGE_FORMAT   *pFbAllocPageFormat = NULL;
-    NvU32                   tiledAttr;
     NvU64                   pageSize = 0;
     NV_MEMORY_HW_RESOURCES_ALLOCATION_PARAMS *pUserParams = pHwAlloc->pUserParams;
 
@@ -3067,6 +3053,14 @@ NV_STATUS heapHwAlloc_IMPL
     //
     if ((status == NV_OK) && IS_VIRTUAL(pGpu))
     {
+        if (vgpuIsGuestManagedHwAlloc(pGpu) &&
+            (FLD_TEST_DRF(OS32, _ATTR, _COMPR, _NONE, pFbAllocInfo->pageFormat->attr)))
+        {
+            status = memmgrAllocHwResources(pGpu, pMemoryManager, pFbAllocInfo);
+            pHwAlloc->hwResource.isVgpuHostAllocated = NV_FALSE;
+            NV_ASSERT(status == NV_OK);
+        }
+        else
         {
             NV_RM_RPC_MANAGE_HW_RESOURCE_ALLOC(pGpu,
                                                hClient,
@@ -3129,28 +3123,7 @@ NV_STATUS heapHwAlloc_IMPL
     pUserParams->kind = pFbAllocInfo->pageFormat->kind;
     pHwAlloc->hwResId = pFbAllocInfo->hwResId;
 
-    // Special Case for Tiled Allocations
-    // Adjust the size so we don't use the partial tile areas
-    tiledAttr = DRF_VAL(OS32, _ATTR, _TILED, pFbAllocInfo->pageFormat->attr);
-    if (tiledAttr)
-    {
-        pUserParams->size = pFbAllocInfo->pitch * pFbAllocInfo->height;
-        if (pFbAllocInfo->size > pUserParams->size)
-        {
-            pHwAlloc->pad += (NvU64_LO32(pFbAllocInfo->size) - pUserParams->size);
-        }
-        else if (pFbAllocInfo->size != pUserParams->size)
-        {
-            NV_PRINTF(LEVEL_ERROR,
-                      "nvrm: Hint Allocation Size Error %llx %llx\n",
-                      pFbAllocInfo->size, pUserParams->size);
-            DBG_BREAKPOINT();
-        }
-    }
-    else
-    {
-        pUserParams->size       = pFbAllocInfo->size;           // returned to caller
-    }
+    pUserParams->size = pFbAllocInfo->size;           // returned to caller
 
     pHwAlloc->hwResource.attr = pFbAllocInfo->retAttr;
     pHwAlloc->hwResource.attr2 = pFbAllocInfo->retAttr2;
@@ -3204,6 +3177,8 @@ void heapHwFree_IMPL
     pFbAllocInfo->size = pMemory->Length;
     pFbAllocInfo->format = memdescGetPteKind(pMemory->pMemDesc);
     pFbAllocInfo->offset = ~0;
+    pFbAllocInfo->hClient = RES_GET_CLIENT_HANDLE(pMemory);
+    pFbAllocInfo->hDevice = RES_GET_HANDLE(pMemory->pDevice);
 
     //
     // vGPU:
@@ -3215,6 +3190,11 @@ void heapHwFree_IMPL
 
     if (IS_VIRTUAL(pGpu))
     {
+        if (vgpuIsGuestManagedHwAlloc(pGpu) && !pMemory->pHwResource->isVgpuHostAllocated)
+        {
+            memmgrFreeHwResources(pGpu, pMemoryManager, pFbAllocInfo);
+        }
+        else
         {
             NV_STATUS rmStatus = NV_OK;
 
@@ -4107,7 +4087,7 @@ unwind_and_exit:
 
             pCurrBlock = pSavedAllocList->noncontigAllocListNext;
 
-            unwindStatus = _heapBlockFree(pGpu, pHeap, pSavedAllocList);
+            unwindStatus = _heapBlockFree(pGpu, pHeap, hClient, pFbAllocInfo->hDevice, pSavedAllocList);
 
             if (unwindStatus != NV_OK)
             {
@@ -4226,6 +4206,7 @@ heapBlackListPages_IMPL
 )
 {
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+    KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
     PMA                 *pPma       = &pHeap->pmaObject;
     NvU32                i = 0, j = 0;
     NV_STATUS            status     = NV_OK;
@@ -4235,8 +4216,7 @@ heapBlackListPages_IMPL
     NvU32                staticBlacklistSize, dynamicBlacklistSize;
     NvU32                dynamicRmBlackListedCount;
     NvU32                staticRmBlackListedCount;
-    const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
-        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
+    NvU16                maximumBlacklistPages = kmemsysGetMaximumBlacklistPages(pGpu, pKernelMemorySystem);
 
     if (NULL == pAddresses)
     {
@@ -4253,14 +4233,14 @@ heapBlackListPages_IMPL
     // We may not be able to allocate all pages requested, but alloc enough
     // space anyway
     //
-    pBlackList->pBlacklistChunks = portMemAllocNonPaged(sizeof(BLACKLIST_CHUNK) * pMemorySystemConfig->maximumBlacklistPages);
+    pBlackList->pBlacklistChunks = portMemAllocNonPaged(sizeof(BLACKLIST_CHUNK) * maximumBlacklistPages);
     if (NULL == pBlackList->pBlacklistChunks)
     {
         NV_PRINTF(LEVEL_ERROR, "Could not allocate memory for blackList!\n");
         return NV_ERR_NO_MEMORY;
     }
 
-    portMemSet(pBlackList->pBlacklistChunks, 0, sizeof(BLACKLIST_CHUNK) * pMemorySystemConfig->maximumBlacklistPages);
+    portMemSet(pBlackList->pBlacklistChunks, 0, sizeof(BLACKLIST_CHUNK) * maximumBlacklistPages);
 
     dynamicRmBlackListedCount = 0;
     staticRmBlackListedCount  = 0;
@@ -4326,7 +4306,8 @@ heapBlackListPages_IMPL
             // Allocate memory for this page. This is marked as an internal RM
             // allocation and WILL be saved/restored during suspend/resume.
             //
-            status = memdescAlloc(pBlackList->pBlacklistChunks[j].pMemDesc);
+            memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_79, 
+                    pBlackList->pBlacklistChunks[j].pMemDesc);
             if (NV_OK != status)
             {
                 // No use for the memdesc if the page couldn't be allocated
@@ -4435,6 +4416,7 @@ heapStorePendingBlackList_IMPL
 )
 {
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+    KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
     NV_STATUS status = NV_OK;
     NvU64  physicalAddress;
     NvU64  pageNumber;
@@ -4483,7 +4465,7 @@ heapStorePendingBlackList_IMPL
         if (pMemoryManager->bEnableDynamicPageOfflining)
         {
             // adding a new entry to heap managed blacklist
-            if (pBlacklist->count == pMemorySystemConfig->maximumBlacklistPages)
+            if (pBlacklist->count == kmemsysGetMaximumBlacklistPages(pGpu, pKernelMemorySystem))
             {
                 NV_PRINTF(LEVEL_ERROR, "We have blacklisted maximum number of pages possible. returning error \n");
                 return NV_ERR_INSUFFICIENT_RESOURCES;
@@ -4559,18 +4541,18 @@ heapAddPageToBlackList_IMPL
     NvU32   type
 )
 {
+    KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
+    NvU16 maximumBlacklistPages = kmemsysGetMaximumBlacklistPages(pGpu, pKernelMemorySystem);
     NvU32 index = pHeap->blackListAddresses.count;
-    const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
-        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
 
-    if (index == pMemorySystemConfig->maximumBlacklistPages)
+    if (index == maximumBlacklistPages)
     {
         return NV_ERR_INSUFFICIENT_RESOURCES;
     }
 
     if (pHeap->blackListAddresses.data == NULL)
     {
-        NvU64 listSize = sizeof(BLACKLIST_ADDRESS) * pMemorySystemConfig->maximumBlacklistPages;
+        NvU64 listSize = sizeof(BLACKLIST_ADDRESS) * maximumBlacklistPages;
 
         pHeap->blackListAddresses.data = portMemAllocNonPaged(listSize);
         if (pHeap->blackListAddresses.data == NULL)

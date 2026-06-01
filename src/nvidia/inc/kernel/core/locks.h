@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,6 +28,7 @@
 
 // Forward declarations
 typedef struct OBJSYS OBJSYS;
+typedef struct NV0000_CTRL_SYSTEM_GET_LOCK_TIMES_PARAMS NV0000_CTRL_SYSTEM_GET_LOCK_TIMES_PARAMS;
 
 typedef enum
 {
@@ -110,6 +111,9 @@ typedef struct
 // Attempt acquire even if it potentially violates the locking order
 // But do not block in a way that could cause a deadlock
 #define GPU_LOCK_FLAGS_SAFE_LOCK_UPGRADE                NVBIT(2)
+// Additionally acquire the GPU alloc lock (implied if locking all GPUs)
+// to prevent the set of lockable GPUs from changing
+#define GPU_LOCK_FLAGS_LOCK_ALLOC                       NVBIT(3)
 
 //
 // RM Lock Related Functions
@@ -161,6 +165,7 @@ NvBool     rmGpuLockIsOwner(void);
 NvU32      rmGpuLocksGetOwnedMask(void);
 NvBool     rmGpuLockIsHidden(OBJGPU *);
 NV_STATUS  rmGpuLockSetOwner(OS_THREAD_HANDLE);
+void       rmGpuLockGetTimes(NV0000_CTRL_SYSTEM_GET_LOCK_TIMES_PARAMS *);
 NV_STATUS  rmGpuGroupLockAcquire(NvU32, GPU_LOCK_GRP_ID, NvU32, NvU32, GPU_MASK *);
 NV_STATUS  rmGpuGroupLockRelease(GPU_MASK, NvU32);
 NvBool     rmGpuGroupLockIsOwner(NvU32, GPU_LOCK_GRP_ID, GPU_MASK*);

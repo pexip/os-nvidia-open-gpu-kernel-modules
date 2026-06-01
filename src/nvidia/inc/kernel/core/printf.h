@@ -56,7 +56,7 @@ extern "C" {
 
 // NV_DBG_BREAKPOINT_ALLOWED can be overridden through CFLAGS
 #if !defined(NV_DBG_BREAKPOINT_ALLOWED)
-#if defined(DEBUG) || defined(ASSERT_BUILD) || defined(NV_MODS) || defined(QA_BUILD) || (defined(NVRM) && NVCPU_IS_RISCV64)
+#if defined(DEBUG) || defined(ASSERT_BUILD) || defined(NV_MODS) || defined(QA_BUILD) || (defined(NVRM) && NVOS_IS_LIBOS)
 #define NV_DBG_BREAKPOINT_ALLOWED 1
 #else
 #define NV_DBG_BREAKPOINT_ALLOWED 0
@@ -116,7 +116,7 @@ void osFlushLog(void);
 
 #if NV_DBG_BREAKPOINT_ALLOWED
 
-#if !NVCPU_IS_RISCV64
+#if !NVOS_IS_LIBOS
 
 #define DBG_BREAKPOINT_EX(PGPU, LEVEL)                                          \
     do                                                                          \
@@ -126,7 +126,7 @@ void osFlushLog(void);
         DBG_ROUTINE();                                                          \
     } while (0)
 
-#else // !NVCPU_IS_RISCV64
+#else // !NVOS_IS_LIBOS
 
 #define DBG_BREAKPOINT_EX(PGPU, LEVEL)                                         \
     do                                                                         \
@@ -134,11 +134,10 @@ void osFlushLog(void);
         NV_ASSERT_FAILED("DBG_BREAKPOINT");                                    \
     } while (0)
 
-#endif // !NVCPU_IS_RISCV64
+#endif // !NVOS_IS_LIBOS
 
 #define DBG_BREAKPOINT() DBG_BREAKPOINT_EX(NULL, 0)
 
-#define DBG_BREAKPOINT_EX_ARGS_IGNORED 1
 #define REL_DBG_BREAKPOINT_MSG(msg)                                            \
     do                                                                         \
     {                                                                          \
@@ -150,7 +149,6 @@ void osFlushLog(void);
 
 #define DBG_BREAKPOINT()
 #define DBG_BREAKPOINT_EX(PGPU, LEVEL)
-#define DBG_BREAKPOINT_EX_ARGS_IGNORED 1
 
 #define REL_DBG_BREAKPOINT_MSG(msg)                                            \
     do                                                                         \
@@ -228,70 +226,6 @@ void nvDbgDumpBufferBytes(void *pBuffer, NvU32 length);
 #define DBG_RMMSG_CHECK(level)   (0)
 #endif // NV_PRINTF_STRINGS_ALLOWED
 
-
-
-//******************************************************************************
-//                            POWER SANITY CHECKS
-//******************************************************************************
-//
-// Make sure the GPU is in full power or resuming from D3 state. Else,
-// bailout from the calling function. An exception for systems, which support
-// surprise removal feature. See Bugs 440565, 479003, and 499228.DO NOT IGNORE
-// OR REMOVE THIS ASSERT.  If you have problems with it, please talk to cplummer.
-//
-// bAllowWithoutSysmemAccess: Allow this RM Control when sysmem access is not available
-// from the GPU. SHould be NV_TRUE only for NV2080_CTRL_CMD_BUS_SYSMEM_ACCESS
-//
-// On systems supporting surprise removal, if the GPU is in D3 cold
-// and still attached we would consider it a true D3 cold state
-// and return NOT_FULL_POWER. See bug 1679965.
-//
-//
-#define API_GPU_FULL_POWER_SANITY_CHECK(pGpu, bGpuAccess, bAllowWithoutSysmemAccess) \
-    if ((!gpuIsGpuFullPower(pGpu)) &&                                                \
-              (!(pGpu)->getProperty((pGpu),                                          \
-                             PDB_PROP_GPU_IN_PM_RESUME_CODEPATH)))                   \
-    {                                                                                \
-        DBG_BREAKPOINT();                                                            \
-        if (bGpuAccess || (!gpuIsSurpriseRemovalSupported(pGpu)))                    \
-        {                                                                            \
-            return NV_ERR_GPU_NOT_FULL_POWER;                                        \
-        }                                                                            \
-        else if (gpuIsSurpriseRemovalSupported(pGpu) &&                              \
-                 (pGpu)->getProperty((pGpu), PDB_PROP_GPU_IS_CONNECTED))             \
-        {                                                                            \
-            return NV_ERR_GPU_NOT_FULL_POWER;                                        \
-        }                                                                            \
-    }                                                                                \
-    if (!(bAllowWithoutSysmemAccess) && !gpuCheckSysmemAccess(pGpu))                 \
-    {                                                                                \
-        return NV_ERR_GPU_NOT_FULL_POWER;                                            \
-    }
-
-#define API_GPU_FULL_POWER_SANITY_CHECK_OR_GOTO(pGpu, bGpuAccess, bAllowWithoutSysmemAccess, status, tag) \
-    if ((!gpuIsGpuFullPower(pGpu)) &&                                                                     \
-              (!(pGpu)->getProperty((pGpu),                                                               \
-                             PDB_PROP_GPU_IN_PM_RESUME_CODEPATH)))                                        \
-    {                                                                                                     \
-        DBG_BREAKPOINT();                                                                                 \
-        if (bGpuAccess || (!gpuIsSurpriseRemovalSupported(pGpu)))                                         \
-        {                                                                                                 \
-            status = NV_ERR_GPU_NOT_FULL_POWER;                                                           \
-            goto tag;                                                                                     \
-        }                                                                                                 \
-        else if (gpuIsSurpriseRemovalSupported(pGpu) &&                                                   \
-                (pGpu)->getProperty((pGpu), PDB_PROP_GPU_IS_CONNECTED))                                   \
-        {                                                                                                 \
-            status = NV_ERR_GPU_NOT_FULL_POWER;                                                           \
-            goto tag;                                                                                     \
-        }                                                                                                 \
-    }                                                                                                     \
-    if (!(bAllowWithoutSysmemAccess) && !gpuCheckSysmemAccess(pGpu))                                      \
-    {                                                                                                     \
-        return NV_ERR_GPU_NOT_FULL_POWER;                                                                 \
-    }
-
-
 #if defined(PORT_IS_FUNC_SUPPORTED)
 #if PORT_IS_FUNC_SUPPORTED(portMemExValidate)
 #define DBG_VAL_PTR(p) portMemExValidate(p, NV_TRUE)
@@ -313,9 +247,6 @@ void nvDbgDumpBufferBytes(void *pBuffer, NvU32 length);
 
 void nvErrorLog(void *pVoid, NvU32 num, const char *pFormat, va_list arglist);
 void nvErrorLog_va(void * pGpu, NvU32 num, const char * pFormat, ...);
-
-// memory allocation tracking data structs and globals
-#define MAX_STACK_LEVEL 6
 
 #ifdef __cplusplus
 }

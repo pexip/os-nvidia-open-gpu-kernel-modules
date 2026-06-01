@@ -30,14 +30,26 @@
 #include "platform/chipset/chipset.h"
 #include "ctrl/ctrl2080/ctrl2080bus.h"
 
+#include "published/hopper/gh100/dev_xtl_ep_pcfg_gpu.h"
+
 #include "published/hopper/gh100/dev_fb.h"
 #include "published/hopper/gh100/hwproject.h"
 #include "published/hopper/gh100/dev_xtl_ep_pri.h"
 #include "published/hopper/gh100/dev_nv_xpl.h"
-#include "published/hopper/gh100/dev_xtl_ep_pcfg_gpu.h"
-#include "published/hopper/gh100/hwproject.h"
+#include "published/hopper/gh100/dev_vm.h"
+#include "published/hopper/gh100/dev_pmc.h"
 
 #include "os/os.h"
+
+static NV_STATUS    _kbifSavePcieConfigRegisters_GH100(OBJGPU *pGpu, KernelBif *pKernelBif, const PKBIF_XVE_REGMAP_REF pRegmapRef);
+static NV_STATUS    _kbifRestorePcieConfigRegisters_GH100(OBJGPU *pGpu, KernelBif *pKernelBif, const PKBIF_XVE_REGMAP_REF pRegmapRef);
+
+// Size of PCIe config space
+#define PCIE_CONFIG_SPACE_MAX_SIZE     0x2FC
+
+// Devinit completion timeout after FLR
+#define BIF_FLR_DEVINIT_COMPLETION_TIMEOUT_DEFAULT      900000
+
 
 /*!
  * @brief Check if MSI is enabled in HW
@@ -719,11 +731,17 @@ kbifGetBusOptionsAddr_GH100
         case BUS_OPTIONS_DEV_CONTROL_STATUS:
             *pAddrReg = NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS;
             break;
+        case BUS_OPTIONS_DEV_CONTROL_STATUS_2:
+            *pAddrReg = NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS_2;
+            break;
         case BUS_OPTIONS_LINK_CONTROL_STATUS:
             *pAddrReg = NV_EP_PCFG_GPU_LINK_CONTROL_STATUS;
             break;
         case BUS_OPTIONS_LINK_CAPABILITIES:
             *pAddrReg = NV_EP_PCFG_GPU_LINK_CAPABILITIES;
+            break;
+        case BUS_OPTIONS_L1_PM_SUBSTATES_CTRL_1:
+            *pAddrReg = NV_EP_PCFG_GPU_L1_PM_SS_CONTROL_1_REGISTER;
             break;
         default:
             NV_PRINTF(LEVEL_ERROR, "Invalid register type passed 0x%x\n",
@@ -732,6 +750,434 @@ kbifGetBusOptionsAddr_GH100
             break;
     }
     return status;
+}
+
+/*!
+ * @brief Helper function for _kbifSavePcieConfigRegisters_GH100()
+ *
+ * @param[in]  pGpu         GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ * @param[in]  pRegmapRef   Pointer to XVE Register map structure
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+static NV_STATUS
+_kbifSavePcieConfigRegisters_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif,
+    const PKBIF_XVE_REGMAP_REF pRegmapRef
+)
+{
+    NV_STATUS status;
+    NvU32     regOffset;
+    NvU32     bufOffset = 0;
+
+    // Read and save entire config space
+    for (regOffset = 0x0; regOffset < PCIE_CONFIG_SPACE_MAX_SIZE; regOffset+=0x4)
+    {
+        status = GPU_BUS_CFG_CYCLE_RD32(pGpu, regOffset,
+                                        &pRegmapRef->bufBootConfigSpace[bufOffset]);
+        if (status != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "Config read failed.\n");
+            return status;
+        }
+        bufOffset++;
+    }
+
+    pKernelBif->setProperty(pKernelBif, PDB_PROP_KBIF_SECONDARY_BUS_RESET_SUPPORTED, NV_TRUE);
+
+    return NV_OK;
+}
+
+/*!
+ * @brief Helper function for _kbifRestorePcieConfigRegisters_GH100
+ *
+ * @param[in]  pGpu         GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ * @param[in]  pRegmapRef   Pointer to XVE Register map structure
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+static NV_STATUS
+_kbifRestorePcieConfigRegisters_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif,
+    const PKBIF_XVE_REGMAP_REF pRegmapRef
+)
+{
+    NvU32     domain    = gpuGetDomain(pGpu);
+    NvU8      bus       = gpuGetBus(pGpu);
+    NvU8      device    = gpuGetDevice(pGpu);
+    void      *pHandle;
+    NvU32     regOffset;
+    NvU32     bufOffset = 0;
+    NV_STATUS status;
+
+    pHandle = osPciInitHandle(domain, bus, device, 0, NULL, NULL);
+    NV_ASSERT_OR_RETURN(pHandle, NV_ERR_INVALID_POINTER);
+
+    // Restore entire config space
+    for (regOffset = 0x0; regOffset < PCIE_CONFIG_SPACE_MAX_SIZE; regOffset+=0x4)
+    {
+        status = GPU_BUS_CFG_CYCLE_WR32(pGpu, regOffset,
+                     pRegmapRef->bufBootConfigSpace[bufOffset]);
+        if (status != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "Config write failed.\n");
+            NV_ASSERT(0);
+            return status;
+        }
+        bufOffset++;
+    }
+
+    return NV_OK;
+}
+
+/*!
+ * @brief  Helper function saves MSIX vector control masks
+ *
+ * @param[in]  pGpu         GPU object pointer
+ * @param[in]  pKernelBif   KernelBif object pointer
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+NV_STATUS
+kbifSaveMsixTable_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32 i;
+    NvU32 controlSize = kbifGetMSIXTableVectorControlSize_HAL(pGpu, pKernelBif);
+
+    for (i = 0U; i < controlSize; i++)
+    {
+        // Each MSIX table entry is 4 NvU32s
+        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 0] = GPU_VREG_RD32(pGpu, NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_ADDR_LO(i));
+        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 1] = GPU_VREG_RD32(pGpu, NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_ADDR_HI(i));
+        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 2] = GPU_VREG_RD32(pGpu, NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_DATA(i));
+        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 3] = GPU_VREG_RD32(pGpu, NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_VECTOR_CONTROL(i));
+    }
+
+    return NV_OK;
+}
+
+/*!
+ * @brief  Helper function to restore MSIX vector control masks
+ *
+ * @param[in]  pGpu         GPU object pointer
+ * @param[in]  pKernelBif   KernelBif object pointer
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+NV_STATUS
+kbifRestoreMsixTable_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32 i;
+    NvU32 controlSize = kbifGetMSIXTableVectorControlSize_HAL(pGpu, pKernelBif);
+
+    // Initialize the base offset for the virtual registers for physical function
+    NvU32 vRegOffset = pGpu->sriovState.virtualRegPhysOffset;
+
+    // In FLR path, we don't want to use usual register r/w macros
+    for (i = 0U; i < controlSize; i++)
+    {
+        // Each MSIX table entry is 4 NvU32s
+        osGpuWriteReg032(pGpu, vRegOffset + NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_ADDR_LO(i),        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 0]);
+        osGpuWriteReg032(pGpu, vRegOffset + NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_ADDR_HI(i),        pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 1]);
+        osGpuWriteReg032(pGpu, vRegOffset + NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_DATA(i),           pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 2]);
+        osGpuWriteReg032(pGpu, vRegOffset + NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_VECTOR_CONTROL(i), pKernelBif->xveRegmapRef[0].bufMsixTable[(i*4) + 3]);
+    }
+
+    return NV_OK;
+}
+
+/*!
+ * @brief Wait for to get config access.
+ *
+ * @param[in]  pGpu     GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ * @param[in]  pTimeout Value in microseconds to dev init complete
+ *
+ * @return  NV_OK if successful.
+ */
+NV_STATUS
+kbifConfigAccessWait_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif,
+    RMTIMEOUT *pTimeout
+)
+{
+    NvU32     regVal = 0;
+    NV_STATUS status = NV_OK;
+
+    while (NV_TRUE)
+    {
+        //
+        // This read only register should be accessible over config cycle
+        // once devinit is complete without RM having to restore config space.
+        // This register is not really reset on FLR.
+        //
+        if (GPU_BUS_CFG_CYCLE_RD32(pGpu, NV_EP_PCFG_GPU_ID, &regVal) == NV_OK)
+        {
+            if (FLD_TEST_DRF(_EP_PCFG_GPU, _ID, _VENDOR, _NVIDIA, regVal))
+            {
+                break;
+            }
+        }
+        status = gpuCheckTimeout(pGpu, pTimeout);
+
+        if (status == NV_ERR_TIMEOUT)
+        {
+            NV_ASSERT_FAILED("Timed out waiting for devinit to complete\n");
+            return status;
+        }
+        //
+        // Put ourself into wait state for 1ms. This function runs in the context
+        // of DxgkDdiResetFromTimeout which is at PASSIVE_LEVEL(lower priority)
+        // which means it can be in wait state for longer delays of the order of
+        // milliseconds
+        //
+        osDelay(1);
+    }
+
+    return status;
+}
+
+/*!
+ * @brief Do function level reset for Fn0 of GPU
+ *
+ * @param[in]  pGpu  GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ *
+ * @return  NV_OK if successful
+ */
+NV_STATUS
+kbifDoFunctionLevelReset_GH100
+(
+    OBJGPU *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvBool     bMSIXEnabled;
+    RMTIMEOUT  timeout;
+    NV_STATUS  status = NV_OK;
+    NvU32      flrDevInitTimeout;
+    NvU32      flrDevInitTimeoutScale = pKernelBif->flrDevInitTimeoutScale;
+
+    // If this is non-windows platform or non-ESXi, we already use OS based interface
+    {
+        pKernelBif->bInFunctionLevelReset = NV_TRUE;
+        status = osDoFunctionLevelReset(pGpu);
+        if (status != NV_OK)
+        {
+            NV_ASSERT_FAILED("osDoFunctionLevelReset failed!\n");
+        }
+        goto kbifDoFunctionLevelReset_GH100_exit;
+    }
+
+    pKernelBif->bPreparingFunctionLevelReset = NV_TRUE;
+    status = kbifSavePcieConfigRegisters_HAL(pGpu, pKernelBif);
+    if (status != NV_OK)
+    {
+        NV_ASSERT_FAILED("Config registers save failed!\n");
+        goto kbifDoFunctionLevelReset_GH100_exit;
+    }
+
+    bMSIXEnabled = kbifIsMSIXEnabledInHW_HAL(pGpu, pKernelBif);
+
+    if (bMSIXEnabled)
+    {
+        status = kbifSaveMsixTable_HAL(pGpu, pKernelBif);
+        if (status != NV_OK)
+        {
+            NV_ASSERT_FAILED("MSIX Table save failed!\n");
+            goto kbifDoFunctionLevelReset_GH100_exit;
+        }
+    }
+
+    // Once we save required registers, we are done with prep. phase for FLR
+    pKernelBif->bPreparingFunctionLevelReset = NV_FALSE;
+
+    // Trigger FLR now
+    status = kbifTriggerFlr_HAL(pGpu, pKernelBif);
+
+    if (status != NV_OK)
+    {
+        goto kbifDoFunctionLevelReset_GH100_exit;
+    }
+
+    pKernelBif->bInFunctionLevelReset = NV_TRUE;
+
+    //
+    // Wait for 10ms on Silicon for reset to propagate. Actually, HW is
+    // supposed to return CRS status for config requests until config
+    // space is not ready but we do expect at least 10ms for it to be ready
+    // so why poll? On RTL and emulation, CPU clocks don't scale to GPU clock
+    // so don't wait.
+    //
+    if (IS_SILICON(pGpu))
+    {
+        osDelayUs(10000);
+    }
+
+    // flrTimeoutScale is regkey based for easy debugging
+    flrDevInitTimeout = BIF_FLR_DEVINIT_COMPLETION_TIMEOUT_DEFAULT *
+                        flrDevInitTimeoutScale;
+
+    //
+    // After CRS_TIMEOUT, HW will auto-clear SEND_CRS bit which means config cycles
+    // will succeed but it is still possible that devinit is not complete yet.
+    // OS won't have a way to check that anyway but RM should do that here.
+    // TODO: Should we use this loop or just the PCI spec-defined 100ms delay
+    // now that we have a devinit wait in fspWaitForSecureBoot_HAL below?
+    //
+    gpuSetTimeout(pGpu, flrDevInitTimeout, &timeout, GPU_TIMEOUT_FLAGS_OSTIMER);
+
+    status = kbifConfigAccessWait_HAL(pGpu, pKernelBif, &timeout);
+
+    if (status != NV_OK)
+    {
+        NV_ASSERT_FAILED("Timed out waiting for devinit to complete\n");
+        goto kbifDoFunctionLevelReset_GH100_exit;
+    }
+
+    status = kbifRestorePcieConfigRegisters_HAL(pGpu, pKernelBif);
+    if (status != NV_OK)
+    {
+        NV_ASSERT_FAILED("Config registers restore failed!\n");
+        goto kbifDoFunctionLevelReset_GH100_exit;
+    }
+
+    // As of GH100, miata rom cannot be run on simulation.
+    if (IS_SILICON(pGpu) || IS_EMULATION(pGpu))
+    {
+        // On emulation VBIOS boot can take long so add prints for better visibility
+        if (IS_EMULATION(pGpu))
+        {
+            NV_PRINTF(LEVEL_ERROR, "Entering secure boot completion wait.\n");
+        }
+
+        status = NV_ERR_NOT_SUPPORTED;
+        if (status != NV_OK)
+        {
+            DBG_BREAKPOINT();
+            NV_PRINTF(LEVEL_ERROR, "VBIOS boot failed!!\n");
+            goto kbifDoFunctionLevelReset_GH100_exit;
+        }
+
+        if (IS_EMULATION(pGpu))
+        {
+            NV_PRINTF(LEVEL_ERROR,
+                      "Exited secure boot completion wait with status = NV_OK.\n");
+        }
+    }
+
+    if (bMSIXEnabled)
+    {
+        // TODO-NM: Check if this needed for other NVPM flows like GC6
+        status = kbifRestoreMsixTable_HAL(pGpu, pKernelBif);
+        if (status != NV_OK)
+        {
+            NV_ASSERT_FAILED("MSIX Table save failed!\n");
+        }
+    }
+
+kbifDoFunctionLevelReset_GH100_exit:
+    pKernelBif->bPreparingFunctionLevelReset = NV_FALSE;
+    pKernelBif->bInFunctionLevelReset        = NV_FALSE;
+
+    return status;
+}
+
+
+/*!
+ * @brief Returns size of MSIX vector control table
+ *
+ * @param  pGpu  OBJGPU pointer
+ * @param  pKernelBif  Kernel BIF object pointer
+ */
+NvU32
+kbifGetMSIXTableVectorControlSize_GH100
+(
+    OBJGPU *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    return NV_VIRTUAL_FUNCTION_PRIV_MSIX_TABLE_VECTOR_CONTROL__SIZE_1;
+}
+
+/*!
+ * @brief Check and cache Function level reset support
+ *
+ * @param[in]  pGpu        GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ *
+ */
+void
+kbifCacheFlrSupport_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32 regVal = 0;
+
+    // Read config register
+    if (GPU_BUS_CFG_CYCLE_RD32(pGpu, NV_EP_PCFG_GPU_DEVICE_CAPABILITIES,
+                               &regVal) != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Unable to read NV_EP_PCFG_GPU_DEVICE_CAPABILITIES\n");
+        return;
+    }
+
+    // Check if FLR is supported
+    if (FLD_TEST_DRF(_EP_PCFG_GPU, _DEVICE_CAPABILITIES, _FUNCTION_LEVEL_RESET_CAPABILITY,
+                     _SUPPORTED, regVal))
+    {
+        pKernelBif->setProperty(pKernelBif, PDB_PROP_KBIF_FLR_SUPPORTED, NV_TRUE);
+    }
+}
+
+/*!
+ * @brief Check and cache 64b BAR0 support
+ *
+ * @param[in]  pGpu        GPU object pointer
+ * @param[in]  pKernelBif  Kernel BIF object pointer
+ *
+ */
+void
+kbifCache64bBar0Support_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32 regVal = 0;
+
+    // Read config register
+    if (GPU_BUS_CFG_CYCLE_RD32(pGpu, NV_EP_PCFG_GPU_BARREG0,
+                               &regVal) != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Unable to read NV_EP_PCFG_GPU_BARREG0\n");
+        return;
+    }
+
+    // Check if 64b BAR0 is supported
+    if (FLD_TEST_DRF(_EP_PCFG_GPU, _BARREG0, _REG_ADDR_TYPE,
+                     _64BIT, regVal))
+    {
+        pKernelBif->setProperty(pKernelBif, PDB_PROP_KBIF_64BIT_BAR0_SUPPORTED, NV_TRUE);
+    }
 }
 
 /*!
@@ -870,6 +1316,270 @@ kbifCacheVFInfo_GH100
 
     pGpu->sriovState.firstVFBarAddress[2] = barAddr;
     pGpu->sriovState.b64bitVFBar2         = barIs64Bit;
+}
+
+/*!
+ * @brief Clears Bus Master Enable bit in command register, disabling
+ *  Function 0 - from issuing any new requests to sysmem.
+ *
+ * @param[in] pGpu        GPU object pointer
+ * @param[in] pKernelBif  KernelBif object pointer
+ *
+ * @return NV_OK
+ */
+NV_STATUS
+kbifStopSysMemRequests_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif,
+    NvBool     bStop
+)
+{
+    NvU32 regVal;
+
+    NV_ASSERT_OK_OR_RETURN(GPU_BUS_CFG_CYCLE_RD32(pGpu, NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS,
+                                                  &regVal));
+
+    if (bStop)
+    {
+        regVal = FLD_SET_DRF(_EP_PCFG_GPU, _CTRL_CMD_AND_STATUS, _CMD_BUS_MASTER, _DISABLE, regVal);
+    }
+    else
+    {
+        regVal = FLD_SET_DRF(_EP_PCFG_GPU, _CTRL_CMD_AND_STATUS, _CMD_BUS_MASTER, _ENABLE, regVal);
+    }
+
+    NV_ASSERT_OK_OR_RETURN(GPU_BUS_CFG_CYCLE_WR32(pGpu, NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS,
+                                                  regVal));
+
+    return NV_OK;
+}
+
+/*!
+ * @brief Save boot time PCIe Config space
+ *
+ * @param[in]  pGpu     GPU object pointer
+ * @param[in]  pBif     BIF object pointer
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+NV_STATUS
+kbifSavePcieConfigRegisters_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+
+    NV_STATUS status = NV_OK;
+
+    // Skip config save on FMODEL (200684952), move to regmap (200700271)
+    if (IS_FMODEL(pGpu))
+    {
+        return NV_OK;
+    }
+
+    //
+    // Save config space if GPU is about to enter Function Level Reset
+    // OR if on non-windows platform, FORCE_PCIE_CONFIG_SAVE is set and SBR is
+    //    enabled
+    // OR if on windows platform, SBR is enabled
+    //
+    if (!pKernelBif->bPreparingFunctionLevelReset &&
+        !((RMCFG_FEATURE_PLATFORM_WINDOWS ||
+           pKernelBif->getProperty(pKernelBif, PDB_PROP_KBIF_FORCE_PCIE_CONFIG_SAVE)) &&
+          pKernelBif->getProperty(pKernelBif, PDB_PROP_KBIF_SECONDARY_BUS_RESET_ENABLED)))
+    {
+        NV_PRINTF(LEVEL_ERROR, "Config space save has been skipped.\n");
+        return NV_OK;
+    }
+
+    // Save pcie config space for function 0
+    status = _kbifSavePcieConfigRegisters_GH100(pGpu, pKernelBif,
+                                                &pKernelBif->xveRegmapRef[0]);
+    if (status != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Saving PCIe config space failed for gpu.\n");
+        NV_ASSERT(0);
+        return status;
+    }
+
+    return status;
+}
+
+/*!
+ * @brief Restore boot time PCIe Config space
+ *
+ * @param[in] pGpu  GPU object pointer
+ * @param[in] pBif  BIF object pointer
+ *
+ * @return  'NV_OK' if successful, an RM error code otherwise.
+ */
+NV_STATUS
+kbifRestorePcieConfigRegisters_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NV_STATUS status = NV_OK;
+
+    // Skip config restore on FMODEL (200684952), move to regmap (200700271)
+    if (IS_FMODEL(pGpu))
+    {
+        return NV_OK;
+    }
+
+    // Restore pcie config space for function 0
+    status = _kbifRestorePcieConfigRegisters_GH100(pGpu, pKernelBif,
+                                                   &pKernelBif->xveRegmapRef[0]);
+    if (status != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Restoring PCIe config space failed for gpu.\n");
+        NV_ASSERT(0);
+        return status;
+    }
+
+    return status;
+}
+
+/*!
+ * @brief Waits for function issued transaction completions (sysmem to GPU) to arrive
+ *
+ * @param[in] pGpu        GPU object pointer
+ * @param[in] pKernelBif  KernelBif object pointer
+ *
+ * @return NV_OK
+ */
+NV_STATUS
+kbifWaitForTransactionsComplete_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    RMTIMEOUT timeout;
+    NvU32     regVal;
+
+    NV_ASSERT_OK_OR_RETURN(GPU_BUS_CFG_CYCLE_RD32(
+        pGpu, NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS, &regVal));
+
+    gpuSetTimeout(pGpu, GPU_TIMEOUT_DEFAULT, &timeout, 0);
+
+    // Wait for number of pending transactions to go to 0
+    while (DRF_VAL(_EP_PCFG_GPU, _DEVICE_CONTROL_STATUS, _TRANSACTIONS_PENDING, regVal) != 0)
+    {
+        NV_ASSERT_OK_OR_RETURN(gpuCheckTimeout(pGpu, &timeout));
+        NV_ASSERT_OK_OR_RETURN(GPU_BUS_CFG_CYCLE_RD32(
+            pGpu, NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS, &regVal));
+    }
+
+    return NV_OK;
+}
+
+/*!
+ * @brief Trigger FLR.
+ *
+ * @param[in] pGpu        GPU object pointer
+ * @param[in] pKernelBif  KernelBif object pointer
+ *
+ * @return  NV_OK if successful.
+ */
+NV_STATUS
+kbifTriggerFlr_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32     regVal = 0;
+    NV_STATUS status = NV_OK;
+
+    status = GPU_BUS_CFG_CYCLE_RD32(pGpu, NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS,
+                                    &regVal);
+
+    if (status != NV_OK)
+    {
+        NV_ASSERT_FAILED("Config space read of device control failed\n");
+        return status;
+    }
+
+    regVal = FLD_SET_DRF_NUM(_EP_PCFG_GPU, _DEVICE_CONTROL_STATUS ,
+                             _INITIATE_FN_LVL_RST, 0x1, regVal);
+
+    status = GPU_BUS_CFG_CYCLE_WR32(pGpu, NV_EP_PCFG_GPU_DEVICE_CONTROL_STATUS,
+                                    regVal);
+
+    if (status != NV_OK)
+    {
+        NV_ASSERT_FAILED("FLR trigger failed\n");
+        return status;
+    }
+
+    return status;
+}
+
+/*!
+ * @brief Try restoring BAR registers and command register using config cycles
+ *
+ * @param[in] pGpu       GPU object pointer
+ * @param[in] pKernelBif KernelBif object pointer
+ *
+ * @return    NV_OK on success
+ *            NV_ERR_INVALID_READ if the register read returns unexpected value
+ *            NV_ERR_OBJECT_NOT_FOUND if the object is not found
+ */
+NV_STATUS
+kbifRestoreBarsAndCommand_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    NvU32  *pBarRegOffsets = pKernelBif->barRegOffsets;
+    NvU32  barOffsetEntry;
+
+    // Restore all BAR registers
+    for (barOffsetEntry = 0; barOffsetEntry < KBIF_NUM_BAR_OFFSET_ENTRIES; barOffsetEntry++)
+    {
+        if (pBarRegOffsets[barOffsetEntry] != KBIF_INVALID_BAR_REG_OFFSET)
+        {
+            GPU_BUS_CFG_CYCLE_WR32(pGpu, pBarRegOffsets[barOffsetEntry],
+                                   pKernelBif->cacheData.gpuBootConfigSpace[pBarRegOffsets[barOffsetEntry]/sizeof(NvU32)]);
+        }
+    }
+
+    // Restore Device Control register
+    GPU_BUS_CFG_CYCLE_WR32(pGpu, NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS,
+                           pKernelBif->cacheData.gpuBootConfigSpace[NV_EP_PCFG_GPU_CTRL_CMD_AND_STATUS/sizeof(NvU32)]);
+
+    if (GPU_REG_RD32(pGpu, NV_PMC_BOOT_0) != pGpu->chipId0)
+    {
+        return NV_ERR_INVALID_READ;
+    }
+
+    return NV_OK;
+}
+
+/*!
+ * @brief HAL specific BIF software state initialization
+ *
+ * @param[in] pGpu       GPU object pointer
+ * @param[in] pKernelBif KernelBif object pointer
+ *
+ * @return    NV_OK on success
+ */
+NV_STATUS
+kbifInit_GH100
+(
+    OBJGPU    *pGpu,
+    KernelBif *pKernelBif
+)
+{
+    // Cache the offsets of BAR registers into an array for subsequent use
+    kbifStoreBarRegOffsets_HAL(pGpu, pKernelBif, NV_EP_PCFG_GPU_VF_BAR0);
+
+    return NV_OK;
 }
 
 NvU32

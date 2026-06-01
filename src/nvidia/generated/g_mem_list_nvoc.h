@@ -40,11 +40,16 @@ extern "C" {
  * These classes are used by the vGPU support to create memory objects for memory
  * assigned to a guest VM.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_MEM_LIST_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct MemoryList {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Memory __nvoc_base_Memory;
@@ -59,19 +64,20 @@ struct MemoryList {
     NvBool (*__memlistShareCallback__)(struct MemoryList *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__memlistMapTo__)(struct MemoryList *, RS_RES_MAP_TO_PARAMS *);
     NV_STATUS (*__memlistGetMapAddrSpace__)(struct MemoryList *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NvBool (*__memlistIsExportAllowed__)(struct MemoryList *);
     NvU32 (*__memlistGetRefCount__)(struct MemoryList *);
     void (*__memlistAddAdditionalDependants__)(struct RsClient *, struct MemoryList *, RsResourceRef *);
     NV_STATUS (*__memlistControl_Prologue__)(struct MemoryList *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__memlistIsGpuMapAllowed__)(struct MemoryList *, struct OBJGPU *);
     NV_STATUS (*__memlistUnmapFrom__)(struct MemoryList *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__memlistControl_Epilogue__)(struct MemoryList *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__memlistControlLookup__)(struct MemoryList *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__memlistControl__)(struct MemoryList *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__memlistUnmap__)(struct MemoryList *, CALL_CONTEXT *, RsCpuMapping *);
     NV_STATUS (*__memlistGetMemInterMapParams__)(struct MemoryList *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__memlistGetMemoryMappingDescriptor__)(struct MemoryList *, MEMORY_DESCRIPTOR **);
     NV_STATUS (*__memlistControlFilter__)(struct MemoryList *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__memlistControlSerialization_Prologue__)(struct MemoryList *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NvBool (*__memlistIsPartialUnmapSupported__)(struct MemoryList *);
     NV_STATUS (*__memlistIsReady__)(struct MemoryList *, NvBool);
     NV_STATUS (*__memlistCheckCopyPermissions__)(struct MemoryList *, struct OBJGPU *, struct Device *);
     void (*__memlistPreDestruct__)(struct MemoryList *);
@@ -114,19 +120,20 @@ NV_STATUS __nvoc_objCreate_MemoryList(MemoryList**, Dynamic*, NvU32, CALL_CONTEX
 #define memlistShareCallback(pResource, pInvokingClient, pParentRef, pSharePolicy) memlistShareCallback_DISPATCH(pResource, pInvokingClient, pParentRef, pSharePolicy)
 #define memlistMapTo(pResource, pParams) memlistMapTo_DISPATCH(pResource, pParams)
 #define memlistGetMapAddrSpace(pMemory, pCallContext, mapFlags, pAddrSpace) memlistGetMapAddrSpace_DISPATCH(pMemory, pCallContext, mapFlags, pAddrSpace)
+#define memlistIsExportAllowed(pMemory) memlistIsExportAllowed_DISPATCH(pMemory)
 #define memlistGetRefCount(pResource) memlistGetRefCount_DISPATCH(pResource)
 #define memlistAddAdditionalDependants(pClient, pResource, pReference) memlistAddAdditionalDependants_DISPATCH(pClient, pResource, pReference)
 #define memlistControl_Prologue(pResource, pCallContext, pParams) memlistControl_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define memlistIsGpuMapAllowed(pMemory, pGpu) memlistIsGpuMapAllowed_DISPATCH(pMemory, pGpu)
 #define memlistUnmapFrom(pResource, pParams) memlistUnmapFrom_DISPATCH(pResource, pParams)
 #define memlistControl_Epilogue(pResource, pCallContext, pParams) memlistControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define memlistControlLookup(pResource, pParams, ppEntry) memlistControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define memlistControl(pMemory, pCallContext, pParams) memlistControl_DISPATCH(pMemory, pCallContext, pParams)
 #define memlistUnmap(pMemory, pCallContext, pCpuMapping) memlistUnmap_DISPATCH(pMemory, pCallContext, pCpuMapping)
 #define memlistGetMemInterMapParams(pMemory, pParams) memlistGetMemInterMapParams_DISPATCH(pMemory, pParams)
 #define memlistGetMemoryMappingDescriptor(pMemory, ppMemDesc) memlistGetMemoryMappingDescriptor_DISPATCH(pMemory, ppMemDesc)
 #define memlistControlFilter(pResource, pCallContext, pParams) memlistControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define memlistControlSerialization_Prologue(pResource, pCallContext, pParams) memlistControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
+#define memlistIsPartialUnmapSupported(pResource) memlistIsPartialUnmapSupported_DISPATCH(pResource)
 #define memlistIsReady(pMemory, bCopyConstructorContext) memlistIsReady_DISPATCH(pMemory, bCopyConstructorContext)
 #define memlistCheckCopyPermissions(pMemory, pDstGpu, pDstDevice) memlistCheckCopyPermissions_DISPATCH(pMemory, pDstGpu, pDstDevice)
 #define memlistPreDestruct(pResource) memlistPreDestruct_DISPATCH(pResource)
@@ -156,6 +163,10 @@ static inline NV_STATUS memlistGetMapAddrSpace_DISPATCH(struct MemoryList *pMemo
     return pMemory->__memlistGetMapAddrSpace__(pMemory, pCallContext, mapFlags, pAddrSpace);
 }
 
+static inline NvBool memlistIsExportAllowed_DISPATCH(struct MemoryList *pMemory) {
+    return pMemory->__memlistIsExportAllowed__(pMemory);
+}
+
 static inline NvU32 memlistGetRefCount_DISPATCH(struct MemoryList *pResource) {
     return pResource->__memlistGetRefCount__(pResource);
 }
@@ -180,10 +191,6 @@ static inline void memlistControl_Epilogue_DISPATCH(struct MemoryList *pResource
     pResource->__memlistControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS memlistControlLookup_DISPATCH(struct MemoryList *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__memlistControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NV_STATUS memlistControl_DISPATCH(struct MemoryList *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pMemory->__memlistControl__(pMemory, pCallContext, pParams);
 }
@@ -206,6 +213,10 @@ static inline NV_STATUS memlistControlFilter_DISPATCH(struct MemoryList *pResour
 
 static inline NV_STATUS memlistControlSerialization_Prologue_DISPATCH(struct MemoryList *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pResource->__memlistControlSerialization_Prologue__(pResource, pCallContext, pParams);
+}
+
+static inline NvBool memlistIsPartialUnmapSupported_DISPATCH(struct MemoryList *pResource) {
+    return pResource->__memlistIsPartialUnmapSupported__(pResource);
 }
 
 static inline NV_STATUS memlistIsReady_DISPATCH(struct MemoryList *pMemory, NvBool bCopyConstructorContext) {
@@ -247,4 +258,5 @@ NV_STATUS memlistConstruct_IMPL(struct MemoryList *arg_pMemoryList, CALL_CONTEXT
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_MEM_LIST_NVOC_H_

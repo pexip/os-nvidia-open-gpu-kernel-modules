@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2011-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2011-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -23,6 +23,7 @@
 
 #include "core/core.h"
 #include "gpu/gpu.h"
+#include "gpu/subdevice/subdevice.h"
 #include <class/cl90f1.h>  // FERMI_VASPACE_A
 #include <rmp2pdefines.h>
 #include "gpu/bus/third_party_p2p.h"

@@ -141,10 +141,6 @@ static void __nvoc_thunk_RmResource_vaspaceapiControl_Epilogue(struct VaSpaceApi
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_VaSpaceApi_RmResource.offset), pCallContext, pParams);
 }
 
-static NV_STATUS __nvoc_thunk_RsResource_vaspaceapiControlLookup(struct VaSpaceApi *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VaSpaceApi_RsResource.offset), pParams, ppEntry);
-}
-
 static NvHandle __nvoc_thunk_GpuResource_vaspaceapiGetInternalObjectHandle(struct VaSpaceApi *pGpuResource) {
     return gpuresGetInternalObjectHandle((struct GpuResource *)(((unsigned char *)pGpuResource) + __nvoc_rtti_VaSpaceApi_GpuResource.offset));
 }
@@ -171,6 +167,10 @@ static NV_STATUS __nvoc_thunk_RsResource_vaspaceapiControlFilter(struct VaSpaceA
 
 static NV_STATUS __nvoc_thunk_RmResource_vaspaceapiControlSerialization_Prologue(struct VaSpaceApi *pResource, struct CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return rmresControlSerialization_Prologue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_VaSpaceApi_RmResource.offset), pCallContext, pParams);
+}
+
+static NvBool __nvoc_thunk_RsResource_vaspaceapiIsPartialUnmapSupported(struct VaSpaceApi *pResource) {
+    return resIsPartialUnmapSupported((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_VaSpaceApi_RsResource.offset));
 }
 
 static void __nvoc_thunk_RsResource_vaspaceapiPreDestruct(struct VaSpaceApi *pResource) {
@@ -274,12 +274,27 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_VaSpaceA
         /*func=*/       "vaspaceapiCtrlCmdVaspaceCopyServerReservedPdes"
 #endif
     },
+    {               /*  [5] */
+#if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+        /*pFunc=*/      (void (*)(void)) NULL,
+#else
+        /*pFunc=*/      (void (*)(void)) vaspaceapiCtrlCmdVaspaceGetHostRmManagedSize_IMPL,
+#endif // NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+        /*flags=*/      0x0u,
+        /*accessRight=*/0x0u,
+        /*methodId=*/   0x90f10107u,
+        /*paramSize=*/  sizeof(NV90F1_CTRL_VASPACE_GET_HOST_RM_MANAGED_SIZE_PARAMS),
+        /*pClassInfo=*/ &(__nvoc_class_def_VaSpaceApi.classInfo),
+#if NV_PRINTF_STRINGS_ALLOWED
+        /*func=*/       "vaspaceapiCtrlCmdVaspaceGetHostRmManagedSize"
+#endif
+    },
 
 };
 
 const struct NVOC_EXPORT_INFO __nvoc_export_info_VaSpaceApi = 
 {
-    /*numEntries=*/     5,
+    /*numEntries=*/     6,
     /*pExportEntries=*/ __nvoc_exported_method_def_VaSpaceApi
 };
 
@@ -338,6 +353,10 @@ static void __nvoc_init_funcTable_VaSpaceApi_1(VaSpaceApi *pThis) {
     pThis->__vaspaceapiCtrlCmdVaspaceCopyServerReservedPdes__ = &vaspaceapiCtrlCmdVaspaceCopyServerReservedPdes_IMPL;
 #endif
 
+#if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+    pThis->__vaspaceapiCtrlCmdVaspaceGetHostRmManagedSize__ = &vaspaceapiCtrlCmdVaspaceGetHostRmManagedSize_IMPL;
+#endif
+
     pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__resCanCopy__ = &__nvoc_thunk_VaSpaceApi_resCanCopy;
 
     pThis->__vaspaceapiShareCallback__ = &__nvoc_thunk_GpuResource_vaspaceapiShareCallback;
@@ -362,8 +381,6 @@ static void __nvoc_init_funcTable_VaSpaceApi_1(VaSpaceApi *pThis) {
 
     pThis->__vaspaceapiControl_Epilogue__ = &__nvoc_thunk_RmResource_vaspaceapiControl_Epilogue;
 
-    pThis->__vaspaceapiControlLookup__ = &__nvoc_thunk_RsResource_vaspaceapiControlLookup;
-
     pThis->__vaspaceapiGetInternalObjectHandle__ = &__nvoc_thunk_GpuResource_vaspaceapiGetInternalObjectHandle;
 
     pThis->__vaspaceapiControl__ = &__nvoc_thunk_GpuResource_vaspaceapiControl;
@@ -377,6 +394,8 @@ static void __nvoc_init_funcTable_VaSpaceApi_1(VaSpaceApi *pThis) {
     pThis->__vaspaceapiControlFilter__ = &__nvoc_thunk_RsResource_vaspaceapiControlFilter;
 
     pThis->__vaspaceapiControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_vaspaceapiControlSerialization_Prologue;
+
+    pThis->__vaspaceapiIsPartialUnmapSupported__ = &__nvoc_thunk_RsResource_vaspaceapiIsPartialUnmapSupported;
 
     pThis->__vaspaceapiPreDestruct__ = &__nvoc_thunk_RsResource_vaspaceapiPreDestruct;
 
@@ -405,21 +424,26 @@ void __nvoc_init_VaSpaceApi(VaSpaceApi *pThis) {
     __nvoc_init_funcTable_VaSpaceApi(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_VaSpaceApi(VaSpaceApi **ppThis, Dynamic *pParent, NvU32 createFlags, struct CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_VaSpaceApi(VaSpaceApi **ppThis, Dynamic *pParent, NvU32 createFlags, struct CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     VaSpaceApi *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(VaSpaceApi), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(VaSpaceApi));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_VaSpaceApi);
 
     pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -434,16 +458,25 @@ NV_STATUS __nvoc_objCreate_VaSpaceApi(VaSpaceApi **ppThis, Dynamic *pParent, NvU
     status = __nvoc_ctor_VaSpaceApi(pThis, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_VaSpaceApi_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_VaSpaceApi_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_GpuResource.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(VaSpaceApi));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

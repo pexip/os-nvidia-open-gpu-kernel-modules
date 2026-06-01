@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -44,9 +44,13 @@
 #include "diagnostics/journal.h"
 #include "rmapi/rs_utils.h"
 #include "rmapi/rmapi_utils.h"
+#include "platform/sli/sli.h"
 #include "core/hal_mgr.h"
 #include "vgpu/rpc.h"
 #include "jt.h"
+
+#include "ctrl/ctrl402c.h" // NV402C_CTRL_NUM_I2C_PORTS
+#include "ctrl/ctrl5070/ctrl5070chnc.h" // NV5070_CTRL_CMD_GET_PINSET_PEER_PEER_PINSET_NONE
 
 #include "gpu/gpu_fabric_probe.h"
 
@@ -56,6 +60,7 @@
 
 #include "gpu/sec2/kernel_sec2.h"
 #include "gpu/gsp/kernel_gsp.h"
+#include "gpu/video/kernel_video_engine.h"
 #include "platform/platform.h"
 #include "platform/chipset/chipset.h"
 #include "kernel/gpu/host_eng/host_eng.h"
@@ -68,6 +73,8 @@
 #include "diagnostics/gpu_acct.h"
 
 #include "nvop.h"
+
+#include "nvdevid.h" // for NV_PCI_DEVID_DEVICE
 
 #include "virtualization/hypervisor/hypervisor.h"
 #include "kernel/virtualization/kernel_vgpu_mgr.h"
@@ -95,11 +102,10 @@ typedef struct GPUCHILDTYPE  GPUCHILDTYPE;
                        NvU32, WriteCount, sizeof(NvU32));                                   \
     }
 
-// Public interface functions
-
 static NV_STATUS gpuRemoveMissingEngines(OBJGPU *);
 
 // local static function
+static NV_STATUS _gpuChildrenPresentInit(OBJGPU *pGpu);
 static NV_STATUS gpuCreateChildObjects(OBJGPU *, NvBool);
 static NV_STATUS gpuStatePreLoad(OBJGPU *, NvU32);
 static NV_STATUS gpuStatePostLoad(OBJGPU *, NvU32);
@@ -192,6 +198,15 @@ _gpuDetectNvswitchSupport
     pGpu->fabricProbeSlowdownThreshold = 1;
     pGpu->nvswitchSupport = NV2080_CTRL_PMGR_MODULE_INFO_NVSWITCH_NOT_SUPPORTED;
 
+    if (IS_VIRTUAL(pGpu))
+    {
+        VGPU_STATIC_INFO *pVSI = gpuGetStaticInfo(pGpu);
+
+        pGpu->nvswitchSupport = pVSI->p2pCaps.bGpuSupportsFabricProbe ?
+                                    NV2080_CTRL_PMGR_MODULE_INFO_NVSWITCH_SUPPORTED :
+                                    NV2080_CTRL_PMGR_MODULE_INFO_NVSWITCH_NOT_SUPPORTED;
+    }
+    else
     {
         NvU32 status = NV_OK;
         RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
@@ -208,13 +223,14 @@ _gpuDetectNvswitchSupport
         {
             pGpu->moduleId = moduleInfoParams.moduleId;
             pGpu->nvswitchSupport = moduleInfoParams.nvswitchSupport;
-            if (GPU_IS_NVSWITCH_DETECTED(pGpu))
-            {
-                pGpu->fabricProbeRetryDelay = GPU_FABRIC_PROBE_DEFAULT_DELAY;
-                pGpu->fabricProbeSlowdownThreshold =
-                            GPU_FABRIC_PROBE_DEFAULT_PROBE_SLOWDOWN_THRESHOLD;
-            }
         }
+    }
+
+    if (GPU_IS_NVSWITCH_DETECTED(pGpu))
+    {
+        pGpu->fabricProbeRetryDelay = GPU_FABRIC_PROBE_DEFAULT_DELAY;
+        pGpu->fabricProbeSlowdownThreshold =
+                    GPU_FABRIC_PROBE_DEFAULT_PROBE_SLOWDOWN_THRESHOLD;
     }
 
     if (val != 0)
@@ -260,6 +276,10 @@ NvU32 gpuGenerate32BitId(NvU32 domain, NvU8 bus, NvU8 device)
 
     // Include only the lower 16-bits to match the old gpuId scheme
     id |= (domain & 0xffff) << 16;
+
+    if ((domain >> 16) != 0) {
+        NV_ASSERT(hypervisorIsType(OS_HYPERVISOR_HYPERV));
+    }
 
     return id;
 }
@@ -327,6 +347,7 @@ gpuPostConstruct_IMPL
 )
 {
     NV_STATUS rmStatus;
+    NvU32 config = 0;
 
     gpumgrAddDeviceInstanceToGpus(NVBIT(pGpu->gpuInstance));
 
@@ -337,6 +358,19 @@ gpuPostConstruct_IMPL
                   "Failed to construct IO Apertures for attached devices \n");
         return rmStatus;
     }
+
+
+    config = GPU_REG_RD32(pGpu, NV_PMC_BOOT_1);
+    if (FLD_TEST_DRF(_PMC, _BOOT_1, _VGPU, _VF, config))
+    {
+        pGpu->bIsVirtualWithSriov = NV_TRUE;
+    }
+    else
+    {
+        pGpu->bIsVirtualWithSriov = NV_FALSE;
+    }
+
+    pGpu->sriovState.virtualRegPhysOffset = gpuGetVirtRegPhysOffset_HAL(pGpu);
 
     gpuInitChipInfo(pGpu);
 
@@ -359,7 +393,7 @@ gpuPostConstruct_IMPL
     if (rmStatus != NV_OK)
         return rmStatus;
 
-    pGpu->setProperty(pGpu, PDB_PROP_GPU_MOVE_CTX_BUFFERS_TO_PMA, 
+    pGpu->setProperty(pGpu, PDB_PROP_GPU_MOVE_CTX_BUFFERS_TO_PMA,
         gpuIsCtxBufAllocInPmaSupported_HAL(pGpu));
     //
     // gpuDetermineVirtualMode inits hPci but only for virtualization case. So if
@@ -380,18 +414,8 @@ gpuPostConstruct_IMPL
     //
     pGpu->sriovState.virtualRegPhysOffset = gpuGetVirtRegPhysOffset_HAL(pGpu);
 
-    //
-    // Check if FBHUB Poison interrupt is triggered before RM Init due
-    // to VBIOS IFR on GA100. If yes, clear the FBHUB Interrupt. This WAR is
-    // required for Bug 2924523 where VBIOS IFR causes FBHUB Poison intr.
-    // We need to clear this before RM Init begins, as an FBHUB Poison as part of
-    // RM Init is a valid interrupt
-    //
-    // Additional details which might be of interest exist in bug 200620015
-    // comments 43-45 pertaining to the necessity of the WAR so close to the
-    // register write enablement.
-    //
-    gpuClearFbhubPoisonIntrForBug2924523_HAL(pGpu);
+    NV_ASSERT_OK_OR_RETURN(
+        _gpuChildrenPresentInit(pGpu));
 
     //
     // Initialize engine order before engine init/load/etc
@@ -457,6 +481,19 @@ gpuPostConstruct_IMPL
     if (rmStatus != NV_OK)
         return rmStatus;
 
+    //
+    // Check if FBHUB Poison interrupt is triggered before RM Init due
+    // to VBIOS IFR on GA100. If yes, clear the FBHUB Interrupt. This WAR is
+    // required for Bug 2924523 where VBIOS IFR causes FBHUB Poison intr.
+    // We need to clear this before RM Init begins, as an FBHUB Poison as part of
+    // RM Init is a valid interrupt
+    //
+    // Additional details which might be of interest exist in bug 200620015
+    // comments 43-45 pertaining to the necessity of the WAR so close to the
+    // register write enablement.
+    //
+    gpuClearFbhubPoisonIntrForBug2924523_HAL(pGpu);
+
     if (IS_SIMULATION(pGpu) && !IS_VIRTUAL(pGpu))
     {
         //
@@ -468,6 +505,39 @@ gpuPostConstruct_IMPL
         // for the SIM escapes.
         //
         gpuDetermineSelfHostedMode_HAL(pGpu);
+    }
+
+    if (
+        IS_VIRTUAL(pGpu))
+    {
+        if (IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) && IS_VIRTUAL_WITH_SRIOV(pGpu))
+        {
+            KernelBus *pKernelBus  = GPU_GET_KERNEL_BUS(pGpu);
+
+#if defined(NV_UNIX)
+            // For self hosted hopper, VF BAR2 is absent. So disable bUsePhysicalBar2InitPagetable
+            // in case of self hosted SRIOV guest
+            if (pAttachArg->instLength == 0)
+                pKernelBus->bUsePhysicalBar2InitPagetable = NV_FALSE;
+#endif
+
+            if (kbusIsPhysicalBar2InitPagetableEnabled(pKernelBus))
+            {
+                // setup BAR2 in physical mode
+                NV_ASSERT_OK_OR_RETURN(kbusBar2BootStrapInPhysicalMode_HAL(pGpu, pKernelBus));
+            }
+        }
+
+        rmStatus = vgpuCreateObject(pGpu);
+        if (rmStatus != NV_OK)
+        {
+            if (NV_ERR_LIB_RM_VERSION_MISMATCH == rmStatus)
+            {
+                nvErrorLog_va(pGpu, VGPU_START_ERROR,
+                              "Guest driver is incompatible with host driver");
+            }
+            return rmStatus;
+        }
     }
 
     gpuGetHwDefaults(pGpu);
@@ -497,15 +567,43 @@ gpuPostConstruct_IMPL
 NV_STATUS gpuConstruct_IMPL
 (
     OBJGPU *pGpu,
-    NvU32   gpuInstance
+    NvU32   gpuInstance,
+    NvU32   gpuId,
+    NvUuid *pGpuUuid
 )
 {
 
     pGpu->gpuInstance = gpuInstance;
+    pGpu->gpuId = pGpu->boardId = gpuId; // boardId may be updated later
     pGpu->gspRmInitialized = NV_FALSE;
+
+    if (pGpuUuid != NULL)
+    {
+        portMemCopy(&pGpu->gpuUuid.uuid[0], sizeof(pGpu->gpuUuid.uuid),
+                    &pGpuUuid->uuid[0], sizeof(pGpuUuid->uuid));
+        pGpu->gpuUuid.isInitialized = NV_TRUE;
+    }
 
     // allocate OS-specific GPU extension area
     osInitOSHwInfo(pGpu);
+
+    // Initialize NvFBC session count and list.
+    listInit(&(pGpu->nvfbcSessionList), portMemAllocatorGetGlobalNonPaged());
+
+    // Initialize NvENC session count and list.
+    listInit(&(pGpu->nvencSessionList), portMemAllocatorGetGlobalNonPaged());
+
+    multimapInit(&pGpu->videoEventBufferBindingsUid, portMemAllocatorGetGlobalNonPaged());
+
+    // Initialize the i2c port via which external devices will be connected.
+    pGpu->i2cPortForExtdev = NV402C_CTRL_NUM_I2C_PORTS;
+
+    // Assume no SLI peer connection until later
+    for (NvU32 i = 0; i < DR_PINSET_COUNT; ++i)
+    {
+        pGpu->peer[i].pGpu        = NULL;
+        pGpu->peer[i].pinset      = NV5070_CTRL_CMD_GET_PINSET_PEER_PEER_PINSET_NONE;
+    }
 
     return gpuConstructPhysical(pGpu);
 }
@@ -582,7 +680,12 @@ static NV_STATUS _gpuRmApiControl
     // internal handles, we can skip the resource server overhead and make a
     // direct function call instead.
     //
-    if (hClient == pGpu->hInternalClient && hObject == pGpu->hInternalSubdevice)
+    // This optimization should be skipped on vGPU Guests as they should always
+    // go through the resource server. The resource server is responsible for
+    // deciding whether to RPC to the HOST (ROUTE_TO_VGPU_HOST) or call the
+    // implementation on the guest.
+    //
+    if (!IS_VIRTUAL(pGpu) && hClient == pGpu->hInternalClient && hObject == pGpu->hInternalSubdevice)
     {
         NV_ASSERT_OR_RETURN(pGpu->pCachedSubdevice && pGpu->pCachedRsClient, NV_ERR_INVALID_STATE);
 
@@ -770,7 +873,7 @@ static NV_STATUS _gpuAllocateInternalObjects
 
     if (IS_GSP_CLIENT(pGpu))
     {
-        if (IsT234DorBetter(pGpu))
+        if (IS_DCE_CLIENT(pGpu))
         {
             //
             // NOTE: We add +1 to the client base because DCE-RM will also
@@ -806,7 +909,7 @@ static NV_STATUS _gpuAllocateInternalObjects
 
         NV_ASSERT_OK_OR_GOTO(status, serverGetClientUnderLock(&g_resServ, pGpu->hInternalClient,
             &pGpu->pCachedRsClient), done);
-        NV_ASSERT_OK_OR_GOTO(status, subdeviceGetByGpu(pGpu->pCachedRsClient, pGpu,
+        NV_ASSERT_OK_OR_GOTO(status, subdeviceGetByHandle(pGpu->pCachedRsClient, pGpu->hInternalSubdevice,
             &pGpu->pCachedSubdevice), done);
     }
 
@@ -1054,16 +1157,13 @@ _gpuChildNvocClassInfoGet
     const NVOC_CLASS_INFO **ppClassInfo
 )
 {
-    NvU32                   numChildPresent;
-    const GPUCHILDPRESENT  *const  pChildrenPresent =
-        gpuGetChildrenPresent_HAL(pGpu, &numChildPresent);
-    NvU32                   i;
+    NvU32 i;
 
-    for (i = 0U; i < numChildPresent; i++)
+    for (i = 0U; i < pGpu->numChildrenPresent; i++)
     {
-        if (classId == pChildrenPresent[i].classId)
+        if (classId == pGpu->pChildrenPresent[i].classId)
         {
-            *ppClassInfo = pChildrenPresent[i].pClassInfo;
+            *ppClassInfo = pGpu->pChildrenPresent[i].pClassInfo;
             return NV_OK;
         }
     }
@@ -1334,7 +1434,7 @@ gpuCreateObject_IMPL
     }
 
     status = engstateConstructBase(pEngstate, pGpu, childInfo.engDesc);
-    NV_ASSERT_OR_GOTO(status == NV_OK, gpuCreateObject_exit);
+    NV_CHECK_OR_GOTO(LEVEL_INFO, status == NV_OK, gpuCreateObject_exit);
 
     engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_CONSTRUCT, &engTransitionData);
     status = engstateConstructEngine(pGpu, pEngstate, childInfo.engDesc);
@@ -1374,10 +1474,6 @@ gpuDestruct_IMPL
     if (hypervisorIsVgxHyper() ||
         pGpu->getProperty(pGpu, PDB_PROP_GPU_ACCOUNTING_ON))
     {
-        GpuAccounting *pGpuAcct = SYS_GET_GPUACCT(SYS_GET_INSTANCE());
-        NV0000_CTRL_GPUACCT_SET_ACCOUNTING_STATE_PARAMS params;
-        NV_STATUS status;
-
         /*
          * On VGX host, users are not allowed to disable accounting. But we still
          * need to do that while cleaning up (destroy timer part of this cleanup)
@@ -1389,27 +1485,15 @@ gpuDestruct_IMPL
          * that execution goes forward in gpuacctDisableAccounting_IMPL() and
          * timer gets destroyed properly.
          */
-        pGpu->setProperty(pGpu, PDB_PROP_GPU_ACCOUNTING_ON, NV_FALSE);
 
-        params.gpuId = pGpu->gpuId;
-        params.pid = 0;
-        params.newState = NV0000_CTRL_GPU_ACCOUNTING_STATE_DISABLED;
-
-        status = gpuacctDisableAccounting(pGpuAcct, pGpu->gpuInstance, &params);
-
+        NV_STATUS status = gpuDisableAccounting(pGpu, NV_TRUE);
         if (status != NV_OK)
         {
             NV_PRINTF(LEVEL_ERROR,
-                      "gpuacctDisableAccounting failed with error %d on GPU ID %d\n",
+                      "gpuDisableAccounting failed with error %d on GPU ID %d\n",
                       status, pGpu->gpuId);
         }
     }
-
-    // Free GPU shared data
-    memdescUnmap(pGpu->userSharedData.pMemDesc, NV_TRUE, 0,
-        pGpu->userSharedData.pMapBuffer, pGpu->userSharedData.pMapBufferPriv);
-    memdescFree(pGpu->userSharedData.pMemDesc);
-    memdescDestroy(pGpu->userSharedData.pMemDesc);
 
     //
     // If device instance is unassigned, we haven't initialized far enough to
@@ -1418,6 +1502,12 @@ gpuDestruct_IMPL
     if (gpuGetDeviceInstance(pGpu) != NV_MAX_DEVICES)
     {
         rmapiReportLeakedDevices(gpuGetGpuMask(pGpu));
+    }
+
+    if (
+        IS_VIRTUAL(pGpu))
+    {
+        vgpuDestructObject(pGpu);
     }
 
     // Free children in reverse order from construction
@@ -1488,7 +1578,28 @@ gpuDestruct_IMPL
     pGpu->numSubdeviceBackReferences = 0;
     pGpu->maxSubdeviceBackReferences = 0;
 
+    multimapDestroy(&pGpu->videoEventBufferBindingsUid);
+
     gpuDestructPhysical(pGpu);
+}
+
+/*!
+ * @brief   Initializes @ref OBJGPU::pChildrenPresent data
+ *
+ * @param[in]   pGpu
+ *
+ * @return  @ref NV_OK
+ *  Success
+ */
+static NV_STATUS
+_gpuChildrenPresentInit
+(
+    OBJGPU *pGpu
+)
+{
+    pGpu->pChildrenPresent =
+        gpuGetChildrenPresent_HAL(pGpu, &pGpu->numChildrenPresent);
+    return NV_OK;
 }
 
 static NV_STATUS
@@ -1553,19 +1664,16 @@ gpuShouldCreateObject
 )
 {
     NvBool retVal = NV_FALSE;
-    NvU32 numChildPresent;
-    const GPUCHILDPRESENT *const pChildPresentList =
-        gpuGetChildrenPresent_HAL(pGpu, &numChildPresent);
     NvU32 childIdx;
 
     // Let the HAL confirm that we should create an object for this engine.
-    for (childIdx = 0; childIdx < numChildPresent; childIdx++)
+    for (childIdx = 0; childIdx < pGpu->numChildrenPresent; childIdx++)
     {
         if ((ENGDESC_FIELD(pChildInfo->engDesc, _CLASS) ==
-                pChildPresentList[childIdx].classId))
+                pGpu->pChildrenPresent[childIdx].classId))
         {
             retVal = (ENGDESC_FIELD(pChildInfo->engDesc, _INST) <
-                        pChildPresentList[childIdx].instances);
+                        pGpu->pChildrenPresent[childIdx].instances);
             break;
         }
     }
@@ -1587,54 +1695,6 @@ gpuGetGpuMask_IMPL
     {
         return 1 << (pGpu->gpuInstance);
     }
-}
-
-static NV_STATUS gspSupportsEngine(OBJGPU *pGpu, ENGDESCRIPTOR engdesc, NvBool *supports)
-{
-    RM_ENGINE_TYPE clientEngineId = 0;
-
-    if (!IS_GSP_CLIENT(pGpu))
-        return NV_WARN_NOTHING_TO_DO;
-
-    if (gpuXlateEngDescToClientEngineId(pGpu, engdesc, &clientEngineId) != NV_OK)
-    {
-        NV_PRINTF(LEVEL_INFO, "Failed to xlate engdesc 0x%x\n", engdesc);
-        return NV_WARN_NOTHING_TO_DO;
-    }
-
-    if (pGpu->gspSupportedEngines == NULL)
-    {
-        pGpu->gspSupportedEngines = portMemAllocNonPaged(sizeof(*pGpu->gspSupportedEngines));
-        NV_ASSERT_OR_RETURN(pGpu->gspSupportedEngines != NULL, NV_ERR_NO_MEMORY);
-
-        RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-
-        NV_STATUS status = pRmApi->Control(pRmApi,
-                        pGpu->hInternalClient,
-                        pGpu->hInternalSubdevice,
-                        NV2080_CTRL_CMD_GPU_GET_ENGINES_V2,
-                        pGpu->gspSupportedEngines,
-                        sizeof(*pGpu->gspSupportedEngines));
-
-        if (status != NV_OK)
-        {
-            portMemFree(pGpu->gspSupportedEngines);
-            return status;
-        }
-    }
-
-    NvU32 i;
-    for (i = 0; i < pGpu->gspSupportedEngines->engineCount; i++)
-    {
-        if (gpuGetRmEngineType(pGpu->gspSupportedEngines->engineList[i]) == clientEngineId)
-        {
-            *supports = NV_TRUE;
-            return NV_OK;
-        }
-    }
-
-    *supports = NV_FALSE;
-    return NV_OK;
 }
 
 /*!
@@ -1717,7 +1777,7 @@ gpuRemoveMissingEngines
     {
         const GPU_RESOURCE_DESC *const pCurDesc     =
             &pGpu->engineOrder.pClassDescriptors[curClassDescIdx];
-        NvBool bGspSupportsEngine;
+        NvBool bHostSupportsEngine = NV_FALSE;
 
         //
         // Skip any classes which:
@@ -1734,24 +1794,20 @@ gpuRemoveMissingEngines
         }
 
         //
-        // If the engstate is NULL, the engine may still be supported on GSP. If
+        // If the engstate is NULL, the engine may still be supported on GSP or VGPU host. If
         // it is, we can skip removing it.
         //
-        // Note that if the function returns NV_WARN_NOTHING_TO_DO, this means
-        // GSP-RM is not running and thus the engine cannot be supported within
-        // GSP.
-        //
-        rmStatus = gspSupportsEngine(pGpu, pCurDesc->engDesc, &bGspSupportsEngine);
-        if (rmStatus == NV_WARN_NOTHING_TO_DO)
+
+        KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
+        NV_ASSERT_OR_RETURN(pKernelBus != NULL, NV_ERR_INVALID_STATE);
+
+        if (IS_GSP_CLIENT(pGpu) || IS_VIRTUAL(pGpu))
         {
-            rmStatus = NV_OK;
-            bGspSupportsEngine = NV_FALSE;
+            bHostSupportsEngine = kbusCheckEngineWithOrderList_HAL(pGpu, pKernelBus, pCurDesc->engDesc, NV_FALSE);
         }
-        NV_ASSERT_OK_OR_RETURN(rmStatus);
-        if (bGspSupportsEngine)
-        {
+
+        if (bHostSupportsEngine)
             continue;
-        }
 
         NV_ASSERT_OK_OR_RETURN(
             gpuDeleteClassFromClassDBByEngTag(pGpu, pCurDesc->engDesc));
@@ -1963,16 +2019,17 @@ gpuDeleteEngineOnPreInit_IMPL(OBJGPU *pGpu, NvU32 engDesc)
     NvU32          numEngDescriptors = gpuGetNumEngDescriptors(pGpu);
     ENGDESCRIPTOR  engDescriptor     = engDesc;
     NV_STATUS      rmStatus = NV_OK;
-    NvBool bGspSupported = NV_FALSE;
+    NvBool bHostSupported = NV_FALSE;
 
-    rmStatus = gspSupportsEngine(pGpu, engDesc, &bGspSupported);
-    if (rmStatus == NV_WARN_NOTHING_TO_DO)
-        rmStatus = NV_OK;
+    KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
 
-    NV_ASSERT_OK_OR_RETURN(rmStatus);
+    NV_ASSERT_OR_RETURN(pKernelBus != NULL, NV_ERR_INVALID_STATE);
+
+    if (IS_GSP_CLIENT(pGpu) || IS_VIRTUAL(pGpu))
+        bHostSupported = kbusCheckEngineWithOrderList_HAL(pGpu, pKernelBus, engDesc, NV_FALSE);
 
     // remove Class tagged with engDesc from Class Database.
-    if (!bGspSupported)
+    if (!bHostSupported)
         gpuDeleteClassFromClassDBByEngTag(pGpu, engDesc);
 
     // Remove Load Engine Descriptors
@@ -1995,7 +2052,7 @@ gpuDeleteEngineOnPreInit_IMPL(OBJGPU *pGpu, NvU32 engDesc)
     gpuMissingEngDescriptor(pEngDesc, numEngDescriptors,
                             engDescriptor);
 
-    if (!bGspSupported)
+    if (!bHostSupported)
     {
         rmStatus = gpuUpdateEngineTable(pGpu);
         if (rmStatus != NV_OK)
@@ -2034,7 +2091,7 @@ gpuStatePreInit_IMPL
     NV_STATUS      rmStatus = NV_OK;
 
     // Quadro, Geforce SMB, Tesla, VGX, Titan GPU detection
-    gpuInitBranding(pGpu);
+    NV_ASSERT_OK_OR_RETURN(gpuInitBranding(pGpu));
 
     // Set PDB properties as per data from GSP.
     gpuInitProperties(pGpu);
@@ -2057,6 +2114,8 @@ gpuStatePreInit_IMPL
     NV_ASSERT_OK_OR_RETURN(_gpuInitChipInfo(pGpu));
     NV_ASSERT_OK_OR_RETURN(gpuConstructUserRegisterAccessMap(pGpu));
     NV_ASSERT_OK_OR_RETURN(gpuBuildGenericKernelFalconList(pGpu));
+
+    NV_ASSERT_OK_OR_RETURN(gpuBuildKernelVideoEngineList(pGpu));
 
     //
     // Must be called after _gpuInitChipInfo since gpuDetermineMIGSupport_HAL
@@ -2084,10 +2143,13 @@ gpuStatePreInit_IMPL
             continue;
         }
 
-        engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_PRE_INIT, &engTransitionData);
-        rmStatus = engstateStatePreInit(pGpu, pEngstate);
-        engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_PRE_INIT, &engTransitionData);
-
+        rmStatus = gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_PREINIT, curEngDescIdx, NV_FALSE);
+        if (rmStatus == NV_OK)
+        {
+            engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_PRE_INIT, &engTransitionData);
+            rmStatus = engstateStatePreInit(pGpu, pEngstate);
+            engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_PRE_INIT, &engTransitionData);
+        }
         if (rmStatus == NV_ERR_NOT_SUPPORTED)
         {
             switch (curEngDescriptor)
@@ -2132,6 +2194,12 @@ gpuStatePreInit_IMPL
         {
             break;
         }
+    }
+
+    // RM User Shared Data is currently unable to support VGPU due to isolation requirements
+    if (IS_VIRTUAL(pGpu))
+    {
+        gpuDeleteClassFromClassDBByClassId(pGpu, RM_USER_SHARED_DATA);
     }
 
     gpuInitOptimusSettings(pGpu);
@@ -2184,9 +2252,13 @@ gpuStateInit_IMPL
             continue;
         }
 
-        engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_INIT, &engTransitionData);
-        rmStatus = engstateStateInit(pGpu, pEngstate);
-        engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_INIT, &engTransitionData);
+        rmStatus = gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_INIT, curEngDescIdx, NV_FALSE);
+        if (rmStatus == NV_OK)
+        {
+            engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_INIT, &engTransitionData);
+            rmStatus = engstateStateInit(pGpu, pEngstate);
+            engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_INIT, &engTransitionData);
+        }
 
         // RMCONFIG:  Bail on errors unless the feature/object/engine/class
         //            is simply unsupported
@@ -2202,7 +2274,7 @@ gpuStateInit_IMPL
     {
         if (
             IsdADA(pGpu) ||
-           0)
+            0)
         {
             NvU32 data32 = NV_REG_STR_BUG_3007008_EMULATE_VF_MMU_TLB_INVALIDATE_DEFAULT;
 
@@ -2270,14 +2342,17 @@ gpuStatePreLoad
             continue;
         }
 
-        RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePreLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
+        rmStatus = gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_PRELOAD, curEngDescIdx, NV_FALSE);
+        if (rmStatus == NV_OK)
+        {
+            RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePreLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
 
-        engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_PRE_LOAD, &engTransitionData);
-        rmStatus = engstateStatePreLoad(pGpu, pEngstate, flags);
-        engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_PRE_LOAD, &engTransitionData);
+            engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_PRE_LOAD, &engTransitionData);
+            rmStatus = engstateStatePreLoad(pGpu, pEngstate, flags);
+            engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_PRE_LOAD, &engTransitionData);
 
-        RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePreLoadEngEnd", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
-
+            RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePreLoadEngEnd", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
+        }
         //
         // An engine load leaving the broadcast status to NV_TRUE
         // will most likely mess up the pre-load of the next engines
@@ -2324,12 +2399,36 @@ gpuStateLoad_IMPL
 
     _gpuDetectNvswitchSupport(pGpu);
 
+    if (IS_VIRTUAL_WITH_FULL_SRIOV(pGpu) && (flags & GPU_STATE_FLAGS_PRESERVING))
+    {
+        rmStatus = vgpuReinitializeRpcInfraOnStateLoad(pGpu);
+        if (rmStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR,
+                      "Failed to re-init RPC infrastructure on resume, status 0x%x\n", rmStatus);
+            DBG_BREAKPOINT();
+            return rmStatus;
+        }
+    }
+
     // Initialize SRIOV specific members of OBJGPU
     status = gpuInitSriov_HAL(pGpu);
     if (status != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR, "Error initializing SRIOV: 0x%0x\n", status);
         return status;
+    }
+
+    if (IS_VIRTUAL_WITH_FULL_SRIOV(pGpu) && (flags & GPU_STATE_FLAGS_PRESERVING))
+    {
+        NV_RM_RPC_RESTORE_HIBERNATION_DATA(pGpu, rmStatus);
+        if (rmStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR,
+                      "RPC to restore host hibernation data failed, status 0x%x\n", rmStatus);
+            DBG_BREAKPOINT();
+            return rmStatus;
+        }
     }
 
     if (!(flags & GPU_STATE_FLAGS_PRESERVING))
@@ -2371,12 +2470,15 @@ gpuStateLoad_IMPL
             continue;
         }
 
-        RMTRACE_ENGINE_PROFILE_EVENT("gpuStateLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
+        rmStatus = gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_LOAD, curEngDescIdx, NV_FALSE);
+        if (rmStatus == NV_OK)
+        {
+            RMTRACE_ENGINE_PROFILE_EVENT("gpuStateLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
 
-        engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_LOAD, &engTransitionData);
-        rmStatus = engstateStateLoad(pGpu, pEngstate, flags);
-        engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_LOAD, &engTransitionData);
-
+            engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_LOAD, &engTransitionData);
+            rmStatus = engstateStateLoad(pGpu, pEngstate, flags);
+            engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_LOAD, &engTransitionData);
+        }
 
         // TODO: This is temporary and may be dead with TESLA
         if (rmStatus == NV_ERR_INVALID_ADDRESS)
@@ -2397,7 +2499,9 @@ gpuStateLoad_IMPL
         if (rmStatus == NV_ERR_NOT_SUPPORTED)
             rmStatus = NV_OK;
         if (rmStatus != NV_OK)
+        {
             goto gpuStateLoad_exit;
+        }
 
         //
         // Release and re-acquire the lock to allow interrupts
@@ -2412,11 +2516,17 @@ gpuStateLoad_IMPL
         RMTRACE_ENGINE_PROFILE_EVENT("gpuStateLoadEngEnd", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
     }
 
-    rmStatus = gpuInitVmmuInfo(pGpu);
-    if (rmStatus != NV_OK)
+    // Video logging is not a required feature, don't override existing status
+    NV_CHECK(LEVEL_ERROR, gpuInitVideoLogging(pGpu) == NV_OK);
+
+    if (!IS_VIRTUAL(pGpu))
     {
-        NV_PRINTF(LEVEL_ERROR, "Error initializing VMMU info: 0x%0x\n", status);
-        goto gpuStateLoad_exit;
+        rmStatus = gpuInitVmmuInfo(pGpu);
+        if (rmStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "Error initializing VMMU info: 0x%0x\n", status);
+            goto gpuStateLoad_exit;
+        }
     }
 
     {
@@ -2449,26 +2559,18 @@ gpuStateLoad_IMPL
 {
     NvBool bVgpuOnGspEnabled = IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) && RMCFG_FEATURE_PLATFORM_GSP;
     if ((hypervisorIsVgxHyper() || bVgpuOnGspEnabled) &&
-        !pGpu->getProperty(pGpu, PDB_PROP_GPU_ACCOUNTING_ON))
+        !pGpu->getProperty(pGpu, PDB_PROP_GPU_ACCOUNTING_ON) &&
+        !IS_MIG_ENABLED(pGpu))
     {
-        OBJSYS *pSys = SYS_GET_INSTANCE();
-        GpuAccounting *pGpuAcct = SYS_GET_GPUACCT(pSys);
-        NV0000_CTRL_GPUACCT_SET_ACCOUNTING_STATE_PARAMS params;
-        NV_STATUS gpuacctStatus;
-
         // If VGX host, enable per process accounting by default.
-        params.gpuId = pGpu->gpuId;
-        params.pid = 0;
-        params.newState = NV0000_CTRL_GPU_ACCOUNTING_STATE_ENABLED;
-
-        gpuacctStatus = gpuacctEnableAccounting(pGpuAcct, pGpu->gpuInstance, &params);
+        NV_STATUS gpuacctStatus = gpuEnableAccounting(pGpu);
 
         // Don't return this error since GPU accounting is just a reporting feature, we don't
         // want to halt execution as a result of it failing
         if (gpuacctStatus != NV_OK)
         {
             NV_PRINTF(LEVEL_ERROR,
-                    "gpuacctEnableAccounting failed with error %d on GPU ID %d\n",
+                    "gpuEnableAccounting failed with error %d on GPU ID %d\n",
                     gpuacctStatus, pGpu->gpuId);
         }
     }
@@ -2484,6 +2586,48 @@ gpuStateLoad_IMPL
 
 gpuStateLoad_exit:
     return rmStatus;
+}
+
+NV_STATUS gpuEnableAccounting_IMPL(OBJGPU *pGpu)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    GpuAccounting *pGpuAcct = SYS_GET_GPUACCT(pSys);
+    NV0000_CTRL_GPUACCT_SET_ACCOUNTING_STATE_PARAMS params;
+
+    params.gpuId = pGpu->gpuId;
+    params.pid = 0;
+    params.newState = NV0000_CTRL_GPU_ACCOUNTING_STATE_ENABLED;
+
+    return gpuacctEnableAccounting(pGpuAcct, pGpu->gpuInstance, &params);
+}
+
+NV_STATUS gpuDisableAccounting_IMPL(OBJGPU *pGpu, NvBool bForce)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    GpuAccounting *pGpuAcct = SYS_GET_GPUACCT(pSys);
+    NV0000_CTRL_GPUACCT_SET_ACCOUNTING_STATE_PARAMS params;
+
+    params.gpuId = pGpu->gpuId;
+    params.pid = 0;
+    params.newState = NV0000_CTRL_GPU_ACCOUNTING_STATE_DISABLED;
+
+    /*
+     * On VGX host, users are not allowed to disable accounting. But we still
+     * need to do that while cleaning up (destroy timer part of this cleanup)
+     * in gpuDestruct_IMPL() path. If PDB_PROP_GPU_ACCOUNTING_ON is NV_TRUE and
+     * we call gpuacctDisableAccounting_IMPL() in gpuDestruct_IMPL() path,
+     * it throws not supported error. To bypass the not supported case in
+     * the gpuacctDisableAccounting_IMPL(), we are setting
+     * PDB_PROP_GPU_ACCOUNTING_ON to NV_FALSE here in gpuDestruct_IMPL(), so
+     * that execution goes forward in gpuacctDisableAccounting_IMPL() and
+     * timer gets destroyed properly.
+     */
+    if (bForce)
+    {
+        pGpu->setProperty(pGpu, PDB_PROP_GPU_ACCOUNTING_ON, NV_FALSE);
+    }
+
+    return gpuacctDisableAccounting(pGpuAcct, pGpu->gpuInstance, &params);
 }
 
 static NV_STATUS
@@ -2505,6 +2649,11 @@ _gpuRemoveP2pCapsFromPeerGpus
     {
         RM_API *pPeerRmApi = GPU_GET_PHYSICAL_RMAPI(pPeerGpu);
         NV2080_CTRL_INTERNAL_REMOVE_P2P_CAPS_PARAMS removeP2PCapsParams = {0};
+
+        if (!gpuIsStateLoaded(pPeerGpu))
+        {
+            continue;
+        }
 
         removeP2PCapsParams.peerGpuIdCount = 1;
         removeP2PCapsParams.peerGpuIds[0] = pGpu->gpuId;
@@ -2565,6 +2714,11 @@ _gpuPropagateP2PCapsToAllGpus
     {
         RM_API *pPeerRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
 
+        if ((!gpuIsStateLoaded(pGpu)) && (pGpu != pAttachedGpu))
+        {
+            continue;
+        }
+
         portMemSet(pSetP2PCapsParams, 0, sizeof(*pSetP2PCapsParams));
 
         // The newly attached GPU needs to be informed of all of the current GPUs caps,
@@ -2577,6 +2731,11 @@ _gpuPropagateP2PCapsToAllGpus
             i = 0;
             while ((pPeerGpu = gpumgrGetNextGpu(attachMask, &peerGpuIndex)) != NULL)
             {
+                if ((!gpuIsStateLoaded(pPeerGpu)) && (pPeerGpu != pAttachedGpu))
+                {
+                    continue;
+                }
+
                 peerGpuIds[i] = pPeerGpu->gpuId;
                 peerGpuInstances[i] = gpuGetInstance(pPeerGpu);
                 i++;
@@ -2607,7 +2766,8 @@ _gpuPropagateP2PCapsToAllGpus
                                                    &pPeerInfo->p2pOptimalReadCEs,
                                                    &pPeerInfo->p2pOptimalWriteCEs,
                                                     pPeerInfo->p2pCapsStatus,
-                                                   &pPeerInfo->busPeerId),
+                                                   &pPeerInfo->busPeerId,
+                                                   NULL),
                                 fail);
         }
 
@@ -2631,6 +2791,11 @@ fail:
         NV2080_CTRL_INTERNAL_REMOVE_P2P_CAPS_PARAMS removeP2PCapsParams = {0};
         NV_STATUS ignoredStatus;
 
+        if ((!gpuIsStateLoaded(pGpu)) && (pGpu != pAttachedGpu))
+        {
+            continue;
+        }
+
         if (pGpu == pAttachedGpu)
         {
             NvU32 peerGpuIndex = 0;
@@ -2638,6 +2803,11 @@ fail:
 
             while ((pPeerGpu = gpumgrGetNextGpu(attachMask, &peerGpuIndex)) != NULL)
             {
+                if ((!gpuIsStateLoaded(pPeerGpu)) && (pPeerGpu != pAttachedGpu))
+                {
+                    continue;
+                }
+
                 removeP2PCapsParams.peerGpuIds[removeP2PCapsParams.peerGpuIdCount] = pPeerGpu->gpuId;
                 removeP2PCapsParams.peerGpuIdCount++;
             }
@@ -2743,12 +2913,15 @@ gpuStatePostLoad
             continue;
         }
 
-        RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePostLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
-        engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_POST_LOAD, &engTransitionData);
-        rmStatus = engstateStatePostLoad(pGpu, pEngstate, flags);
-        engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_POST_LOAD, &engTransitionData);
-        RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePostLoadEngEnd", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
-
+        rmStatus = gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_POSTLOAD, curEngDescIdx, NV_FALSE);
+        if (rmStatus == NV_OK)
+        {
+            RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePostLoadEngStart", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
+            engstateLogStateTransitionPre(pEngstate, ENGSTATE_STATE_POST_LOAD, &engTransitionData);
+            rmStatus = engstateStatePostLoad(pGpu, pEngstate, flags);
+            engstateLogStateTransitionPost(pEngstate, ENGSTATE_STATE_POST_LOAD, &engTransitionData);
+            RMTRACE_ENGINE_PROFILE_EVENT("gpuStatePostLoadEngEnd", curEngDescriptor, pGpu->registerAccess.regReadCount, pGpu->registerAccess.regWriteCount);
+        }
         // RMCONFIG:  Bail on errors unless the feature/object/engine/class
         //            is simply unsupported
         if (rmStatus == NV_ERR_NOT_SUPPORTED)
@@ -2771,10 +2944,13 @@ gpuStatePostLoad
     // Caching GID data, the GID is generated by PMU and passed to RM during PMU INIT message.
     //NV_ASSERT_OK(gpuGetGidInfo(pGpu, NULL, NULL, DRF_DEF(2080_GPU_CMD, _GPU_GET_GID_FLAGS, _TYPE, _SHA1)));
 
-    NV_CHECK_OK_OR_GOTO(rmStatus,
-                        LEVEL_ERROR,
-                        _gpuSetVgpuMgrConfig(pGpu),
-                        gpuStatePostLoad_exit);
+    if (hypervisorIsVgxHyper())
+    {
+        NV_CHECK_OK_OR_GOTO(rmStatus,
+                            LEVEL_ERROR,
+                            _gpuSetVgpuMgrConfig(pGpu),
+                            gpuStatePostLoad_exit);
+    }
 
     if (IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) && IS_GSP_CLIENT(pGpu))
     {
@@ -2789,27 +2965,37 @@ gpuStatePostLoad
                             gpuStatePostLoad_exit);
     }
 
-    pGpu->boardInfo = portMemAllocNonPaged(sizeof(*pGpu->boardInfo));
-    if (pGpu->boardInfo)
+    if (!IS_VIRTUAL(pGpu))
     {
-        // To avoid potential race of xid reporting with the control, zero it out
-        portMemSet(pGpu->boardInfo, '\0', sizeof(*pGpu->boardInfo));
-
-        RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-
-        if(pRmApi->Control(pRmApi,
-                           pGpu->hInternalClient,
-                           pGpu->hInternalSubdevice,
-                           NV2080_CTRL_CMD_GPU_GET_OEM_BOARD_INFO,
-                           pGpu->boardInfo,
-                           sizeof(*pGpu->boardInfo)) != NV_OK)
+        pGpu->boardInfo = portMemAllocNonPaged(sizeof(*pGpu->boardInfo));
+        if (pGpu->boardInfo)
         {
-            portMemFree(pGpu->boardInfo);
-            pGpu->boardInfo = NULL;
+            // To avoid potential race of xid reporting with the control, zero it out
+            portMemSet(pGpu->boardInfo, '\0', sizeof(*pGpu->boardInfo));
+
+            RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+
+            if(pRmApi->Control(pRmApi,
+                               pGpu->hInternalClient,
+                               pGpu->hInternalSubdevice,
+                               NV2080_CTRL_CMD_GPU_GET_OEM_BOARD_INFO,
+                               pGpu->boardInfo,
+                               sizeof(*pGpu->boardInfo)) != NV_OK)
+            {
+                portMemFree(pGpu->boardInfo);
+                pGpu->boardInfo = NULL;
+            }
         }
     }
-    NV_ASSERT_OR_GOTO(gpuFabricProbeStart(pGpu, &pGpu->pGpuFabricProbeInfoKernel) == NV_OK,
-                      gpuStatePostLoad_exit);
+    if (!hypervisorIsVgxHyper())
+    {
+        NV_ASSERT_OR_GOTO(gpuFabricProbeStart(pGpu, &pGpu->pGpuFabricProbeInfoKernel) == NV_OK,
+                          gpuStatePostLoad_exit);
+    }
+
+    // terminate the load failure test
+    if (rmStatus == NV_OK)
+        gpuLoadFailurePathTest(pGpu, NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_POSTLOAD, 0, NV_TRUE);
 
 gpuStatePostLoad_exit:
     return rmStatus;
@@ -2848,7 +3034,10 @@ gpuStatePreUnload
 
     rmapiControlCacheFreeAllCacheForGpu(pGpu->gpuInstance);
 
-    gpuFabricProbeStop(pGpu->pGpuFabricProbeInfoKernel);
+    if (!hypervisorIsVgxHyper())
+    {
+        gpuFabricProbeStop(pGpu->pGpuFabricProbeInfoKernel);
+    }
 
     portMemFree(pGpu->boardInfo);
     pGpu->boardInfo = NULL;
@@ -2912,6 +3101,17 @@ gpuEnterShutdown_IMPL
                   "failed to unload the device with error 0x%x\n", rmStatus);
     }
 
+    if(IS_GSP_CLIENT(pGpu))
+    {
+        KernelGsp *pKernelGsp = GPU_GET_KERNEL_GSP(pGpu);
+
+        // this skips rmDestruct in GSP
+        NV_RM_RPC_UNLOADING_GUEST_DRIVER(pGpu, rmStatus, NV_FALSE, NV_FALSE, GPU_STATE_FLAGS_FAST_UNLOAD);
+
+        kgspWaitForProcessorSuspend_HAL(pGpu, pKernelGsp);
+        kgspDumpGspLogs(pKernelGsp, NV_FALSE);
+    }
+
     return rmStatus;
 }
 
@@ -2935,12 +3135,15 @@ gpuStateUnload_IMPL
     // Set indicator that state is currently unloading.
     pGpu->bStateUnloading = NV_TRUE;
 
+
     {
         rmStatus = gpuStatePreUnload(pGpu, flags);
     }
 
     if (rmStatus != NV_OK)
         return rmStatus;
+
+    gpuFreeVideoLogging(pGpu);
 
     engDescriptorList = gpuGetUnloadEngineDescriptors(pGpu);
     numEngDescriptors = gpuGetNumEngDescriptors(pGpu);
@@ -3021,6 +3224,18 @@ gpuStateUnload_IMPL
     if (rmStatus == NV_OK)
     {
         pGpu->bStateLoaded = NV_FALSE;
+    }
+
+    if (IS_VIRTUAL_WITH_FULL_SRIOV(pGpu) && (flags & GPU_STATE_FLAGS_PRESERVING))
+    {
+        NV_RM_RPC_SAVE_HIBERNATION_DATA(pGpu, rmStatus);
+        if (rmStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR,
+                      "RPC to save host hibernation data failed, status 0x%x\n", rmStatus);
+            DBG_BREAKPOINT();
+            return rmStatus;
+        }
     }
 
     if (fatalErrorStatus != NV_OK)
@@ -3132,7 +3347,8 @@ gpuStateDestroy_IMPL
     engDescriptorList = gpuGetDestroyEngineDescriptors(pGpu);
     numEngDescriptors = gpuGetNumEngDescriptors(pGpu);
 
-    NV_RM_RPC_SIM_FREE_INFRA(pGpu, rmStatus);
+    // remove all video event bind points before destroying gsp engine state below 
+    videoRemoveAllBindpointsForGpu(pGpu);
 
     // Order is determined by gpuGetChildrenOrder_HAL pulling gpuChildOrderList array
     for (curEngDescIdx = 0; curEngDescIdx < numEngDescriptors; curEngDescIdx++)
@@ -3181,8 +3397,7 @@ gpuStateDestroy_IMPL
     _gpuFreeInternalObjects(pGpu);
     gpuDestroyGenericKernelFalconList(pGpu);
 
-    portMemFree(pGpu->gspSupportedEngines);
-    pGpu->gspSupportedEngines = NULL;
+    gpuDestroyKernelVideoEngineList(pGpu);
 
     portMemFree(pGpu->pChipInfo);
     pGpu->pChipInfo = NULL;
@@ -3414,6 +3629,8 @@ gpuDetermineVirtualMode
     OBJHYPERVISOR *pHypervisor = SYS_GET_HYPERVISOR(pSys);
     NvU32 gpuAttachMask, gpuInstance;
     NvBool bIsVirtual = NV_FALSE;
+    NvU32 config = 0;
+    NvBool bNoHostBridgeDetected = NV_TRUE;
 
     if (pGpu->bIsSOC || pGpu->getProperty(pGpu, PDB_PROP_GPU_TEGRA_SOC_NVDISPLAY))
     {
@@ -3426,6 +3643,26 @@ gpuDetermineVirtualMode
 
     gpumgrGetGpuAttachInfo(NULL, &gpuAttachMask);
     gpuInstance = 0;
+
+    config = GPU_REG_RD32(pGpu, NV_PMC_BOOT_1);
+
+    if (FLD_TEST_DRF(_PMC, _BOOT_1, _VGPU, _VF, config))
+    {
+        bIsVirtual = NV_TRUE;
+        pGpu->bIsVirtualWithSriov = NV_TRUE;
+        pGpu->bPipelinedPteMemEnabled = NV_TRUE;
+    }
+    else
+    {
+        bNoHostBridgeDetected = NV_FALSE;
+    }
+
+    _setPlatformNoHostbridgeDetect(bNoHostBridgeDetected);
+
+    if (!pGpu->bSriovEnabled && !IS_VIRTUAL_WITH_SRIOV(pGpu))
+    {
+        pGpu->bWarBug200577889SriovHeavyEnabled = NV_FALSE;
+    }
 
     gpuSetupVirtualGuestOwnedHW(pHypervisor, pGpu);
 
@@ -3944,7 +4181,7 @@ static const EXTERN_TO_INTERNAL_ENGINE_ID rmClientEngineTable[] =
     { RM_ENGINE_TYPE_NVJPEG5,    classId(OBJNVJPG)   , 5,  NV_TRUE },
     { RM_ENGINE_TYPE_NVJPEG6,    classId(OBJNVJPG)   , 6,  NV_TRUE },
     { RM_ENGINE_TYPE_NVJPEG7,    classId(OBJNVJPG)   , 7,  NV_TRUE },
-    { RM_ENGINE_TYPE_OFA,        classId(OBJOFA)     , 0,  NV_TRUE },
+    { RM_ENGINE_TYPE_OFA0,       classId(OBJOFA)     , 0,  NV_TRUE },
     { RM_ENGINE_TYPE_DPU,        classId(OBJDPU)     , 0,  NV_FALSE },
     { RM_ENGINE_TYPE_PMU,        classId(Pmu)        , 0,  NV_FALSE },
     { RM_ENGINE_TYPE_FBFLCN,     classId(OBJFBFLCN)  , 0,  NV_FALSE },
@@ -4427,48 +4664,76 @@ gpuGetConstructedFalcon_IMPL
 NV_STATUS gpuBuildGenericKernelFalconList_IMPL(OBJGPU *pGpu)
 {
     RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+    VGPU_STATIC_INFO *pVSI = gpuGetStaticInfo(pGpu);
     NV_STATUS status;
-    NvU32 i;
+    NvU32 srcFalconIdx, tgtFalconIdx;
 
-    NV2080_CTRL_INTERNAL_GET_CONSTRUCTED_FALCON_INFO_PARAMS *pParams;
+    NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS *pParams = NULL;
+    NvBool bAllocatedParams = NV_FALSE;
 
-    pParams = portMemAllocNonPaged(sizeof(*pParams));
-    NV_ASSERT_OR_RETURN(pParams != NULL, NV_ERR_NO_MEMORY);
+    if (IS_VIRTUAL(pGpu))
+    {
+        NV_ASSERT(pVSI != NULL);
+        pParams = &pVSI->constructedFalconInfo;
+    }
+    else
+    {
+        pParams = portMemAllocNonPaged(sizeof(*pParams));
+        NV_ASSERT_OR_RETURN(pParams != NULL, NV_ERR_NO_MEMORY);
 
-    portMemSet(pParams, 0, sizeof(*pParams));
+        bAllocatedParams = NV_TRUE;
 
-    NV_ASSERT_OK_OR_GOTO(status,
-        pRmApi->Control(pRmApi, pGpu->hInternalClient, pGpu->hInternalSubdevice,
-                        NV2080_CTRL_CMD_INTERNAL_GET_CONSTRUCTED_FALCON_INFO,
-                        pParams, sizeof(*pParams)),
-        done);
+        portMemSet(pParams, 0, sizeof(*pParams));
+
+        NV_ASSERT_OK_OR_GOTO(status,
+            pRmApi->Control(pRmApi, pGpu->hInternalClient, pGpu->hInternalSubdevice,
+                            NV2080_CTRL_CMD_GPU_GET_CONSTRUCTED_FALCON_INFO,
+                            pParams, sizeof(*pParams)),
+            done);
+    }
 
     NV_ASSERT_TRUE_OR_GOTO(status,
         pParams->numConstructedFalcons <= NV_ARRAY_ELEMENTS(pGpu->genericKernelFalcons),
         NV_ERR_BUFFER_TOO_SMALL, done);
 
-    for (i = 0; i < pParams->numConstructedFalcons; i++)
+    tgtFalconIdx = 0;
+    for (srcFalconIdx = 0; srcFalconIdx < pParams->numConstructedFalcons; srcFalconIdx++)
     {
         KernelFalconEngineConfig config = {0};
 
-        config.physEngDesc   = pParams->constructedFalconsTable[i].engDesc;
-        config.ctxAttr       = pParams->constructedFalconsTable[i].ctxAttr;
-        config.ctxBufferSize = pParams->constructedFalconsTable[i].ctxBufferSize;
-        config.addrSpaceList = pParams->constructedFalconsTable[i].addrSpaceList;
-        config.registerBase  = pParams->constructedFalconsTable[i].registerBase;
+        if (pParams->constructedFalconsTable[srcFalconIdx].engDesc == ENG_SEC2 &&
+            GPU_GET_KERNEL_SEC2(pGpu) != NULL)
+        {
+            //
+            // Do not create a GenericKernelFalcon for SEC2 if a KernelSec2 instance exists.
+            // This is needed for pre-Turing VGPU guests as KernelSec2 is not supported there.
+            //
+            continue;
+        }
 
-        status = objCreate(&pGpu->genericKernelFalcons[i], pGpu, GenericKernelFalcon, pGpu, &config);
+        config.physEngDesc   = pParams->constructedFalconsTable[srcFalconIdx].engDesc;
+        config.ctxAttr       = pParams->constructedFalconsTable[srcFalconIdx].ctxAttr;
+        config.ctxBufferSize = pParams->constructedFalconsTable[srcFalconIdx].ctxBufferSize;
+        config.addrSpaceList = pParams->constructedFalconsTable[srcFalconIdx].addrSpaceList;
+        config.registerBase  = pParams->constructedFalconsTable[srcFalconIdx].registerBase;
+
+        status = objCreate(&pGpu->genericKernelFalcons[tgtFalconIdx], pGpu, GenericKernelFalcon, pGpu, &config);
+        tgtFalconIdx++;
+
         if (status != NV_OK)
         {
-            NV_PRINTF(LEVEL_ERROR, "Failed to create a GenericKernelFalcon object %d\n", i);
+            NV_PRINTF(LEVEL_ERROR, "Failed to create a GenericKernelFalcon object with engdesc %u\n",
+                config.physEngDesc);
             goto done;
         }
     }
 
-    pGpu->numGenericKernelFalcons = pParams->numConstructedFalcons;
+    pGpu->numGenericKernelFalcons = tgtFalconIdx;
 
 done:
-    portMemFree(pParams);
+    if (bAllocatedParams)
+        portMemFree(pParams);
+
     if (status != NV_OK)
     {
         gpuDestroyGenericKernelFalconList(pGpu);
@@ -4487,6 +4752,100 @@ void gpuDestroyGenericKernelFalconList_IMPL(OBJGPU *pGpu)
     pGpu->numGenericKernelFalcons = 0;
 }
 
+NV_STATUS gpuBuildKernelVideoEngineList_IMPL(OBJGPU *pGpu)
+{
+    RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+    NV_STATUS status = NV_OK;
+    NvU32 numKernelVideoEngines = 0;
+    NV2080_CTRL_GPU_GET_CONSTRUCTED_FALCON_INFO_PARAMS *pParams;
+    NvU32 i;
+    NvU32 data;
+
+    // when regkey is not available, set default eventbuffer size to 32K
+    data = DRF_NUM(_REG_STR, _RM_VIDEO_EVENT_TRACE, _EVENT_BUFFER_SIZE_IN_4k, 0x8);
+
+    osReadRegistryDword(pGpu, NV_REG_STR_RM_VIDEO_EVENT_TRACE, &data);
+
+    pParams = portMemAllocNonPaged(sizeof(*pParams));
+    NV_ASSERT_OR_RETURN(pParams != NULL, NV_ERR_NO_MEMORY);
+
+    portMemSet(pParams, 0, sizeof(*pParams));
+
+    NV_ASSERT_OK_OR_GOTO(
+        status,
+        pRmApi->Control(pRmApi, pGpu->hInternalClient, pGpu->hInternalSubdevice,
+                        NV2080_CTRL_CMD_GPU_GET_CONSTRUCTED_FALCON_INFO,
+                        pParams, sizeof(*pParams)),
+        done);
+
+    for (i = 0; i < pParams->numConstructedFalcons; i++)
+    {
+        ENGDESCRIPTOR physEngDesc = pParams->constructedFalconsTable[i].engDesc;
+
+        if (!IS_VIDEO_ENGINE(physEngDesc))
+        {
+            continue;
+        }
+
+        NV_ASSERT_OR_ELSE(numKernelVideoEngines < NV_ARRAY_ELEMENTS(pGpu->kernelVideoEngines),
+            status = NV_ERR_INVALID_STATE; goto done;);
+
+        NV_ASSERT_OK_OR_GOTO(
+            status,
+            objCreate(&pGpu->kernelVideoEngines[numKernelVideoEngines], pGpu, KernelVideoEngine, pGpu, physEngDesc),
+            done);
+
+        pGpu->kernelVideoEngines[numKernelVideoEngines]->videoTraceInfo.eventTraceRegkeyData = data;
+        numKernelVideoEngines++;
+    }
+
+    pGpu->numKernelVideoEngines = numKernelVideoEngines;
+
+done:
+    portMemFree(pParams);
+    if (status != NV_OK)
+    {
+        gpuDestroyKernelVideoEngineList(pGpu);
+    }
+    return status;
+}
+
+NV_STATUS gpuInitVideoLogging_IMPL(OBJGPU *pGpu)
+{
+    NvU32 i;
+    for (i = 0; i < pGpu->numKernelVideoEngines; i++)
+    {
+        if (pGpu->kernelVideoEngines[i] != NULL)
+        {
+            NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kvidengInitLogging(pGpu, pGpu->kernelVideoEngines[i]));
+        }
+    }
+    return NV_OK;
+}
+
+void gpuFreeVideoLogging_IMPL(OBJGPU *pGpu)
+{
+    NvU32 i;
+    for (i = 0; i < pGpu->numKernelVideoEngines; i++)
+    {
+        if (pGpu->kernelVideoEngines[i] != NULL)
+        {
+            kvidengFreeLogging(pGpu, pGpu->kernelVideoEngines[i]);
+        }
+    }
+}
+
+void gpuDestroyKernelVideoEngineList_IMPL(OBJGPU *pGpu)
+{
+    NvU32 i;
+
+    for (i = 0; i < NV_ARRAY_ELEMENTS(pGpu->kernelVideoEngines); i++)
+    {
+        objDelete(pGpu->kernelVideoEngines[i]);
+        pGpu->kernelVideoEngines[i] = NULL;
+    }
+    pGpu->numKernelVideoEngines = 0;
+}
 
 GenericKernelFalcon *
 gpuGetGenericKernelFalconForEngine_IMPL
@@ -4552,7 +4911,7 @@ gpuFindChildPresent(const GPUCHILDPRESENT *pChildPresentList, NvU32 numChildPres
  * @param[out] Current state of GFID
  */
 NV_STATUS
-gpuGetGfidState(OBJGPU *pGpu, NvU32 gfid, GFID_ALLOC_STATUS *pState)
+gpuGetGfidState_IMPL(OBJGPU *pGpu, NvU32 gfid, GFID_ALLOC_STATUS *pState)
 {
     if (!gpuIsSriovEnabled(pGpu))
         return NV_OK;
@@ -4619,17 +4978,16 @@ gpuGetNextInEngineOrderList(OBJGPU *pGpu, ENGLIST_ITER *pIt, PENGDESCRIPTOR pEng
     NvBool                 bReverse = !!(pIt->flags & (GCO_LIST_UNLOAD | GCO_LIST_DESTROY));
     const GPUCHILDORDER   *pChildOrderList;
     NvU32                  numChildOrder;
-    const GPUCHILDPRESENT *pChildPresentList;
-    NvU32                  numChildPresent;
     const GPUCHILDPRESENT *pCurChildPresent;
     const GPUCHILDORDER   *pCurChildOrder;
     NvBool                 bAdvance = NV_FALSE;
+    NvBool                 bFirstIteration = NV_FALSE;
 
     pChildOrderList = gpuGetChildrenOrder_HAL(pGpu, &numChildOrder);
-    pChildPresentList = gpuGetChildrenPresent_HAL(pGpu, &numChildPresent);
 
     if (!pIt->bStarted)
     {
+        bFirstIteration = NV_TRUE;
         pIt->bStarted = NV_TRUE;
         pIt->childOrderIndex = bReverse ? (NvS32)numChildOrder - 1 : 0;
     }
@@ -4650,7 +5008,8 @@ gpuGetNextInEngineOrderList(OBJGPU *pGpu, ENGLIST_ITER *pIt, PENGDESCRIPTOR pEng
             continue;
         }
 
-        pCurChildPresent = gpuFindChildPresent(pChildPresentList, numChildPresent, pCurChildOrder->classId);
+        pCurChildPresent = gpuFindChildPresent(pGpu->pChildrenPresent,
+            pGpu->numChildrenPresent, pCurChildOrder->classId);
 
         if (!pCurChildPresent)
         {
@@ -4658,7 +5017,7 @@ gpuGetNextInEngineOrderList(OBJGPU *pGpu, ENGLIST_ITER *pIt, PENGDESCRIPTOR pEng
             continue;
         }
 
-        if (bAdvance)
+        if (bAdvance || bFirstIteration)
         {
             pIt->instanceID = bReverse ? pCurChildPresent->instances - 1 : 0;
         }
@@ -4738,18 +5097,26 @@ gpuInitDispIpHal_IMPL
     }
 
     void __nvoc_init_funcTable_KernelDisplay(KernelDisplay *, RmHalspecOwner *);
+    void __nvoc_init_dataField_KernelDisplay(KernelDisplay*, RmHalspecOwner* );
     __nvoc_init_funcTable_KernelDisplay(pKernelDisplay, pRmHalspecOwner);
+    __nvoc_init_dataField_KernelDisplay(pKernelDisplay, pRmHalspecOwner);
 
     void __nvoc_init_funcTable_DisplayInstanceMemory(DisplayInstanceMemory *, RmHalspecOwner *);
+    void __nvoc_init_dataField_DisplayInstanceMemory(DisplayInstanceMemory *, RmHalspecOwner *);
     __nvoc_init_funcTable_DisplayInstanceMemory(KERNEL_DISPLAY_GET_INST_MEM(pKernelDisplay),
+                                                pRmHalspecOwner);
+    __nvoc_init_dataField_DisplayInstanceMemory(KERNEL_DISPLAY_GET_INST_MEM(pKernelDisplay),
                                                 pRmHalspecOwner);
 
     void __nvoc_init_funcTable_KernelHead(KernelHead *, RmHalspecOwner *);
+    void __nvoc_init_dataField_KernelHead(KernelHead *, RmHalspecOwner *);
     NvU32 headIdx;
 
     for (headIdx = 0; headIdx < OBJ_MAX_HEADS; headIdx++)
     {
         __nvoc_init_funcTable_KernelHead(KDISP_GET_HEAD(pKernelDisplay, headIdx),
+                                         pRmHalspecOwner);
+        __nvoc_init_dataField_KernelHead(KDISP_GET_HEAD(pKernelDisplay, headIdx),
                                          pRmHalspecOwner);
     }
 
@@ -4806,6 +5173,21 @@ gpuIsCCDevToolsModeEnabled_IMPL(OBJGPU *pGpu)
     if ((pCC != NULL) && gpuIsCCFeatureEnabled(pGpu))
     {
         return pCC->getProperty(pCC, PDB_PROP_CONFCOMPUTE_DEVTOOLS_MODE_ENABLED);
+    }
+    return NV_FALSE;
+}
+
+/*!
+ *@brief Check if protected PCIe is enabled
+ */
+NvBool
+gpuIsCCMultiGpuProtectedPcieModeEnabled_IMPL(OBJGPU *pGpu)
+{
+    ConfidentialCompute *pCC = GPU_GET_CONF_COMPUTE(pGpu);
+
+    if ((pCC != NULL) && gpuIsCCFeatureEnabled(pGpu))
+    {
+        return pCC->getProperty(pCC, PDB_PROP_CONFCOMPUTE_MULTI_GPU_PROTECTED_PCIE_MODE_ENABLED);
     }
     return NV_FALSE;
 }
@@ -4868,6 +5250,11 @@ gpuGetDmaEndAddress_IMPL(OBJGPU *pGpu)
 
 VGPU_STATIC_INFO *gpuGetStaticInfo(OBJGPU *pGpu)
 {
+    if (IS_VIRTUAL(pGpu))
+    {
+        NV_ASSERT_OR_RETURN(GPU_GET_VGPU(pGpu) != NULL, NULL);
+        return &GPU_GET_VGPU(pGpu)->_vgpuStaticInfo;
+    }
 
     return NULL;
 }
@@ -4890,6 +5277,11 @@ OBJRPC *gpuGetGspClientRpc(OBJGPU *pGpu)
 
 OBJRPC *gpuGetVgpuRpc(OBJGPU *pGpu)
 {
+    if (IS_VIRTUAL(pGpu))
+    {
+        NV_ASSERT_OR_RETURN(GPU_GET_VGPU(pGpu) != NULL, NULL);
+        return GPU_GET_VGPU(pGpu)->pRpc;
+    }
     return NULL;
 }
 
@@ -5115,5 +5507,236 @@ gpuSetGC6SBIOSCapabilities_IMPL(OBJGPU *pGpu)
     RMTRACE_SBIOS (_ACPI_DSM_METHOD, pGpu->gpuId, ACPI_DSM_FUNCTION_JT, JT_FUNC_CAPS, pGpu->acpiMethodData.jtMethodData.jtCaps, 0, 0, 0, 0);
 
     return NV_OK;
+}
+
+NV_STATUS gpuSimEscapeWrite(OBJGPU *pGpu, const char *path, NvU32 Index, NvU32 Size, NvU32 Value)
+{
+    NV_ASSERT_OR_RETURN(Size <= (sizeof Value), NV_ERR_INVALID_ARGUMENT);
+
+    if (pGpu->bUseRpcSimEscapes)
+    {
+        return RmRpcSimEscapeWrite(pGpu, path, Index, Size, Value);
+    }
+    return osSimEscapeWrite(pGpu, path, Index, Size, Value);
+}
+
+NV_STATUS gpuSimEscapeWriteBuffer(OBJGPU *pGpu, const char *path, NvU32 Index, NvU32 Size, void* pBuffer)
+{
+    return osSimEscapeWriteBuffer(pGpu, path, Index, Size, pBuffer);
+}
+
+NV_STATUS gpuSimEscapeRead(OBJGPU *pGpu, const char *path, NvU32 Index, NvU32 Size, NvU32 *Value)
+{
+    NV_ASSERT_OR_RETURN(Size <= (sizeof *Value), NV_ERR_INVALID_ARGUMENT);
+
+    //
+    // Zero-initialize because the functions below don't fill in entire Value
+    // for Size < 4
+    //
+    NvU32 readValue = 0;
+    NV_STATUS status;
+
+    if (pGpu->bUseRpcSimEscapes)
+    {
+        status = RmRpcSimEscapeRead(pGpu, path, Index, Size, &readValue);
+    }
+    else
+    {
+        status = osSimEscapeRead(pGpu, path, Index, Size, &readValue);
+    }
+
+    *Value = readValue;
+    return status;
+}
+
+NV_STATUS gpuSimEscapeReadBuffer(OBJGPU *pGpu, const char *path, NvU32 Index, NvU32 Size, void* pBuffer)
+{
+    return osSimEscapeReadBuffer(pGpu, path, Index, Size, pBuffer);
+}
+
+//
+// Only supported with Windows, Debug or Develop driver, or with Release drivers instrumented builds.
+// Instrumented build: add RMCFG_OPTIONS="--enable=RMTEST" to nvmake command line
+// Todo: add OpenRM/GSP support
+//
+#if defined(GPU_LOAD_FAILURE_TEST_SUPPORTED)
+NV_STATUS
+gpuLoadFailurePathTest_IMPL
+(
+    OBJGPU *pGpu,
+    NvU32   engStage,
+    NvU32   engDescIdx,
+    NvBool  bStopTest
+)
+{
+    NV_STATUS rmStatus = NV_OK;
+
+    // Check that test is enabled and in the stating stage
+    if (!FLD_TEST_DRF(_REG_STR, _GPU_LOAD_FAILURE_TEST, _STATUS, _START, pGpu->loadFailurePathTestControl))
+    {
+        return NV_OK;
+    }
+
+    // Not supported for suspend/resume
+    if (pGpu->getProperty(pGpu, PDB_PROP_GPU_IN_PM_RESUME_CODEPATH))
+    {
+        return NV_OK;
+    }
+
+    // Stop the test
+    if (bStopTest)
+    {
+        pGpu->loadFailurePathTestControl = FLD_SET_DRF(_REG_STR, _GPU_LOAD_FAILURE_TEST, _STATUS, _FINISHED, pGpu->loadFailurePathTestControl);
+        goto writeRegistryAndExit;
+    }
+
+    NvU32 regEngStage = DRF_VAL(_REG_STR, _GPU_LOAD_FAILURE_TEST, _STAGE, pGpu->loadFailurePathTestControl);
+    NvU32 regEngDescIdx = DRF_VAL(_REG_STR, _GPU_LOAD_FAILURE_TEST, _ENGINEINDEX, pGpu->loadFailurePathTestControl);
+
+    // Check that we are not yet in the targeted stage (preinit, init, preload, load or postload)
+    if (engStage < regEngStage)
+    {
+        return NV_OK;
+    }
+
+    // Check that we are in the next stage
+    if (engStage > regEngStage)
+    {
+        // Reset engine index to 0 and move to next index
+        regEngDescIdx = 0;
+        regEngStage = engStage;
+    }
+
+    // Check that the engine is the next one to be tested
+    if (engDescIdx < regEngDescIdx)
+    {
+        return NV_OK;
+    }
+
+    // At this point we fail the engine
+    rmStatus = NV_ERR_GENERIC;
+
+    // Update registry key for next step
+    pGpu->loadFailurePathTestControl = FLD_SET_DRF(_REG_STR, _GPU_LOAD_FAILURE_TEST, _STATUS, _RUNNING, pGpu->loadFailurePathTestControl);
+    pGpu->loadFailurePathTestControl = FLD_SET_DRF_NUM(_REG_STR, _GPU_LOAD_FAILURE_TEST, _STAGE, regEngStage, pGpu->loadFailurePathTestControl);
+    pGpu->loadFailurePathTestControl = FLD_SET_DRF_NUM(_REG_STR, _GPU_LOAD_FAILURE_TEST, _ENGINEINDEX, regEngDescIdx + 1, pGpu->loadFailurePathTestControl);
+
+writeRegistryAndExit:
+    osWriteRegistryDword(pGpu,
+                         NV_REG_STR_GPU_LOAD_FAILURE_TEST,
+                         pGpu->loadFailurePathTestControl);
+
+    switch (engStage)
+    {
+        case NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_PREINIT:
+            NV_PRINTF(LEVEL_ERROR, "Failing GPU PreInit for Engine ID 0x%x (%d)\n", engDescIdx, engDescIdx);
+            break;
+        case NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_INIT:
+            NV_PRINTF(LEVEL_ERROR, "Failing GPU Init for Engine ID 0x%x (%d)\n", engDescIdx, engDescIdx);
+            break;
+        case NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_PRELOAD:
+            NV_PRINTF(LEVEL_ERROR, "Failing GPU PreLoad for Engine ID 0x%x (%d)\n", engDescIdx, engDescIdx);
+            break;
+        case NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_LOAD:
+            NV_PRINTF(LEVEL_ERROR, "Failing GPU Load for Engine ID 0x%x (%d)\n", engDescIdx, engDescIdx);
+            break;
+        case NV_REG_STR_GPU_LOAD_FAILURE_TEST_STAGE_POSTLOAD:
+            NV_PRINTF(LEVEL_ERROR, "Failing GPU PostLoad for Engine ID 0x%x (%d)\n", engDescIdx, engDescIdx);
+            break;
+    }
+
+
+    return rmStatus;
+}
+#endif
+
+NvU32
+gpuGetLitterValues_KERNEL
+(
+    OBJGPU *pGpu,
+    NvU32 index
+)
+{
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    const NV2080_CTRL_INTERNAL_STATIC_GR_INFO *pGrInfo;
+    NvU32 i;
+
+    NV_ASSERT_OR_RETURN(kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->bInitialized, 0);
+    pGrInfo = kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->pGrInfo;
+    NV_ASSERT_OR_RETURN(pGrInfo != NULL, 0);
+
+    for (i = 0; i < NV_ARRAY_ELEMENTS(pGrInfo->infoList); i++)
+    {
+        if (pGrInfo->infoList[i].index == index)
+            return pGrInfo->infoList[i].data;
+    }
+    return 0;
+}
+
+NV_STATUS gpuGetChipDetails_IMPL
+(
+    OBJGPU *pGpu,
+    NV2080_CTRL_GPU_GET_CHIP_DETAILS_PARAMS *pParams
+)
+{
+    NV2080_CTRL_BIOS_GET_SKU_INFO_PARAMS biosGetSKUInfoParams;
+
+    NV_ASSERT_OK_OR_RETURN(gpuGetSkuInfo_HAL(pGpu, &biosGetSKUInfoParams));
+
+    //
+    // GPU chip name (PCI device ID)
+    // Upper half of pGpu->idInfo.PCIDeviceID is devid
+    //
+    pParams->pciDevId = (NvU16)DRF_VAL(_PCI, _SUBID, _DEVICE, pGpu->idInfo.PCIDeviceID);
+
+    // GPU chip SKU
+    portStringCopy((char *) pParams->chipSku,
+                   sizeof(pParams->chipSku),
+                   (char *) biosGetSKUInfoParams.chipSKU,
+                   sizeof(biosGetSKUInfoParams.chipSKU));
+
+    // GPU revision
+    pParams->chipMajor = gpuGetChipMajRev(pGpu);
+    pParams->chipMinor = gpuGetChipMinRev(pGpu);
+
+    return NV_OK;
+}
+
+BRANDING_TYPE
+gpuDetectBranding_IMPL
+(
+    OBJGPU *pGpu
+)
+{
+    if (pGpu->bIsNvidiaNvs)
+        return BRANDING_TYPE_NVS_NVIDIA;
+    else if (pGpu->bIsQuadroAD)
+        return BRANDING_TYPE_QUADRO_AD;
+    else if (pGpu->bIsQuadro)
+        return BRANDING_TYPE_QUADRO_GENERIC;
+
+    return BRANDING_TYPE_NONE;
+}
+
+COMPUTE_BRANDING_TYPE
+gpuDetectComputeBranding_IMPL(OBJGPU *pGpu)
+{
+    if (pGpu->bIsTesla)
+        return COMPUTE_BRANDING_TYPE_TESLA;
+
+    return COMPUTE_BRANDING_TYPE_NONE;
+}
+
+/*!
+ * @brief Determine the VGX brand of the board
+ * @returns the VGX brand
+ */
+BRANDING_TYPE
+gpuDetectVgxBranding_IMPL(OBJGPU *pGpu)
+{
+    if (pGpu->bIsVgx)
+        return BRANDING_TYPE_VGX;
+
+    return BRANDING_TYPE_NONE;
 }
 

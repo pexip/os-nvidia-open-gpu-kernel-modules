@@ -556,6 +556,9 @@ typedef struct NVB0CC_CTRL_RELEASE_HES_PARAMS {
     NVB0CC_CTRL_HES_TYPE type;
 } NVB0CC_CTRL_RELEASE_HES_PARAMS;
 
+ /* End of extension construct */
+
+
 /*!
  * NVB0CC_CTRL_CMD_DISABLE_DYNAMIC_MMA_BOOST
  * 
@@ -587,5 +590,7 @@ typedef struct NVB0CC_CTRL_GET_DYNAMIC_MMA_BOOST_STATUS_PARAMS {
      */
     NvBool enabled;
 } NVB0CC_CTRL_GET_DYNAMIC_MMA_BOOST_STATUS_PARAMS;
+
+
 
 /* _ctrlb0ccprofiler_h_ */

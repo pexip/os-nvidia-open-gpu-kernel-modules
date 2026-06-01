@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -39,6 +39,7 @@
 #include "os/os.h"
 #include "containers/map.h"
 #include "nvrm_registry.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
 #include "gpu/gpu_timeout.h"
 
@@ -157,6 +158,7 @@ NV_STATUS threadStateGlobalAlloc(void)
 
     // Init the thread sequencer id counter to 0.
     threadStateDatabase.threadSeqCntr = 0;
+    threadStateDatabase.gspIsrThreadSeqCntr = 0;
 
     threadStateDatabase.spinlock = portSyncSpinlockCreate(portMemAllocatorGetGlobalNonPaged());
     if (threadStateDatabase.spinlock == NULL)

@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2013-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2013-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -64,6 +64,18 @@ typedef struct VirtMemAllocator VirtMemAllocator;
 
 typedef struct MMU_MAP_TARGET       MMU_MAP_TARGET;
 typedef struct NV0080_CTRL_DMA_ADV_SCHED_GET_VA_CAPS_PARAMS NV0080_CTRL_DMA_ADV_SCHED_GET_VA_CAPS_PARAMS;
+struct Device;
+
+#ifndef __NVOC_CLASS_Device_TYPEDEF__
+#define __NVOC_CLASS_Device_TYPEDEF__
+typedef struct Device Device;
+#endif /* __NVOC_CLASS_Device_TYPEDEF__ */
+
+#ifndef __nvoc_class_id_Device
+#define __nvoc_class_id_Device 0xe0ac20
+#endif /* __nvoc_class_id_Device */
+
+
 
 typedef struct
 {
@@ -114,7 +126,6 @@ typedef enum
 // BAR_IFB                    Used for IFB
 // PERFMON                    Used for Perfmon
 // PMU                        Used for PMU
-// DEFAULT_SIZE               Ignore varange parameters and use default
 // SET_MIRRORED               <DEPRECATED.........>
 //                            This flag will create a privileged PDB as part of this vaspace
 //                            This new PDB will mirror all of the allocations made in the
@@ -175,8 +186,6 @@ typedef enum
 #define VASPACE_FLAGS_BAR_IFB                                     NVBIT(9)
 #define VASPACE_FLAGS_PERFMON                                     NVBIT(10)
 #define VASPACE_FLAGS_PMU                                         NVBIT(11)
-#define VASPACE_FLAGS_DEFAULT_SIZE                                NVBIT(12)
-#define VASPACE_FLAGS_DEFAULT_PARAMS                              NVBIT(13)
 #define VASPACE_FLAGS_PTETABLE_PMA_MANAGED                        NVBIT(14)
 #define VASPACE_FLAGS_INVALIDATE_SCOPE_NVLINK_TLB                 NVBIT(15)
 #define VASPACE_FLAGS_DISABLE_SPLIT_VAS                           NVBIT(16)
@@ -231,11 +240,16 @@ typedef enum
 /*!
  * Abstract base class of an RM-managed virtual address space.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_VASPACE_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJVASPACE {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -250,12 +264,11 @@ struct OBJVASPACE {
     NvU64 (*__vaspaceGetVaLimit__)(struct OBJVASPACE *);
     NV_STATUS (*__vaspaceGetVasInfo__)(struct OBJVASPACE *, NV0080_CTRL_DMA_ADV_SCHED_GET_VA_CAPS_PARAMS *);
     NvU32 (*__vaspaceGetFlags__)(struct OBJVASPACE *);
-    NvBool (*__vaspaceIsInternalVaRestricted__)(struct OBJVASPACE *);
     NV_STATUS (*__vaspaceMap__)(struct OBJVASPACE *, struct OBJGPU *, const NvU64, const NvU64, const MMU_MAP_TARGET *, const VAS_MAP_FLAGS);
     void (*__vaspaceUnmap__)(struct OBJVASPACE *, struct OBJGPU *, const NvU64, const NvU64);
-    NV_STATUS (*__vaspaceReserveMempool__)(struct OBJVASPACE *, struct OBJGPU *, NvHandle, NvU64, NvU64, NvU32);
+    NV_STATUS (*__vaspaceReserveMempool__)(struct OBJVASPACE *, struct OBJGPU *, struct Device *, NvU64, NvU64, NvU32);
     struct OBJEHEAP *(*__vaspaceGetHeap__)(struct OBJVASPACE *);
-    NvU64 (*__vaspaceGetMapPageSize__)(struct OBJVASPACE *, struct OBJGPU *, EMEMBLOCK *);
+    NvU64 (*__vaspaceGetMapPageSize__)(struct OBJVASPACE *, struct OBJGPU *, struct EMEMBLOCK *);
     NvU64 (*__vaspaceGetBigPageSize__)(struct OBJVASPACE *);
     NvBool (*__vaspaceIsMirrored__)(struct OBJVASPACE *);
     NvBool (*__vaspaceIsFaultCapable__)(struct OBJVASPACE *);
@@ -316,10 +329,9 @@ NV_STATUS __nvoc_objCreate_OBJVASPACE(OBJVASPACE**, Dynamic*, NvU32);
 #define vaspaceGetVaLimit(pVAS) vaspaceGetVaLimit_DISPATCH(pVAS)
 #define vaspaceGetVasInfo(pVAS, pParams) vaspaceGetVasInfo_DISPATCH(pVAS, pParams)
 #define vaspaceGetFlags(pVAS) vaspaceGetFlags_DISPATCH(pVAS)
-#define vaspaceIsInternalVaRestricted(pVAS) vaspaceIsInternalVaRestricted_DISPATCH(pVAS)
 #define vaspaceMap(pVAS, pGpu, vaLo, vaHi, pTarget, flags) vaspaceMap_DISPATCH(pVAS, pGpu, vaLo, vaHi, pTarget, flags)
 #define vaspaceUnmap(pVAS, pGpu, vaLo, vaHi) vaspaceUnmap_DISPATCH(pVAS, pGpu, vaLo, vaHi)
-#define vaspaceReserveMempool(pVAS, pGpu, hClient, size, pageSizeLockMask, flags) vaspaceReserveMempool_DISPATCH(pVAS, pGpu, hClient, size, pageSizeLockMask, flags)
+#define vaspaceReserveMempool(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags) vaspaceReserveMempool_DISPATCH(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags)
 #define vaspaceGetHeap(pVAS) vaspaceGetHeap_DISPATCH(pVAS)
 #define vaspaceGetMapPageSize(pVAS, pGpu, pMemBlock) vaspaceGetMapPageSize_DISPATCH(pVAS, pGpu, pMemBlock)
 #define vaspaceGetBigPageSize(pVAS) vaspaceGetBigPageSize_DISPATCH(pVAS)
@@ -386,12 +398,6 @@ static inline NvU32 vaspaceGetFlags_DISPATCH(struct OBJVASPACE *pVAS) {
     return pVAS->__vaspaceGetFlags__(pVAS);
 }
 
-NvBool vaspaceIsInternalVaRestricted_IMPL(struct OBJVASPACE *pVAS);
-
-static inline NvBool vaspaceIsInternalVaRestricted_DISPATCH(struct OBJVASPACE *pVAS) {
-    return pVAS->__vaspaceIsInternalVaRestricted__(pVAS);
-}
-
 static inline NV_STATUS vaspaceMap_b7902c(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, const NvU64 vaLo, const NvU64 vaHi, const MMU_MAP_TARGET *pTarget, const VAS_MAP_FLAGS flags) {
     NV_ASSERT_PRECOMP(((NvBool)(0 != 0)));
     return NV_ERR_NOT_SUPPORTED;
@@ -409,12 +415,12 @@ static inline void vaspaceUnmap_DISPATCH(struct OBJVASPACE *pVAS, struct OBJGPU 
     pVAS->__vaspaceUnmap__(pVAS, pGpu, vaLo, vaHi);
 }
 
-static inline NV_STATUS vaspaceReserveMempool_ac1694(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, NvHandle hClient, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
+static inline NV_STATUS vaspaceReserveMempool_ac1694(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, struct Device *pDevice, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
     return NV_OK;
 }
 
-static inline NV_STATUS vaspaceReserveMempool_DISPATCH(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, NvHandle hClient, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
-    return pVAS->__vaspaceReserveMempool__(pVAS, pGpu, hClient, size, pageSizeLockMask, flags);
+static inline NV_STATUS vaspaceReserveMempool_DISPATCH(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, struct Device *pDevice, NvU64 size, NvU64 pageSizeLockMask, NvU32 flags) {
+    return pVAS->__vaspaceReserveMempool__(pVAS, pGpu, pDevice, size, pageSizeLockMask, flags);
 }
 
 static inline struct OBJEHEAP *vaspaceGetHeap_128d6d(struct OBJVASPACE *pVAS) {
@@ -426,12 +432,12 @@ static inline struct OBJEHEAP *vaspaceGetHeap_DISPATCH(struct OBJVASPACE *pVAS) 
     return pVAS->__vaspaceGetHeap__(pVAS);
 }
 
-static inline NvU64 vaspaceGetMapPageSize_07238a(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, EMEMBLOCK *pMemBlock) {
+static inline NvU64 vaspaceGetMapPageSize_07238a(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, struct EMEMBLOCK *pMemBlock) {
     NV_ASSERT_PRECOMP(((NvBool)(0 != 0)));
     return 0U;
 }
 
-static inline NvU64 vaspaceGetMapPageSize_DISPATCH(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, EMEMBLOCK *pMemBlock) {
+static inline NvU64 vaspaceGetMapPageSize_DISPATCH(struct OBJVASPACE *pVAS, struct OBJGPU *pGpu, struct EMEMBLOCK *pMemBlock) {
     return pVAS->__vaspaceGetMapPageSize__(pVAS, pGpu, pMemBlock);
 }
 
@@ -614,4 +620,5 @@ NvU64 vaspaceGetVaStart_IMPL(struct OBJVASPACE *pVAS);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_VASPACE_NVOC_H_

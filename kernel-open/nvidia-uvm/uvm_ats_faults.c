@@ -203,7 +203,7 @@ done:
     ats_context->prefetch_state.has_preferred_location = false;
 #endif
 
-    ats_context->residency_id = gpu ? gpu->parent->id : UVM_ID_CPU;
+    ats_context->residency_id = gpu ? gpu->id : UVM_ID_CPU;
     ats_context->residency_node = residency;
 }
 

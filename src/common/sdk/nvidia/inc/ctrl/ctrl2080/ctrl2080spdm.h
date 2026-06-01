@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -34,94 +34,52 @@
 
 /*************************** SPDM COMMANDS ************************************/
 
+#include "cc_drv.h"
+
 /*!
  * @brief SPDM Command Types
  *
  */
-#define RM_GSP_SPDM_CMD_ID_CC_INIT         (0x1)
-#define RM_GSP_SPDM_CMD_ID_CC_DEINIT       (0x2)
-#define RM_GSP_SPDM_CMD_ID_CC_CTRL         (0x3)
-#define RM_GSP_SPDM_CMD_ID_CC_INIT_RM_DATA (0x4)
+#define RM_GSP_SPDM_CMD_ID_CC_INIT           (0x1)
+#define RM_GSP_SPDM_CMD_ID_CC_DEINIT         (0x2)
+#define RM_GSP_SPDM_CMD_ID_CC_CTRL           (0x3)
+#define RM_GSP_SPDM_CMD_ID_CC_INIT_RM_DATA   (0x4)
+#define RM_GSP_SPDM_CMD_ID_CC_HEARTBEAT_CTRL (0x5)
+#define RM_GSP_SPDM_CMD_ID_FIPS_SELFTEST     (0x6)
 
 
-#define RM_GSP_SPDM_CMD_ID_INVALID_COMMAND (0xFF)
+#define RM_GSP_SPDM_CMD_ID_INVALID_COMMAND   (0xFF)
 
 
 
-#define RSVD7_SIZE                         16
+#define RSVD7_SIZE                           16
 
-#define RSVD8_SIZE                         2
-
-/*!
- * Guest RM must send RM_GSP_SPDM_CMD_ID_CC_INIT to GSP-RM before SPDM session start
- */
-typedef struct RM_GSP_SPDM_CC_INIT_CTX {
-    NvU32         guestId;         // To indicate CC guest Id, VM0, VM1 ... etc
-
-
-    NvU64_ALIGN32 dmaAddr; // The address RM allocate in SYS memory or FB memory.
-} RM_GSP_SPDM_CC_INIT_CTX;
-typedef struct RM_GSP_SPDM_CC_INIT_CTX *PRM_GSP_SPDM_CC_INIT_CTX;
+#define RSVD8_SIZE                           2
 
 /*!
  * Guest RM provides INIT context
  */
 typedef struct RM_GSP_SPDM_CMD_CC_INIT {
     // Command must be first as this struct is the part of union
-    NvU8                    cmdType;
-
-    RM_GSP_SPDM_CC_INIT_CTX ccInitCtx;
+    NvU8 cmdType;
 } RM_GSP_SPDM_CMD_CC_INIT;
 typedef struct RM_GSP_SPDM_CMD_CC_INIT *PRM_GSP_SPDM_CMD_CC_INIT;
-
-#define DEINIT_FLAGS_FORCE_CLEAR (0x1)
-
-/*!
- * Guest RM must send RM_GSP_SPDM_CMD_ID_CC_DEINIT to GSP-RM to end a session
- */
-typedef struct RM_GSP_SPDM_CC_DEINIT_CTX {
-    NvU32 guestId;     // To indicate CC guest Id, VM0, VM1 ... etc
-
-    NvU32 endpointId;     // To indicate SPDM endpoint Id
-
-    NvU32 flags;
-} RM_GSP_SPDM_CC_DEINIT_CTX;
-typedef struct RM_GSP_SPDM_CC_DEINIT_CTX *PRM_GSP_SPDM_CC_DEINIT_CTX;
 
 /*!
  * Guest RM provides INIT context
  */
 typedef struct RM_GSP_SPDM_CMD_CC_DEINIT {
     // Command must be first as this struct is the part of union
-    NvU8                      cmdType;
-
-    RM_GSP_SPDM_CC_DEINIT_CTX ccDeinitCtx;
+    NvU8 cmdType;
 } RM_GSP_SPDM_CMD_CC_DEINIT;
 typedef struct RM_GSP_SPDM_CMD_CC_DEINIT *PRM_GSP_SPDM_CMD_CC_DEINIT;
-
-/*!
- * RM provides SPDM message request context, include header + corresponding payload
- */
-
-typedef struct RM_GSP_SPDM_CC_CTRL_CTX {
-
-    NvU32 version;
-
-    NvU32 guestId;     // To indicate CC client Id, VM0, VM1 ... etc
-
-    NvU32 endpointId;     // To indicate SPDM endpoint Id
-
-} RM_GSP_SPDM_CC_CTRL_CTX;
-typedef struct RM_GSP_SPDM_CC_CTRL_CTX *PRM_GSP_SPDM_CC_CTRL_CTX;
 
 /*!
  * RM provides the SPDM request info to GSP
  */
 typedef struct RM_GSP_SPDM_CMD_CC_CTRL {
     // Command must be first as this struct is the part of union
-    NvU8                    cmdType;
-
-    RM_GSP_SPDM_CC_CTRL_CTX ccCtrlCtx;
+    NvU8 cmdType;
 } RM_GSP_SPDM_CMD_CC_CTRL;
 typedef struct RM_GSP_SPDM_CMD_CC_CTRL *PRM_GSP_SPDM_CMD_CC_CTRL;
 
@@ -133,9 +91,9 @@ typedef struct RM_GSP_SPDM_CMD_CC_INIT_RM_DATA {
 
     NvU32 rsvd1;
 
-    char  rsvd2[4];
+    char  rsvd2[9];
 
-    char  rsvd3[2];
+    char  rsvd3[5];
 
     char  rsvd4[5];
 
@@ -149,6 +107,34 @@ typedef struct RM_GSP_SPDM_CMD_CC_INIT_RM_DATA {
 } RM_GSP_SPDM_CMD_CC_INIT_RM_DATA;
 typedef struct RM_GSP_SPDM_CMD_CC_INIT_RM_DATA *PRM_GSP_SPDM_CMD_CC_INIT_RM_DATA;
 
+typedef struct RM_GSP_SPDM_CMD_CC_HEARTBEAT_CTRL {
+    // Command must be first as this struct is the part of union
+    NvU8   cmdType;
+
+    // Whether to enable or disable heartbeats
+    NvBool bEnable;
+} RM_GSP_SPDM_CMD_CC_HEARTBEAT_CTRL;
+typedef struct RM_GSP_SPDM_CMD_CC_HEARTBEAT_CTRL *PRM_GSP_SPDM_CMD_CC_HEARTBEAT_CTRL;
+
+
+
+/*! 
+ * HCC FIPS Self-test.
+ */
+#define CE_FIPS_SELF_TEST_DATA_SIZE     16
+#define CE_FIPS_SELF_TEST_AUTH_TAG_SIZE 16
+#define CE_FIPS_SELF_TEST_IV_SIZE       12
+
+typedef struct RM_GSP_SPDM_CMD_FIPS_SELFTEST {
+    NvU8   cmdType;
+    NvU8   isEnc;
+    CC_KMB kmb;
+    NvU8   text[CE_FIPS_SELF_TEST_DATA_SIZE];
+    NvU8   authTag[CE_FIPS_SELF_TEST_AUTH_TAG_SIZE];
+} RM_GSP_SPDM_CMD_FIPS_SELFTEST;
+typedef struct RM_GSP_SPDM_CMD_FIPS_SELFTEST *PRM_GSP_SPDM_CMD_FIPS_SELFTEST;
+
+
 
 /*!
  * NOTE : Do not include structure members that have alignment requirement >= 8 to avoid alignment directives 
@@ -161,11 +147,15 @@ typedef struct RM_GSP_SPDM_CMD_CC_INIT_RM_DATA *PRM_GSP_SPDM_CMD_CC_INIT_RM_DATA
  * A union of all SPDM Commands.
  */
 typedef union RM_GSP_SPDM_CMD {
-    NvU8                            cmdType;
-    RM_GSP_SPDM_CMD_CC_INIT         ccInit;
-    RM_GSP_SPDM_CMD_CC_DEINIT       ccDeinit;
-    RM_GSP_SPDM_CMD_CC_CTRL         ccCtrl;
-    RM_GSP_SPDM_CMD_CC_INIT_RM_DATA rmDataInitCmd;
+    NvU8                              cmdType;
+    RM_GSP_SPDM_CMD_CC_INIT           ccInit;
+    RM_GSP_SPDM_CMD_CC_DEINIT         ccDeinit;
+    RM_GSP_SPDM_CMD_CC_CTRL           ccCtrl;
+    RM_GSP_SPDM_CMD_CC_INIT_RM_DATA   rmDataInitCmd;
+    RM_GSP_SPDM_CMD_CC_HEARTBEAT_CTRL ccHeartbeatCtrl;
+
+
+    RM_GSP_SPDM_CMD_FIPS_SELFTEST     ccFipsTest;
 
 } RM_GSP_SPDM_CMD;
 typedef union RM_GSP_SPDM_CMD *PRM_GSP_SPDM_CMD;
@@ -179,17 +169,19 @@ typedef union RM_GSP_SPDM_CMD *PRM_GSP_SPDM_CMD;
 /*!
  * Returns the status for program CE keys to RM
  */
-#define RM_GSP_SPDM_MSG_ID_CC_INIT         (0x1)
-#define RM_GSP_SPDM_MSG_ID_CC_DEINIT       (0x2)
-#define RM_GSP_SPDM_MSG_ID_CC_CTRL         (0x3)
-#define RM_GSP_SPDM_MSG_ID_CC_INIT_RM_DATA (0x4)
+#define RM_GSP_SPDM_MSG_ID_CC_INIT           (0x1)
+#define RM_GSP_SPDM_MSG_ID_CC_DEINIT         (0x2)
+#define RM_GSP_SPDM_MSG_ID_CC_CTRL           (0x3)
+#define RM_GSP_SPDM_MSG_ID_CC_INIT_RM_DATA   (0x4)
+#define RM_GSP_SPDM_MSG_ID_CC_HEARTBEAT_CTRL (0x5)
+#define RM_GSP_SPDM_MSG_ID_FIPS_SELFTEST     (0x6)
 
 
 
 /*!
  * Returns the Error Status for Invalid Command
  */
-#define RM_GSP_SPDM_MSG_ID_INVALID_COMMAND (0xFF)
+#define RM_GSP_SPDM_MSG_ID_INVALID_COMMAND   (0xFF)
 
 /*!
  * NOTE : Do not include structure members that have alignment requirement >= 8 to avoid alignment directives 
@@ -202,26 +194,20 @@ typedef union RM_GSP_SPDM_CMD *PRM_GSP_SPDM_CMD;
  * SPDM message structure.
  */
 typedef struct RM_GSP_SPDM_MSG {
-    NvU8   msgType;
-
-    NvU32  version;
-
-    NvU32  guestId;
-
-    NvU32  endpointId;
+    NvU8  msgType;
 
     // status returned from GSP message infrastructure.
-    NvU32  status;
+    NvU32 status;
 
-    NvU32  rsvd1;
+    NvU32 rsvd1;
 
-    NvU32  rsvd2;
+    NvU32 rsvd2;
 
-    NvU32  rsvd3;
+    NvU32 rsvd3;
 
-    NvU32  rsvd4;
+    NvU32 rsvd4;
 
-    NvBool rsvd5;
+    NvU32 rsvd5;
 } RM_GSP_SPDM_MSG;
 typedef struct RM_GSP_SPDM_MSG *PRM_GSP_SPDM_MSG;
 

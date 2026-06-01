@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -67,11 +67,16 @@ struct CLIENT_ENTRY
  * Base-class for objects that are shared among multiple
  * RsResources (including RsResources from other clients)
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_RS_SERVER_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct RsShared {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -125,11 +130,16 @@ MAKE_INTRUSIVE_MAP(RsSharedMap, RsShared, node);
  * that occur on objects which reference an RsSession will
  * need to acquire pLock first.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_RS_SERVER_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct RsSession {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct RsShared __nvoc_base_RsShared;
@@ -661,10 +671,26 @@ extern NV_STATUS serverAllocApiCopyOut(RsServer *pServer, NV_STATUS status, API_
 
 /**
  * Obtain a second client handle to lock if required for the allocation.
- * @param[in]   pParams  Resource allocation parameters
- * @param[in]   phClient Client to lock, if any
+ * @param[in]   externalClassId External class ID of resource
+ * @param[in]   pAllocParams    Class-specific allocation parameters
+ * @param[out]  phSecondClient  Second client handle to lock on success
+ *
+ * @return NV_OK on success
+           NV_ERR_INVALID_STATE if allocation is incorrectly configured with RS_FLAGS_DUAL_CLIENT_LOCK without having updated this function.
  */
-extern NV_STATUS serverLookupSecondClient(RS_RES_ALLOC_PARAMS_INTERNAL *pParams, NvHandle *phClient);
+extern NV_STATUS serverAllocLookupSecondClient(NvU32 externalClassId, void *pAllocParams, NvHandle *phSecondClient);
+
+/**
+ * Obtain a second client handle to lock if required for the control (DISCOURAGED).
+ * @param[in]    cmd            Control call ID
+ * @param[in]    pControlParams Control-specific parameters
+ * @param[in]    pCookie        Control call cookie to check flags for
+ * @param[out]   phSecondClient Second client handle to lock on success
+ *
+ * @return NV_OK on success
+           NV_ERR_INVALID_STATE if allocation is incorrectly configured with RMCTRL_FLAGS_DUAL_CLIENT_LOCK without having updated this function.
+ */
+extern NV_STATUS serverControlLookupSecondClient(NvU32 cmd, void *pControlParams, RS_CONTROL_COOKIE *pCookie, NvHandle *phSecondClient);
 
 /**
  * Acquires a top-level lock. User-implemented.
@@ -1213,4 +1239,5 @@ RsResourceRef *resservGetContextRefByType(NvU32 internalClassId, NvBool bSearchA
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_RS_SERVER_NVOC_H_

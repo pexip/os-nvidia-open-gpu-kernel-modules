@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2014-2020 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -51,6 +51,7 @@
 #define NVA081_PCI_CONFIG_SPACE_SIZE         0x100
 #define NVA081_PGPU_METADATA_STRING_SIZE     256
 #define NVA081_EXTRA_PARAMETERS_SIZE         1024
+#define NVA081_PLACEMENT_ID_INVALID          0xFFFFU
 #define NVA081_CONFIG_PARAMS_MAX_LENGTH      1024
 
 #define NVA081_MAX_BAR_REGION_COUNT          4
@@ -122,6 +123,9 @@ typedef struct NVA081_CTRL_VGPU_INFO {
     NvU32 exclusiveSize;
     // used only by NVML
     NvU32 gpuInstanceProfileId;
+    NvU32 placementSize;
+    NvU32 placementCount;
+    NvU32 placementIds[NVA081_MAX_VGPU_PER_PGPU];
 } NVA081_CTRL_VGPU_INFO;
 
 /*
@@ -235,6 +239,9 @@ typedef struct NVA081_GUEST_VM_INFO {
  *  This parameter specifies whether driver is loaded on this particular vGPU.
  * swizzId [OUT]
  *  This param specifies the GPU Instance ID or Swizz ID
+ * placementId [OUT]
+ *  This param specifies the placement ID of heterogeneous timesliced vGPU instance.
+ *  Otherwise it is NVA081_PLACEMENT_ID_INVALID.
  *
  */
 typedef struct NVA081_HOST_VGPU_DEVICE {
@@ -248,6 +255,7 @@ typedef struct NVA081_HOST_VGPU_DEVICE {
     NvU32  eccState;
     NvBool bDriverLoaded;
     NvU32  swizzId;
+    NvU32  placementId;
 } NVA081_HOST_VGPU_DEVICE;
 
 /* ECC state values */
@@ -431,11 +439,11 @@ typedef struct NVA081_CTRL_VGPU_CONFIG_EVENT_SET_NOTIFICATION_PARAMS {
 #define NVA081_CTRL_EVENT_SET_NOTIFICATION_ACTION_REPEAT               (0x00000002)
 
 /*
- * NVA081_CTRL_CMD_VGPU_CONFIG_MDEV_REGISTER
+ * NVA081_CTRL_CMD_VGPU_CONFIG_UPDATE_PGPU_INFO
  *
  * This command register the GPU to Linux kernel's mdev module for vGPU on KVM.
  */
-#define NVA081_CTRL_CMD_VGPU_CONFIG_MDEV_REGISTER                      (0xa0810109) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | 0x9" */
+#define NVA081_CTRL_CMD_VGPU_CONFIG_UPDATE_PGPU_INFO                   (0xa0810109) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | 0x9" */
 
 /*
  * NVA081_CTRL_CMD_VGPU_CONFIG_SET_VGPU_INSTANCE_ENCODER_CAPACITY
@@ -716,6 +724,159 @@ typedef struct NVA081_CTRL_VGPU_CONFIG_VALIDATE_SWIZZID_PARAMS {
 } NVA081_CTRL_VGPU_CONFIG_VALIDATE_SWIZZID_PARAMS;
 
 /*
+ * NVA081_CTRL_CMD_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO
+ *
+ * This command is used to get a placement Id from RM for timesliced
+ * heterogeneous vGPUs.
+ *
+ * isHeterogeneousEnabled [OUT]
+ *  This param specific whether timesliced heterogeneous vGPU is enabled
+ *  for different FB sized profiles.
+ *
+ * vgpuTypeId [IN]
+ *  This param specifies the Type ID for VGPU profile
+ *
+ * placementId [IN / OUT]
+ *  This param specifies the input placement ID provided by hypervisor
+ *  or output placement ID reserved by RM for vGPU type ID.
+ *
+ * TODO : This same RmCtrl will be also be used to provide GSP heap offset
+ *        to CPU plugin when vGPU-GSP is enabled.
+ *        (As guest fb and gsp heap is allocated before A084 object)
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_INVALID_REQUEST
+ *   NV_ERR_INVALID_STATE
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NVA081_CTRL_CMD_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO (0xa081011b) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO_PARAMS_MESSAGE_ID (0x1bU)
+
+typedef struct NVA081_CTRL_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO_PARAMS {
+    NvBool isHeterogeneousEnabled;
+    NvU16  placementId;
+    NvU32  vgpuTypeId;
+    NV_DECLARE_ALIGNED(NvU64 guestFbLength, 8);
+    NV_DECLARE_ALIGNED(NvU64 guestFbOffset, 8);
+    NV_DECLARE_ALIGNED(NvU64 gspHeapOffset, 8);
+} NVA081_CTRL_VGPU_CONFIG_UPDATE_HETEROGENEOUS_INFO_PARAMS;
+
+/*
+ * NVA081_CTRL_CMD_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS
+ *
+ * This command fetches count and list of creatable vGPU placements
+ *
+ * Parameters:
+ *
+ * vgpuTypeId [IN]
+ *  The client provided vGPU type ID
+ *
+ * placementSize [OUT]
+ *  The number of placement slots occupied by the vGPU type
+ *
+ * count [OUT]
+ *  This parameter returns the number of placements supported for the vGPU
+ *
+ * placementIds [OUT]
+ *  Array of creatable placement IDs
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_OBJECT_NOT_FOUND
+ *   NV_ERR_NOT_SUPPORTED
+ */
+
+#define NVA081_CTRL_CMD_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS (0xa081011c) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS_PARAMS_MESSAGE_ID (0x1cU)
+
+typedef struct NVA081_CTRL_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS_PARAMS {
+    NvU32 vgpuTypeId;
+    NvU32 placementSize;
+    NvU32 count;
+    NvU32 placementIds[NVA081_MAX_VGPU_PER_PGPU];
+} NVA081_CTRL_VGPU_CONFIG_GET_CREATABLE_PLACEMENTS_PARAMS;
+
+/*
+ * NVA081_CTRL_CMD_PGPU_GET_VGPU_STREAMING_CAPABILITY
+ *
+ * This command is used to get streaming capability for the physical GPU.
+ *
+ * streamingCapability [OUT]
+ *  This param specifies whether vGPU profiles on the GPU supports migration data streaming
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_INVALID_REQUEST
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NVA081_CTRL_CMD_PGPU_GET_VGPU_STREAMING_CAPABILITY (0xa081011d) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_PGPU_GET_VGPU_STREAMING_CAPABILITY_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_PGPU_GET_VGPU_STREAMING_CAPABILITY_PARAMS_MESSAGE_ID (0x1dU)
+
+typedef struct NVA081_CTRL_PGPU_GET_VGPU_STREAMING_CAPABILITY_PARAMS {
+    NvBool streamingCapability;
+} NVA081_CTRL_PGPU_GET_VGPU_STREAMING_CAPABILITY_PARAMS;
+
+/* vGPU capabilities */
+#define NVA081_CTRL_VGPU_CAPABILITY_MINI_QUARTER_GPU         0
+#define NVA081_CTRL_VGPU_CAPABILITY_COMPUTE_MEDIA_ENGINE_GPU 1
+
+/*
+ * NVA081_CTRL_CMD_VGPU_SET_CAPABILITY
+ *
+ * This command is used to set vGPU capability for the physical GPU.
+ *
+ * capability [IN]
+ *  This param specifies the requested capabiity of the device that is to be set
+ *  One of NVA081_CTRL_VGPU_CAPABILITY* values
+ *
+ * state [IN]
+ *  This param specifies the state of the capability
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_OBJECT_NOT_FOUND
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NVA081_CTRL_CMD_VGPU_SET_CAPABILITY                  (0xa081011e) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_VGPU_SET_CAPABILITY_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_VGPU_SET_CAPABILITY_PARAMS_MESSAGE_ID (0x1eU)
+
+typedef struct NVA081_CTRL_VGPU_SET_CAPABILITY_PARAMS {
+    NvU32  capability;
+    NvBool state;
+} NVA081_CTRL_VGPU_SET_CAPABILITY_PARAMS;
+
+/*
+ * NVA081_CTRL_CMD_VGPU_GET_CAPABILITY
+ *
+ * This command is to get state of vGPU capability for the physical GPU.
+ *
+ * capability [IN]
+ *  This param specifies the requested capabiity of the device that is to be set
+ *  One of NVA081_CTRL_VGPU_CAPABILITY* values
+ *
+ * state [OUT]
+ *  This param specifies the state of the capability
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_OBJECT_NOT_FOUND
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NVA081_CTRL_CMD_VGPU_GET_CAPABILITY (0xa081011f) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_VGPU_GET_CAPABILITY_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_VGPU_GET_CAPABILITY_PARAMS_MESSAGE_ID (0x1fU)
+
+typedef struct NVA081_CTRL_VGPU_GET_CAPABILITY_PARAMS {
+    NvU32  capability;
+    NvBool state;
+} NVA081_CTRL_VGPU_GET_CAPABILITY_PARAMS;
+
+/*
  * NVA081_CTRL_CMD_VGPU_SET_VM_NAME
  *
  * This command is to set VM name for KVM.
@@ -767,6 +928,9 @@ typedef struct NVA081_CTRL_VGPU_SET_VM_NAME_PARAMS {
  * sparseCount [OUT]
  *  This param provides the number of sparse mmap regions in BAR0
  *
+ * isBar064bit [OUT]
+ *  This param provides whether the BAR0 is 64bit of the vGPU device
+ *
  * Possible status values returned are:
  *   NV_OK
  *   NV_ERR_OBJECT_NOT_FOUND
@@ -778,13 +942,36 @@ typedef struct NVA081_CTRL_VGPU_SET_VM_NAME_PARAMS {
 #define NVA081_CTRL_VGPU_GET_BAR_INFO_PARAMS_MESSAGE_ID (0x21U)
 
 typedef struct NVA081_CTRL_VGPU_GET_BAR_INFO_PARAMS {
-    NvU32 gpuPciId;
-    NvU8  vgpuName[VM_UUID_SIZE];
-    NvU8  configParams[NVA081_CONFIG_PARAMS_MAX_LENGTH];
+    NvU32  gpuPciId;
+    NvU8   vgpuName[VM_UUID_SIZE];
+    NvU8   configParams[NVA081_CONFIG_PARAMS_MAX_LENGTH];
     NV_DECLARE_ALIGNED(NvU64 barSizes[NVA081_MAX_BAR_REGION_COUNT], 8);
     NV_DECLARE_ALIGNED(NvU64 sparseOffsets[NVA081_MAX_SPARSE_REGION_COUNT], 8);
     NV_DECLARE_ALIGNED(NvU64 sparseSizes[NVA081_MAX_SPARSE_REGION_COUNT], 8);
-    NvU32 sparseCount;
+    NvU32  sparseCount;
+    NvBool isBar064bit;
 } NVA081_CTRL_VGPU_GET_BAR_INFO_PARAMS;
+
+/*
+ * NVA081_CTRL_CMD_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH
+ *
+ * This command is to get the migration bandwidth of the physical GPU.
+ *
+ * migrationBandwidth [OUT]
+ *  This param specifies the migration bandwidth of GPU
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_INVALID_REQUEST
+ *   NV_ERR_INVALID_STATE
+ *   NV_ERR_INVALID_ARGUMENT
+ */
+#define NVA081_CTRL_CMD_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH (0xa0810122) /* finn: Evaluated from "(FINN_NVA081_VGPU_CONFIG_VGPU_CONFIG_INTERFACE_ID << 8) | NVA081_CTRL_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH_PARAMS_MESSAGE_ID" */
+
+#define NVA081_CTRL_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH_PARAMS_MESSAGE_ID (0x22U)
+
+typedef struct NVA081_CTRL_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH_PARAMS {
+    NvU32 migrationBandwidth;
+} NVA081_CTRL_VGPU_CONFIG_GET_MIGRATION_BANDWIDTH_PARAMS;
 
 /* _ctrlA081vgpuconfig_h_ */

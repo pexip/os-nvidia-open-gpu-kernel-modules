@@ -36,16 +36,15 @@
 #include "platform/chipset/chipset.h"
 #include "platform/chipset/chipset_info.h"
 #include "nvpcie.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
 #include "objtmr.h"
 #include "gpu/bif/kernel_bif.h"
-#include "gpu/gpu.h"
 #include "gpu/gsp/gsp_static_config.h"
 #include "virtualization/hypervisor/hypervisor.h"
 #include "gpu/mem_mgr/virt_mem_allocator_common.h"
 #include "ctrl/ctrl2080/ctrl2080bus.h" // NV2080_CTRL_BUS_INFO_PCIE_LINK_ERRORS_*
 #include "core/thread_state.h"
-#include "nveGPUConfig.h"
 #include "Nvcm.h"
 #include "nvdevid.h"
 
@@ -73,7 +72,6 @@ static void      objClGpuMapEnhCfgSpace(OBJGPU *, OBJCL *);
 static void      objClGpuUnmapEnhCfgSpace(OBJGPU *);
 static NV_STATUS objClGpuIs3DController(OBJGPU *);
 static void      objClLoadPcieVirtualP2PApproval(OBJGPU *);
-static void      objClCheckForExternalGpu(OBJGPU *, OBJCL *);
 static void      _objClAdjustTcVcMap(OBJGPU *, OBJCL *, PORTDATA *);
 static void      _objClGetDownstreamAtomicsEnabledMask(void  *, NvU32, NvU32 *);
 static void      _objClGetUpstreamAtomicRoutingCap(void  *, NvU32, NvBool *);
@@ -293,8 +291,8 @@ objClInitPcieChipset(OBJGPU *pGpu, OBJCL *pCl)
         if (clFindFHBAndGetChipsetInfoIndex(pCl, &chipsetInfoIndex) == NV_OK)
         {
             pCl->Chipset = chipsetInfo[chipsetInfoIndex].chipset;
-            // If the chipset info is not found, hipsetInfo[chipsetInfoIndex].setupFunc = NULL
-            if ((!chipsetInfo[chipsetInfoIndex].setupFunc) ||
+            // If the chipset info is not found, chipsetInfo[chipsetInfoIndex].setupFunc = NULL
+            if ((chipsetInfo[chipsetInfoIndex].setupFunc != NULL) &&
                 (chipsetInfo[chipsetInfoIndex].setupFunc(pCl) != NV_OK))
             {
                 NV_PRINTF(LEVEL_ERROR, "*** Chipset Setup Function Error!\n");
@@ -1104,9 +1102,6 @@ NV_STATUS clInitPcie_IMPL
     /* enable chipset-specific overrides */
     clUpdatePcieConfig(pGpu, pCl);
 
-    // Bug 200370149 tracks normalizing KMD detection with RM.
-    objClCheckForExternalGpu(pGpu, pCl);
-
     return NV_OK;
 }
 
@@ -1616,9 +1611,11 @@ objClSetPortCapsOffsets
     PORTDATA     *pPort
 )
 {
-    clSetPortPcieCapOffset(pCl, pPort->addr.handle,
-                           &pPort->PCIECapPtr);
-    objClSetPortPcieEnhancedCapsOffsets(pCl, pPort);
+    NV_CHECK_OK_OR_RETURN(LEVEL_INFO, 
+                          clSetPortPcieCapOffset(pCl, pPort->addr.handle,
+                          &pPort->PCIECapPtr));
+    NV_CHECK_OK_OR_RETURN(LEVEL_INFO,
+                          objClSetPortPcieEnhancedCapsOffsets(pCl, pPort));
 
     return NV_OK;
 }
@@ -3642,8 +3639,8 @@ static NvBool scanForRsdtXsdtTables(OBJOS *pOS,
  *
  * @returns NV_OK if RDST or XDST table was found, NV_ERR_* otherwise.
  */
-NV_STATUS
-clGetRsdtXsdtTablesAddr_IMPL
+static NV_STATUS
+GetRsdtXsdtTablesAddr
 (
     OBJCL *pCl,
     NvU32 *pRsdtAddr,
@@ -3666,9 +3663,9 @@ clGetRsdtXsdtTablesAddr_IMPL
 
     //
     // It doesn't make sense to search for the ACPI tables in the BIOS area
-    // on ARM, so just skip that here.
+    // on non-X86 CPUs, so just skip that here.
     //
-    if (NVCPU_IS_FAMILY_ARM)
+    if (!NVCPU_IS_FAMILY_X86)
     {
         return NV_ERR_NOT_SUPPORTED;
     }
@@ -3706,14 +3703,14 @@ clGetRsdtXsdtTablesAddr_IMPL
         status = osGetAcpiRsdpFromUefi(&startAddr);
         if (status != NV_OK)
         {
-            goto clGetRsdtXsdtTablesAddr_exit;
+            goto GetRsdtXsdtTablesAddr_exit;
         }
 
         size = ACPI_RSDP_STRUCT_LEN;
         if (scanForRsdtXsdtTables(pOS , startAddr, size, pRsdtAddr, pXsdtAddr) == NV_TRUE)
         {
             status = NV_OK;
-            goto clGetRsdtXsdtTablesAddr_exit;
+            goto GetRsdtXsdtTablesAddr_exit;
         }
     }
 
@@ -3731,7 +3728,7 @@ clGetRsdtXsdtTablesAddr_IMPL
         if (scanForRsdtXsdtTables(pOS , startAddr, size, pRsdtAddr, pXsdtAddr) == NV_TRUE)
         {
             status = NV_OK;
-            goto clGetRsdtXsdtTablesAddr_exit;
+            goto GetRsdtXsdtTablesAddr_exit;
         }
     }
 
@@ -3743,7 +3740,7 @@ clGetRsdtXsdtTablesAddr_IMPL
         status = NV_OK;
     }
 
-clGetRsdtXsdtTablesAddr_exit:
+GetRsdtXsdtTablesAddr_exit:
     return status;
 }
 
@@ -3756,8 +3753,8 @@ clGetRsdtXsdtTablesAddr_exit:
  *
  * @returns NV_TRUE the RDST or XDST table has been found, NV_FALSE otherwise.
  */
-NvBool
-clGetMcfgTableFromOS_IMPL
+static NvBool
+GetMcfgTableFromOS
 (
     OBJCL   *pCl,
     OBJOS   *pOS,
@@ -3821,8 +3818,8 @@ clGetMcfgTableFromOS_IMPL
  *
  * @returns the address of the DSDT table, or 0 if an error occurred.
  */
-NvU64
-clScanForTable_IMPL
+static NvU64
+ScanForTable
 (
     OBJCL *pCl,
     OBJOS *pOS,
@@ -4098,19 +4095,19 @@ clStorePcieConfigSpaceBaseFromMcfg_IMPL(OBJCL *pCl)
         return NV_ERR_INVALID_DATA;
     }
 
-    if (clGetMcfgTableFromOS(pCl, pOS, (void **)&pData, &len) == NV_FALSE)
+    if (GetMcfgTableFromOS(pCl, pOS, (void **)&pData, &len) == NV_FALSE)
     {
         //
         // If OS api doesn't provide MCFG table then MCFG table address
         // can be found by parsing RSDT/XSDT tables.
         //
-        status = clGetRsdtXsdtTablesAddr(pCl, (NvU32*)&rsdtAddr, &xsdtAddr);
+        status = GetRsdtXsdtTablesAddr(pCl, (NvU32*)&rsdtAddr, &xsdtAddr);
         if (status != NV_OK)
         {
             goto clStorePcieConfigSpaceBaseFromMcfg_exit;
         }
 
-        mcfgAddr = clScanForTable(pCl, pOS, rsdtAddr, xsdtAddr, NV_ACPI_TABLE_SIGNATURE_GFCM);
+        mcfgAddr = ScanForTable(pCl, pOS, rsdtAddr, xsdtAddr, NV_ACPI_TABLE_SIGNATURE_GFCM);
         if (mcfgAddr == 0)
         {
             status = NV_ERR_INSUFFICIENT_RESOURCES;
@@ -4328,84 +4325,6 @@ objClLoadPcieVirtualP2PApproval(OBJGPU *pGpu)
               "Hypervisor has assigned GPU%u to peer clique %u\n",
               gpuGetInstance(pGpu), pGpu->pciePeerClique.id);
 }
-
-/*!
- * @brief Traverse bus topology till Gpu's root port.
- * If any of the intermediate bridge has TB3 supported vendorId and hotplug
- * capability(not necessarily same bridge), mark the Gpu as External Gpu.
- *
- * @params[in]    pGpu    OBJGPU pointer
- * @params[in]    pCl     OBJCL pointer
- *
- */
-void
-objClCheckForExternalGpu
-(
-    OBJGPU *pGpu,
-    OBJCL *pCl
-)
-{
-    NvU8 bus;
-    NvU32 domain;
-    void *handleUp;
-    NvU8 busUp, devUp, funcUp;
-    NvU16 vendorIdUp, deviceIdUp;
-    NvU32 portCaps, pciCaps, slotCaps;
-    NvU32 PCIECapPtr;
-    NvBool bTb3Bridge = NV_FALSE, bSlotHotPlugSupport = NV_FALSE;
-
-    domain = gpuGetDomain(pGpu);
-    bus = gpuGetBus(pGpu);
-
-    do
-    {
-        // Find the upstream bridge
-        handleUp = clFindP2PBrdg(pCl, domain, bus, &busUp, &devUp, &funcUp, &vendorIdUp, &deviceIdUp);
-        if (!handleUp)
-        {
-            return;
-        }
-
-        if (vendorIdUp == PCI_VENDOR_ID_INTEL)
-        {
-            // Check for the supported TB3(ThunderBolt 3) bridges.
-            bTb3Bridge = isTB3DeviceID(deviceIdUp);
-        }
-
-        if (NV_OK != clSetPortPcieCapOffset(pCl, handleUp, &PCIECapPtr))
-        {
-            // PCIE bridge but no cap pointer.
-            return;
-        }
-
-        // Get the PCIE capabilities.
-        pciCaps = osPciReadDword(handleUp, CL_PCIE_CAP - CL_PCIE_BEGIN + PCIECapPtr);
-        if (CL_PCIE_CAP_SLOT & pciCaps)
-        {
-            // Get the slot capabilities.
-            slotCaps = osPciReadDword(handleUp, CL_PCIE_SLOT_CAP - CL_PCIE_BEGIN + PCIECapPtr);
-
-            if ((CL_PCIE_SLOT_CAP_HOTPLUG_CAPABLE & slotCaps) &&
-                (CL_PCIE_SLOT_CAP_HOTPLUG_SURPRISE & slotCaps))
-            {
-                bSlotHotPlugSupport = NV_TRUE;
-            }
-        }
-
-        if (bTb3Bridge && bSlotHotPlugSupport)
-        {
-            pCl->setProperty(pCl, PDB_PROP_CL_IS_EXTERNAL_GPU, NV_TRUE);
-            break;
-        }
-
-        bus = busUp;
-
-        // Get port caps to check if PCIE bridge is the root port
-        portCaps = osPciReadDword(handleUp, CL_PCIE_CAP - CL_PCIE_BEGIN + PCIECapPtr);
-
-    } while (!CL_IS_ROOT_PORT(portCaps));
-}
-
 
 /*!
  * @brief : Enable L0s and L1 support for GPU's upstream port

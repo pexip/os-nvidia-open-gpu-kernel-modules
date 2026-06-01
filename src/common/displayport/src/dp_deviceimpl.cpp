@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -75,7 +75,7 @@ DeviceImpl::~DeviceImpl()
 }
 
 
-DeviceImpl::DeviceImpl(DPCDHAL * hal, ConnectorImpl * connector, DeviceImpl * parent)
+DeviceImpl::DeviceImpl(DPCDHAL * hal, ConnectorImpl * connector, DeviceImpl * parent, bool bSkipFakeDeviceDpcdAccess)
     : parent(parent),
       hal(hal),
       activeGroup(0),
@@ -95,7 +95,8 @@ DeviceImpl::DeviceImpl(DPCDHAL * hal, ConnectorImpl * connector, DeviceImpl * pa
       bIgnoreMsaCapCached(false),
       bSdpExtCapable(Indeterminate),
       bAsyncSDPCapable(Indeterminate),
-      bDscPassThroughColorFormatWar(false)
+      bDscPassThroughColorFormatWar(false),
+      bSkipFakeDeviceDpcdAccess(bSkipFakeDeviceDpcdAccess)
 {
     bandwidth.enum_path.dataValid = false;
     shadow.plugged = false;
@@ -375,6 +376,12 @@ AuxBus::status DeviceImpl::getDpcdData(unsigned offset, NvU8 * buffer,
                                        unsigned * sizeCompleted,
                                        unsigned  * pNakReason)
 {
+    if (this->bSkipFakeDeviceDpcdAccess && isFakedMuxDevice())
+    {
+        DP_LOG(("Device is faked, returning nack\n"));
+        return AuxBus::nack;
+    }
+
     if (!buffer || !sizeCompleted)
     {
         // default param may be NULL
@@ -403,6 +410,12 @@ AuxBus::status DeviceImpl::setDpcdData(unsigned offset, NvU8 * buffer,
                                        unsigned * sizeCompleted,
                                        unsigned  * pNakReason)
 {
+    if (this->bSkipFakeDeviceDpcdAccess && isFakedMuxDevice())
+    {
+        DP_LOG(("Device is faked, returning nack\n"));
+        return AuxBus::nack;
+    }
+
     if (!buffer || !sizeCompleted)
     {
         // default param may be NULL
@@ -1573,11 +1586,11 @@ NvBool DeviceImpl::getDSCSupport()
     if(AuxBus::success == this->getDpcdData(NV_DPCD14_DSC_SUPPORT,
         &byte, sizeof(byte), &size, &nakReason))
     {
-        if (FLD_TEST_DRF(_DPCD14, _DSC_SUPPORT, _DSC_SUPPORT, _YES, byte))
+        if (FLD_TEST_DRF(_DPCD14, _DSC_SUPPORT, _DECOMPRESSION, _YES, byte))
         {
             dscCaps.bDSCDecompressionSupported = true;
         }
-        if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _PASS_THROUGH_SUPPORT, _YES, byte))
+        if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _PASS_THROUGH, _YES, byte))
         {
             dscCaps.bDSCPassThroughSupported = true;
         }
@@ -1721,6 +1734,16 @@ NvBool DeviceImpl::isDSCPassThroughSupported()
     return dscCaps.bDSCPassThroughSupported;
 }
 
+NvBool DeviceImpl::isDynamicPPSSupported()
+{
+    return dscCaps.bDynamicPPSSupported;
+}
+
+NvBool DeviceImpl::isDynamicDscToggleSupported()
+{
+    return dscCaps.bDynamicDscToggleSupported;
+}
+
 NvBool DeviceImpl::isDSCPossible()
 {
     return this->bDSCPossible;
@@ -1740,9 +1763,19 @@ bool DeviceImpl::parseDscCaps(const NvU8 *buffer, NvU32 bufferSize)
         return false;
     }
 
-    if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _PASS_THROUGH_SUPPORT, _YES, buffer[0x0]))
+    if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _PASS_THROUGH, _YES, buffer[0x0]))
     {
         dscCaps.bDSCPassThroughSupported = true;
+    }
+
+    if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _DYNAMIC_PPS_COMPRESSED_TO_COMPRESSED, _YES, buffer[0x0]))
+    {
+        dscCaps.bDynamicPPSSupported = true;
+    }
+
+    if (FLD_TEST_DRF(_DPCD20, _DSC_SUPPORT, _DYNAMIC_PPS_UNCOMPRESSED_TO_FROM_COMPRESSED, _YES, buffer[0x0]))
+    {
+        dscCaps.bDynamicDscToggleSupported = true;
     }
 
     dscCaps.versionMajor = DRF_VAL(_DPCD14, _DSC_ALGORITHM_REVISION, _MAJOR, buffer[0x1]);
@@ -1996,7 +2029,7 @@ bool DeviceImpl::getDscEnable(bool *pEnable)
         return false;
     }
 
-    *pEnable = FLD_TEST_DRF(_DPCD14, _DSC_ENABLE, _SINK, _YES, byte);
+    *pEnable = FLD_TEST_DRF(_DPCD14, _DSC_ENABLE, _DECOMPRESSION, _YES, byte);
     return true;
 }
 
@@ -2077,11 +2110,13 @@ void DeviceImpl::setDscDecompressionDevice(bool bDscCapBasedOnParent)
                     }
                 }
             }
-            else if (this->parent && this->parent->isDSCDecompressionSupported())
+            else if (this->parent && this->parent->isDSCDecompressionSupported() &&
+                     !(this->isLogical()))
             {
                 //
                 // This condition takes care of sink devices not capable of DSC
-                // but parent is capable of DSC decompression.
+                // but parent is capable of DSC decompression. We need to skip this
+                // if sink is at logical port.
                 //
                 this->bDSCPossible = true;
                 this->devDoingDscDecompression = this->parent;
@@ -2152,7 +2187,7 @@ bool DeviceImpl::setDscEnable(bool enable)
 
         if (!bCurrDscEnable)
         {
-            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _SINK, _YES, dscEnableByte);
+            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _DECOMPRESSION, _YES, dscEnableByte);
             DP_LOG(("DP-DEV> Enabling DSC decompression on device - %s",
                     this->devDoingDscDecompression->getTopologyAddress().toString(buffer)));
         }
@@ -2173,7 +2208,7 @@ bool DeviceImpl::setDscEnable(bool enable)
 
         if (bCurrDscEnable)
         {
-            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _SINK, _NO, dscEnableByte);
+            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _DECOMPRESSION, _NO, dscEnableByte);
             DP_LOG(("DP-DEV> Disabling DSC decompression on device - %s",
                     this->devDoingDscDecompression->getTopologyAddress().toString(buffer)));
         }
@@ -2244,7 +2279,7 @@ bool DeviceImpl::setDscEnableDPToHDMIPCON(bool bDscEnable, bool bEnablePassThrou
         }
         else
         {
-            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _SINK, _YES, dscEnableByte);
+            dscEnableByte = FLD_SET_DRF(_DPCD14, _DSC_ENABLE, _DECOMPRESSION, _YES, dscEnableByte);
             DP_LOG(("DP-DEV> Enabling DSC decompression on DP to HDMI PCON device - %s",
                     this->getTopologyAddress().toString(buffer)));
         }

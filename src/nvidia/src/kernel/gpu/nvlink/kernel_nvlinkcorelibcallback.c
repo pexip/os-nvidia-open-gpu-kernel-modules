@@ -23,14 +23,11 @@
 
 #define NVOC_KERNEL_NVLINK_H_PRIVATE_ACCESS_ALLOWED
 
-// FIXME XXX
-#define NVOC_KERNEL_IOCTRL_H_PRIVATE_ACCESS_ALLOWED
-
 #include "os/os.h"
 #include "core/hal.h"
-#include "core/info_block.h"
 #include "core/locks.h"
 #include "core/thread_state.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
 
 #include "kernel/gpu/nvlink/kernel_nvlink.h"
@@ -440,7 +437,6 @@ knvlinkCoreQueueLinkChangeCallback
 
     KNVLINK_RM_LINK *pNvlinkLink;
     OBJGPU          *pGpu   = NULL;
-    OBJOS           *pOS    = NULL;
     NV_STATUS        status = NV_OK;
     void            *pWorkItemData;
 
@@ -455,8 +451,6 @@ knvlinkCoreQueueLinkChangeCallback
     // The master should be marked as such
     NV_ASSERT_OR_RETURN(link_change->master->master, NV_ERR_INVALID_STATE);
 
-    pOS = GPU_GET_OS(pGpu);
-
     pWorkItemData = portMemAllocNonPaged(sizeof(nvlink_link_change *));
     NV_ASSERT_OR_RETURN(pWorkItemData != NULL, NVL_NO_MEM);
 
@@ -466,8 +460,8 @@ knvlinkCoreQueueLinkChangeCallback
     // This function will free the argument if it succeeds, hence the need for
     // the work item data wrapper.
     //
-    status = pOS->osQueueWorkItem(pGpu, _knvlinkCorePassiveLinkChangeCallback,
-                                  pWorkItemData);
+    status = osQueueWorkItem(pGpu, _knvlinkCorePassiveLinkChangeCallback,
+                             pWorkItemData);
     if (status != NV_OK)
     {
         portMemFree(pWorkItemData);
@@ -1495,6 +1489,16 @@ knvlinkCoreTrainingCompleteCallback
     {
         NV_PRINTF(LEVEL_ERROR, "Error issuing NvLink Training Complete callback!\n");
     }
+}
+
+NvlStatus
+knvlinkCoreGetCciLinkModeCallback
+(
+    nvlink_link *link,
+    NvU64       *mode
+)
+{
+    return NVL_SUCCESS;
 }
 
 /*

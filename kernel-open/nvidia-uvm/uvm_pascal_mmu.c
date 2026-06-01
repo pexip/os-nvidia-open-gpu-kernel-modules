@@ -33,6 +33,7 @@
 
 #include "uvm_types.h"
 #include "uvm_forward_decl.h"
+#include "nv_uvm_interface.h"
 #include "uvm_global.h"
 #include "uvm_gpu.h"
 #include "uvm_mmu.h"
@@ -373,28 +374,44 @@ uvm_mmu_mode_hal_t *uvm_hal_mmu_mode_pascal(NvU32 big_page_size)
     return &pascal_mmu_mode_hal;
 }
 
+static void mmu_set_prefetch_faults(uvm_parent_gpu_t *parent_gpu, bool enable)
+{
+    volatile NvU32 *prefetch_ctrl = parent_gpu->fault_buffer_info.rm_info.replayable.pPrefetchCtrl;
+
+    // A null prefetch control mapping indicates that UVM should toggle the
+    // register's value using the RM API, instead of performing a direct access.
+    if (prefetch_ctrl == NULL) {
+        NV_STATUS status;
+
+        // Access to the register is currently blocked only in Confidential
+        // Computing.
+        UVM_ASSERT(g_uvm_global.conf_computing_enabled);
+        status = nvUvmInterfaceTogglePrefetchFaults(&parent_gpu->fault_buffer_info.rm_info, (NvBool)enable);
+
+        UVM_ASSERT(status == NV_OK);
+    }
+    else {
+        NvU32 prefetch_ctrl_value = UVM_GPU_READ_ONCE(*prefetch_ctrl);
+
+        if (enable)
+            prefetch_ctrl_value = WRITE_HWCONST(prefetch_ctrl_value, _PFB_PRI_MMU_PAGE, FAULT_CTRL, PRF_FILTER, SEND_ALL);
+        else
+            prefetch_ctrl_value = WRITE_HWCONST(prefetch_ctrl_value, _PFB_PRI_MMU_PAGE, FAULT_CTRL, PRF_FILTER, SEND_NONE);
+
+        UVM_GPU_WRITE_ONCE(*prefetch_ctrl, prefetch_ctrl_value);
+    }
+}
+
 void uvm_hal_pascal_mmu_enable_prefetch_faults(uvm_parent_gpu_t *parent_gpu)
 {
-    volatile NvU32 *prefetch_control;
-    NvU32 prefetch_control_value;
+    UVM_ASSERT(parent_gpu->prefetch_fault_supported);
 
-    prefetch_control = parent_gpu->fault_buffer_info.rm_info.replayable.pPrefetchCtrl;
-
-    prefetch_control_value = UVM_GPU_READ_ONCE(*prefetch_control);
-    prefetch_control_value = WRITE_HWCONST(prefetch_control_value, _PFB_PRI_MMU_PAGE, FAULT_CTRL, PRF_FILTER, SEND_ALL);
-    UVM_GPU_WRITE_ONCE(*prefetch_control, prefetch_control_value);
+    mmu_set_prefetch_faults(parent_gpu, true);
 }
 
 void uvm_hal_pascal_mmu_disable_prefetch_faults(uvm_parent_gpu_t *parent_gpu)
 {
-    volatile NvU32 *prefetch_control;
-    NvU32 prefetch_control_value;
-
-    prefetch_control = parent_gpu->fault_buffer_info.rm_info.replayable.pPrefetchCtrl;
-
-    prefetch_control_value = UVM_GPU_READ_ONCE(*prefetch_control);
-    prefetch_control_value = WRITE_HWCONST(prefetch_control_value, _PFB_PRI_MMU_PAGE, FAULT_CTRL, PRF_FILTER, SEND_NONE);
-    UVM_GPU_WRITE_ONCE(*prefetch_control, prefetch_control_value);
+    mmu_set_prefetch_faults(parent_gpu, false);
 }
 
 NvU16 uvm_hal_pascal_mmu_client_id_to_utlb_id(NvU16 client_id)

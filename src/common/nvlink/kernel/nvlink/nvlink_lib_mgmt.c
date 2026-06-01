@@ -1,24 +1,25 @@
-/*******************************************************************************
-    Copyright (c) 2019-2023 NVidia Corporation
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to
-    deal in the Software without restriction, including without limitation the
-    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-    sell copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be
-    included in all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-*******************************************************************************/
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 
 #include "nvlink.h"
 #include "nvlink_export.h"
@@ -169,9 +170,9 @@ nvlink_lib_is_device_list_empty(void)
 NvBool
 nvlink_lib_is_registerd_device_with_reduced_config(void)
 {
-    NvlStatus lock_status = NVL_SUCCESS;
-    nvlink_device *dev    = NULL;
-    NvBool         bIsReducedConfg = NV_FALSE;
+    NvlStatus lock_status           = NVL_SUCCESS;
+    nvlink_device *dev              = NULL;
+    NvBool         bIsReducedConfig = NV_FALSE;
 
     // Acquire top-level lock
     lock_status = nvlink_lib_top_lock_acquire();
@@ -186,9 +187,13 @@ nvlink_lib_is_registerd_device_with_reduced_config(void)
 
     FOR_EACH_DEVICE_REGISTERED(dev, nvlinkLibCtx.nv_devicelist_head, node)
     {
+        //
+        // If the device is a reduced config set bIsReducedConfig to NV_TRUE
+        // and break to ensure that top level lock is released below
+        //
         if (dev->bReducedNvlinkConfig == NV_TRUE)
         {
-            bIsReducedConfg = NV_TRUE;
+            bIsReducedConfig = NV_TRUE;
             break;
         }
     }
@@ -196,7 +201,7 @@ nvlink_lib_is_registerd_device_with_reduced_config(void)
     // Release top-level lock
     nvlink_lib_top_lock_release();
 
-    return bIsReducedConfg;
+    return bIsReducedConfig;
 }
 
 /*

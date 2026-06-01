@@ -35,6 +35,7 @@
 #include "gpu/subdevice/subdevice_diag.h"
 #include "ctrl/ctrl0080/ctrl0080fb.h"
 #include "core/locks.h"
+#include "platform/sli/sli.h"
 #include "rmapi/rs_utils.h"
 #include "rmapi/mapping_list.h"
 #include "platform/chipset/chipset.h"
@@ -119,7 +120,7 @@ memmgrGetDeviceCaps
         RMCTRL_SET_CAP(tempCaps, NV0080_CTRL_FB_CAPS, _DISABLE_PLC_GLOBALLY);
     }
 
-    if (pMemorySystemConfig->bDisablePlcForCertainOffsetsBug3046774)
+    if (pKernelMemorySystem->bDisablePlcForCertainOffsetsBug3046774)
     {
         RMCTRL_SET_CAP(tempCaps, NV0080_CTRL_FB_CAPS, _PLC_BUG_3046774);
     }
@@ -391,7 +392,7 @@ subdeviceCtrlCmdFbGetMemAlignment_IMPL
     NvHandle                hClient    = RES_GET_CLIENT_HANDLE(pSubdevice);
     Device                 *pDevice    = GPU_RES_GET_DEVICE(pSubdevice);
     NvHandle                hObject    = RES_GET_HANDLE(pSubdevice);
-    Heap                   *pHeap      = vidmemGetHeap(pGpu, pDevice, NV_FALSE);
+    Heap                   *pHeap      = vidmemGetHeap(pGpu, pDevice, NV_FALSE, NV_FALSE);
     HEAP_ALLOC_HINT_PARAMS  AllocHint  = {0};
     NvU32                   i;
     NvU64                   _size, _alignment;
@@ -683,8 +684,6 @@ subdeviceCtrlCmdFbGetFBRegionInfo_IMPL
 
     LOCK_ASSERT_AND_RETURN(rmapiLockIsOwner() && rmGpuLockIsOwner());
 
-    memmgrCalcReservedFbSpace(pGpu, pMemoryManager);
-
     pGFBRIParams->numFBRegions = 0;
 
     //
@@ -862,3 +861,4 @@ subdeviceCtrlCmdGbGetSemaphoreSurfaceLayout_IMPL
 
     return NV_OK;
 }
+

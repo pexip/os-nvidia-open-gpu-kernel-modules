@@ -459,7 +459,7 @@ _portMemCallerInfoInitTracking
     _portMemCallerInfoInitMem(pMem, PORT_MEM_CALLERINFO_PARAM)
 
 #if PORT_MEM_TRACK_USE_CALLERINFO_IP
-#if NVCPU_IS_RISCV64
+#if NVOS_IS_LIBOS
 //
 // Libos has custom %a format specifier that decodes an instruction pointer into
 // a function / file / line reference when the binary output is decoded.
@@ -467,7 +467,7 @@ _portMemCallerInfoInitTracking
 #define PORT_MEM_CALLERINFO_PRINT_ARGS(x)  "@ %a\n", x
 #else
 #define PORT_MEM_CALLERINFO_PRINT_ARGS(x)  "@ 0x%016x\n", x
-#endif // NVCPU_IS_RISCV64
+#endif // NVOS_IS_LIBOS
 #else
 #define PORT_MEM_CALLERINFO_PRINT_ARGS(x)  "@ %s:%u (%s)\n", x.file, x.line, x.func
 #endif // PORT_MEM_TRACK_USE_CALLERINFO_IP
@@ -1044,16 +1044,16 @@ portMemPrintTrackingInfo
         pTracking = &portMemGlobals.mainTracking;
 
     if (pTracking == &portMemGlobals.mainTracking)
-        portDbgPrintf("[NvPort] ******** Aggregate Memory Tracking ********\n");
+        portDbgPrintf("[NvPort] ======== Aggregate Memory Tracking ========\n");
     else if ((pTracking == portMemGlobals.alloc.nonPaged.pTracking) &&
              (pTracking == portMemGlobals.alloc.paged.pTracking))
-        portDbgPrintf("[NvPort] ******** Global Allocator Tracking ********\n");
+        portDbgPrintf("[NvPort] ======== Global Allocator Tracking ========\n");
     else if (pTracking == portMemGlobals.alloc.nonPaged.pTracking)
-        portDbgPrintf("[NvPort] ******** Global Non-Paged Memory Allocator Tracking ********\n");
+        portDbgPrintf("[NvPort] ======== Global Non-Paged Memory Allocator Tracking ========\n");
     else if (pTracking == portMemGlobals.alloc.paged.pTracking)
-        portDbgPrintf("[NvPort] ******** Global Paged Memory Allocator Tracking ********\n");
+        portDbgPrintf("[NvPort] ======== Global Paged Memory Allocator Tracking ========\n");
     else
-        portDbgPrintf("[NvPort] ******** Memory Allocator %p Tracking ******** \n", pTracking->pAllocator);
+        portDbgPrintf("[NvPort] ======== Memory Allocator %p Tracking ======== \n", pTracking->pAllocator);
 
     if (pTracking->counter.activeAllocs != 0)
         portDbgPrintf("  !!! MEMORY LEAK DETECTED (%u blocks) !!!\n",

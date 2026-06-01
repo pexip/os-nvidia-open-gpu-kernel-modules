@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -27,6 +27,7 @@
 #include "kernel/gpu/mem_mgr/mem_mgr.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
 #include "kernel/gpu/intr/engine_idx.h"
+#include "kernel/gpu/bus/kern_bus.h"
 #include "nvRmReg.h"
 
 #include "ctrl/ctrl0080/ctrl0080fifo.h"
@@ -71,7 +72,7 @@ kgraphicsInitFecsRegistryOverrides_GP100
     // CTXSW logging is not supported when HCC prod settings are enabled.
     // However, the same is supported when HCC is enabled in devtools mode
     //
-    if (gpuIsCCFeatureEnabled(pGpu))
+    if (gpuIsCCFeatureEnabled(pGpu) && !gpuIsCCDevToolsModeEnabled(pGpu))
     {
         kgraphicsSetCtxswLoggingSupported(pGpu, pKernelGraphics, NV_FALSE);
     }
@@ -155,6 +156,7 @@ kgraphicsAllocGlobalCtxBuffers_GP100
     NvU32 fecsBufferAlign = 0x0;
     GR_GLOBALCTX_BUFFERS *pCtxBuffers;
     GR_BUFFER_ATTR *pCtxAttr;
+    NV_STATUS status;
 
     // SKIP FECS buffer allocation for Virtual context
     if (IS_GFID_VF(gfid))
@@ -224,8 +226,9 @@ kgraphicsAllocGlobalCtxBuffers_GP100
             NV_ASSERT_OK_OR_RETURN(memdescSetCtxBufPool(*ppMemDesc, pCtxBufPool));
         }
 
-        NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
-            memdescAllocList(*ppMemDesc, pCtxAttr[GR_GLOBALCTX_BUFFER_FECS_EVENT].pAllocList));
+        memdescTagAllocList(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_108, 
+                    (*ppMemDesc), (pCtxAttr[GR_GLOBALCTX_BUFFER_FECS_EVENT].pAllocList));
+        NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, status);
     }
 
     return NV_OK;
@@ -245,6 +248,7 @@ kgraphicsServiceInterrupt_GP100
 )
 {
     NvU32 grIdx = pKernelGraphics->instance;
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
 
     NV_ASSERT_OR_RETURN(pParams != NULL, 0);
     NV_ASSERT_OR_RETURN(pParams->engineIdx == MC_ENGINE_IDX_GRn_FECS_LOG(grIdx), 0);
@@ -256,7 +260,7 @@ kgraphicsServiceInterrupt_GP100
         return 0;
     }
 
-    if ((pGpu->fecsCtxswLogConsumerCount > 0) &&
+    if ((fecsGetCtxswLogConsumerCount(pGpu, pKernelGraphicsManager) > 0) &&
         (kgraphicsIsIntrDrivenCtxswLoggingEnabled(pGpu, pKernelGraphics)))
     {
         if (fecsClearIntrPendingIfPending(pGpu, pKernelGraphics))

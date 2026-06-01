@@ -74,7 +74,9 @@ typedef struct
 } uvm_perf_thrashing_hint_t;
 
 // Obtain a hint to prevent thrashing on the page with given address
-uvm_perf_thrashing_hint_t uvm_perf_thrashing_get_hint(uvm_va_block_t *va_block, NvU64 address,
+uvm_perf_thrashing_hint_t uvm_perf_thrashing_get_hint(uvm_va_block_t *va_block,
+                                                      uvm_va_block_context_t *va_block_context,
+                                                      NvU64 address,
                                                       uvm_processor_id_t requester);
 
 // Obtain a pointer to a mask with the processors that are thrashing on the
@@ -96,7 +98,7 @@ void uvm_perf_thrashing_remove_gpu(uvm_gpu_t *gpu);
 // VA space Initialization/cleanup functions. See comments in
 // uvm_perf_heuristics.h
 NV_STATUS uvm_perf_thrashing_load(uvm_va_space_t *va_space);
-NV_STATUS uvm_perf_thrashing_register_gpu(uvm_va_space_t *va_space, uvm_gpu_t *gpu);
+void uvm_perf_thrashing_register_gpu(uvm_va_space_t *va_space, uvm_gpu_t *gpu);
 void uvm_perf_thrashing_stop(uvm_va_space_t *va_space);
 void uvm_perf_thrashing_unload(uvm_va_space_t *va_space);
 

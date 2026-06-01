@@ -21,9 +21,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-// FIXME XXX
-#define NVOC_KERNEL_GRAPHICS_MANAGER_H_PRIVATE_ACCESS_ALLOWED
-
 #include "kernel/gpu/fifo/kernel_fifo.h"
 #include "kernel/gpu/fifo/kernel_channel.h"
 #include "kernel/gpu/fifo/kernel_channel_group.h"
@@ -32,6 +29,7 @@
 #include "virtualization/kernel_vgpu_mgr.h"
 #include "rmapi/rs_utils.h"
 #include "rmapi/client.h"
+#include "gpu/device/device.h"
 #include "gpu/subdevice/subdevice.h"
 
 #include "kernel/core/locks.h"
@@ -66,6 +64,10 @@ static void _kfifoChidMgrDestroyChidHeaps(CHID_MGR *pChidMgr);
 static void _kfifoChidMgrDestroyChannelGroupMgr(CHID_MGR *pChidMgr);
 
 static NV_STATUS _kfifoChidMgrFreeIsolationId(CHID_MGR *pChidMgr, NvU32 ChID);
+
+static NV_STATUS _kfifoChidMgrGetNextKernelChannel(OBJGPU *pGpu, KernelFifo *pKernelFifo,
+                                                   CHID_MGR *pChidMgr, CHANNEL_ITERATOR *pIt,
+                                                   KernelChannel **ppKernelChannel);
 
 
 NvU32 kfifoGetNumEschedDrivenEngines_IMPL
@@ -333,6 +335,15 @@ _kfifoChidMgrAllocChidHeaps
                                                           RM_PAGE_SIZE / userdBar1Size);
 
         // Disable USERD allocation isolation for guest if disabled from vmioplugin
+        if (IS_VIRTUAL(pGpu))
+        {
+            VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+            if (pVSI != NULL)
+            {
+                subProcessIsolation = pVSI->subProcessIsolation;
+            }
+        }
+        else
         {
             // In this case subProcessIsolation is always 0
             if (IS_GSP_CLIENT(pGpu))
@@ -826,11 +837,11 @@ kfifoChidMgrAllocChid_IMPL
 
     if (ChID < numChannels)
     {
-        PEMEMBLOCK pFifoDataBlock = pChidMgr->pFifoDataHeap->eheapGetBlock(
+        EMEMBLOCK *pFifoDataBlock = pChidMgr->pFifoDataHeap->eheapGetBlock(
             pChidMgr->pFifoDataHeap,
             ChID,
             NV_FALSE);
-        PEMEMBLOCK pIsolationIdBlock = pChidMgr->pGlobalChIDHeap->eheapGetBlock(
+        EMEMBLOCK *pIsolationIdBlock = pChidMgr->pGlobalChIDHeap->eheapGetBlock(
             pChidMgr->pGlobalChIDHeap,
             ChID,
             NV_FALSE);
@@ -871,7 +882,7 @@ kfifoChidMgrRetainChid_IMPL
 )
 {
     NvU32       gfid;
-    PEMEMBLOCK  pFifoDataBlock = NULL;
+    EMEMBLOCK  *pFifoDataBlock = NULL;
 
     NV_ASSERT_OK_OR_RETURN(vgpuGetCallingContextGfid(pGpu, &gfid));
 
@@ -879,7 +890,7 @@ kfifoChidMgrRetainChid_IMPL
     {
         NV_ASSERT_OR_RETURN(pChidMgr->ppVirtualChIDHeap[gfid] != NULL,
                             NV_ERR_INVALID_STATE);
-        PEMEMBLOCK  pVirtChIdBlock = pChidMgr->ppVirtualChIDHeap[gfid]->eheapGetBlock(
+        EMEMBLOCK  *pVirtChIdBlock = pChidMgr->ppVirtualChIDHeap[gfid]->eheapGetBlock(
             pChidMgr->ppVirtualChIDHeap[gfid],
             ChID,
             NV_FALSE);
@@ -890,7 +901,7 @@ kfifoChidMgrRetainChid_IMPL
     else
     {
         NV_ASSERT_OR_RETURN(pChidMgr->pGlobalChIDHeap != NULL, NV_ERR_INVALID_STATE);
-        PEMEMBLOCK  pChIdBlock = pChidMgr->pGlobalChIDHeap->eheapGetBlock(
+        EMEMBLOCK  *pChIdBlock = pChidMgr->pGlobalChIDHeap->eheapGetBlock(
             pChidMgr->pGlobalChIDHeap,
             ChID,
             NV_FALSE);
@@ -1031,17 +1042,17 @@ kfifoChidMgrReserveSystemChids_IMPL
     NvU32             flags,
     NvU32             gfid,
     NvU32            *pChidOffset,
+    NvU64             offset,
     NvU32            *pChannelCount,
-    NvHandle          hMigClient,
+    Device           *pMigDevice,
     NvU32             engineFifoListNumEntries,
     FIFO_ENGINE_LIST *pEngineFifoList
 )
 {
     NV_STATUS         status              = NV_OK;
     NvU64             chSize;
-    NvU64             offset              = 0;
     PFIFO_ISOLATIONID pIsolationID        = NULL;
-    PEMEMBLOCK        pIsolationIdBlock;
+    EMEMBLOCK        *pIsolationIdBlock;
     NvU32             userdBar1Size;
 
     if (IS_VIRTUAL(pGpu))
@@ -1097,7 +1108,7 @@ kfifoChidMgrReserveSystemChids_IMPL
 
     status = kfifoSetChidOffset(pGpu, pKernelFifo, pChidMgr, (NvU32)offset,
                                 numChannels, gfid, pChidOffset, pChannelCount,
-                                hMigClient, engineFifoListNumEntries, pEngineFifoList);
+                                pMigDevice, engineFifoListNumEntries, pEngineFifoList);
 
     if (status != NV_OK)
     {
@@ -1136,7 +1147,7 @@ kfifoChidMgrReserveSystemChids_IMPL
 cleanup:
     portMemFree(pChidMgr->ppVirtualChIDHeap[gfid]);
     NV_ASSERT(kfifoSetChidOffset(pGpu, pKernelFifo, pChidMgr, 0, 0,
-                                 gfid, pChidOffset, pChannelCount, hMigClient,
+                                 gfid, pChidOffset, pChannelCount, pMigDevice,
                                  engineFifoListNumEntries, pEngineFifoList) == NV_OK);
     NV_ASSERT(pChidMgr->pGlobalChIDHeap->eheapFree(pChidMgr->pGlobalChIDHeap, offset) == NV_OK);
     portMemFree(pIsolationID);
@@ -1153,7 +1164,7 @@ kfifoChidMgrFreeSystemChids_IMPL
     NvU32             gfid,
     NvU32            *pChidOffset,
     NvU32            *pChannelCount,
-    NvHandle          hMigClient,
+    Device           *pMigDevice,
     NvU32             engineFifoListNumEntries,
     FIFO_ENGINE_LIST *pEngineFifoList
 )
@@ -1197,7 +1208,7 @@ kfifoChidMgrFreeSystemChids_IMPL
     }
 
     tmpStatus = kfifoSetChidOffset(pGpu, pKernelFifo, pChidMgr, 0, 0,
-                                   gfid, pChidOffset, pChannelCount, hMigClient,
+                                   gfid, pChidOffset, pChannelCount, pMigDevice,
                                    engineFifoListNumEntries, pEngineFifoList);
     if (tmpStatus != NV_OK)
     {
@@ -1255,6 +1266,23 @@ kfifoRunlistQueryNumChannels_KERNEL
     NvU32 numChannels = 0;
     NvU32 status;
 
+    // For vgpu, read numChannels from VGPU_STATIC_INFO
+    if (IS_VIRTUAL(pGpu))
+    {
+        VGPU_STATIC_INFO *pVSI;
+        pVSI = GPU_GET_STATIC_INFO(pGpu);
+
+        if (pVSI)
+        {
+            numChannels = pVSI->vgpuStaticProperties.channelCount;
+        }
+        else
+        {
+            DBG_BREAKPOINT();
+            return 0;
+        }
+    }
+
     // Do internal control call and set numChannels
     if (IS_GSP_CLIENT(pGpu))
     {
@@ -1306,6 +1334,7 @@ kfifoChidMgrAllocChannelGroupHwID_IMPL
 )
 {
     NvU32 maxChannelGroups;
+    char logMessage[256] = "";
 
     if (pChGrpID == NULL)
         return NV_ERR_INVALID_ARGUMENT;
@@ -1330,10 +1359,18 @@ kfifoChidMgrAllocChannelGroupHwID_IMPL
     {
         *pChGrpID = maxChannelGroups;
         NV_PRINTF(LEVEL_ERROR, "No allocatable FIFO available.\n");
+
+        // For vGPU, log the error message on host side as well
+        if (IS_VIRTUAL(pGpu))
+        {
+            nvDbgSnprintf(logMessage, sizeof(logMessage), "Guest attempted to allocate channel above its max per engine channel limit 0x%x", maxChannelGroups);
+            NV_RM_RPC_LOG(pGpu, (const char *)logMessage, NV_VGPU_LOG_LEVEL_ERROR);
+        }
         return NV_ERR_NO_FREE_FIFOS;
     }
     return NV_OK;
 }
+
 
 /**
  * @brief Releases a hardware channel group ID.
@@ -1678,19 +1715,94 @@ kfifoFillMemInfo_IMPL
     }
 }
 
+/*
+ * Initializes an iterator to iterate through all channels of a runlist
+ * If runlistId is INVALID_RUNLIST_ID then it iterates channels for all runlists
+ */
 void
 kfifoGetChannelIterator_IMPL
 (
     OBJGPU *pGpu,
     KernelFifo *pKernelFifo,
-    CHANNEL_ITERATOR *pIt
+    CHANNEL_ITERATOR *pIt,
+    NvU32 runlistId
 )
 {
     portMemSet(pIt, 0, sizeof(*pIt));
-    pIt->runlistId = 0;
 
-    // Resulting iterator will iterate over constructed CHID_MGRs only
-    pIt->numRunlists = pKernelFifo->numChidMgrs;
+    if (runlistId == INVALID_RUNLIST_ID)
+    {
+        pIt->runlistId = 0;
+
+        // Resulting iterator will iterate over constructed CHID_MGRs only
+        pIt->numRunlists = pKernelFifo->numChidMgrs;
+    }
+    else
+    {
+        pIt->runlistId = runlistId;
+
+        //
+        // kfifoGetChidMgr() ignores the runlistId argument if per-runlist channel RAM is disabled.
+        // If there's no valid CHID_MGR for the given runlist ID, we can't iterate through the
+        // channels on the runlist, so we return an empty iterator instead.
+        //
+        CHID_MGR *pChidMgr = kfifoGetChidMgr(pGpu, pKernelFifo, pIt->runlistId);
+        pIt->numRunlists = (pChidMgr == NULL) ? 0 : 1;
+    }
+}
+
+// return next channel for a specific chidMgr
+static NV_STATUS
+_kfifoChidMgrGetNextKernelChannel
+(
+    OBJGPU              *pGpu,
+    KernelFifo          *pKernelFifo,
+    CHID_MGR            *pChidMgr,
+    CHANNEL_ITERATOR    *pIt,
+    KernelChannel      **ppKernelChannel
+)
+{
+    KernelChannel *pKernelChannel = NULL;
+    pIt->numChannels = kfifoChidMgrGetNumChannels(pGpu, pKernelFifo, pChidMgr);
+
+    if (pIt->pFifoDataBlock == NULL)
+    {
+        pIt->pFifoDataBlock = pChidMgr->pFifoDataHeap->eheapGetBlock(
+            pChidMgr->pFifoDataHeap,
+            pIt->physicalChannelID,
+            NV_TRUE);
+    }
+
+    while (pIt->physicalChannelID < pIt->numChannels)
+    {
+        if (pIt->pFifoDataBlock->owner == NVOS32_BLOCK_TYPE_FREE)
+        {
+            pIt->physicalChannelID = pIt->pFifoDataBlock->end + 1;
+        }
+        else
+        {
+            pIt->physicalChannelID++;
+            pKernelChannel = (KernelChannel *)pIt->pFifoDataBlock->pData;
+
+            //
+            // This iterator can be used during an interrupt, when a KernelChannel may
+            // be in the process of being destroyed. If a KernelChannel expects a pChannel
+            // but does not have one, it means it's being destroyed and we don't want to
+            // return it.
+            //
+            if (pKernelChannel != NULL && kchannelIsValid_HAL(pKernelChannel))
+            {
+                // Prepare iterator to check next block in pChidMgr->pFifoDataHeap
+                pIt->pFifoDataBlock = pIt->pFifoDataBlock->next;
+               *ppKernelChannel = pKernelChannel;
+                return NV_OK;
+            }
+        }
+
+        // Check next block in pChidMgr->pFifoDataHeap
+        pIt->pFifoDataBlock = pIt->pFifoDataBlock->next;
+    }
+    return NV_ERR_OBJECT_NOT_FOUND;
 }
 
 /**
@@ -1716,13 +1828,18 @@ NV_STATUS kfifoGetNextKernelChannel_IMPL
     KernelChannel      **ppKernelChannel
 )
 {
-    KernelChannel *pKernelChannel;
-
     if (ppKernelChannel == NULL)
         return NV_ERR_INVALID_ARGUMENT;
 
     *ppKernelChannel = NULL;
 
+    if (pIt->numRunlists == 1)
+    {
+        CHID_MGR *pChidMgr = kfifoGetChidMgr(pGpu, pKernelFifo, pIt->runlistId);
+        NV_ASSERT_OR_RETURN(pChidMgr != NULL, NV_ERR_INVALID_ARGUMENT);
+        return _kfifoChidMgrGetNextKernelChannel(pGpu, pKernelFifo,
+                                                 pChidMgr, pIt, ppKernelChannel);
+    }
     while (pIt->runlistId < pIt->numRunlists)
     {
         CHID_MGR *pChidMgr = kfifoGetChidMgr(pGpu, pKernelFifo, pIt->runlistId);
@@ -1733,50 +1850,18 @@ NV_STATUS kfifoGetNextKernelChannel_IMPL
             continue;
         }
 
-        pIt->numChannels = kfifoChidMgrGetNumChannels(pGpu, pKernelFifo, pChidMgr);
-
-        if (pIt->pFifoDataBlock == NULL)
+        if (_kfifoChidMgrGetNextKernelChannel(pGpu, pKernelFifo, pChidMgr,
+                                              pIt, ppKernelChannel) == NV_OK)
         {
-            pIt->pFifoDataBlock = pChidMgr->pFifoDataHeap->eheapGetBlock(
-                pChidMgr->pFifoDataHeap,
-                pIt->physicalChannelID,
-                NV_TRUE);
+            return NV_OK;
         }
-
-        while (pIt->physicalChannelID < pIt->numChannels)
+        else
         {
-            if (pIt->pFifoDataBlock->owner == NVOS32_BLOCK_TYPE_FREE)
-            {
-                pIt->physicalChannelID = pIt->pFifoDataBlock->end + 1;
-            }
-            else
-            {
-                pIt->physicalChannelID++;
-                pKernelChannel = (KernelChannel *)pIt->pFifoDataBlock->pData;
-
-                //
-                // This iterator can be used during an interrupt, when a KernelChannel may
-                // be in the process of being destroyed. If a KernelChannel expects a pChannel
-                // but does not have one, it means it's being destroyed and we don't want to
-                // return it.
-                //
-                if (pKernelChannel != NULL && kchannelIsValid_HAL(pKernelChannel))
-                {
-                    // Prepare iterator to check next block in pChidMgr->pFifoDataHeap
-                    pIt->pFifoDataBlock = pIt->pFifoDataBlock->next;
-                    *ppKernelChannel = pKernelChannel;
-                    return NV_OK;
-                }
-            }
-
-            // Check next block in pChidMgr->pFifoDataHeap
-            pIt->pFifoDataBlock = pIt->pFifoDataBlock->next;
+            pIt->runlistId++;
+            // Reset iterator for next runlist
+            pIt->physicalChannelID = 0;
+            pIt->pFifoDataBlock = NULL;
         }
-
-        pIt->runlistId++;
-        // Reset iterator for next runlist
-        pIt->physicalChannelID = 0;
-        pIt->pFifoDataBlock = NULL;
     }
 
     return NV_ERR_OBJECT_NOT_FOUND;
@@ -1881,7 +1966,7 @@ kfifoGetHostDeviceInfoTable_KERNEL
     OBJGPU      *pGpu,
     KernelFifo  *pKernelFifo,
     ENGINE_INFO *pEngineInfo,
-    NvHandle     hMigClient
+    Device      *pMigDevice
 )
 {
     NV_STATUS status = NV_OK;
@@ -1915,18 +2000,15 @@ kfifoGetHostDeviceInfoTable_KERNEL
         }
         else
         {
-            RsClient *pClient;
+            RsClient *pClient = RES_GET_CLIENT(pMigDevice);
             Subdevice *pSubdevice;
 
-            hClient = hMigClient;
-
             NV_ASSERT_OK_OR_RETURN(
-                    serverGetClientUnderLock(&g_resServ, hClient, &pClient));
-
-            NV_ASSERT_OK_OR_RETURN(subdeviceGetByGpu(pClient, pGpu, &pSubdevice));
+                subdeviceGetByInstance(pClient, RES_GET_HANDLE(pMigDevice), 0, &pSubdevice));
 
             GPU_RES_SET_THREAD_BC_STATE(pSubdevice);
 
+            hClient = pClient->hClient;
             hObject = RES_GET_HANDLE(pSubdevice);
         }
     }
@@ -2336,7 +2418,7 @@ kfifoEngineListHasChannel_IMPL
     NV_ASSERT_OR_RETURN((pEngines != NULL) && (engineCount > 0), NV_TRUE);
 
     // Find any channels or contexts on passed engines
-    kfifoGetChannelIterator(pGpu, pKernelFifo, &it);
+    kfifoGetChannelIterator(pGpu, pKernelFifo, &it, INVALID_RUNLIST_ID);
     while (kchannelGetNextKernelChannel(pGpu, &it, &pKernelChannel) == NV_OK)
     {
         NV_ASSERT_OR_ELSE(pKernelChannel != NULL, continue);
@@ -2630,7 +2712,8 @@ kfifoRunlistAllocBuffers_IMPL
             }
         }
 
-        status = memdescAlloc(ppMemDesc[counter]);
+        memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_101,
+                        ppMemDesc[counter]);
         if (status != NV_OK)
         {
             NV_PRINTF(LEVEL_ERROR, "Runlist buffer mem alloc failed 0x%08x\n",
@@ -2665,10 +2748,10 @@ kfifoGetMaxSubcontextFromGr_KERNEL
     KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
 
     NV_ASSERT_OR_RETURN(pKernelGraphicsManager != NULL, 0);
-    NV_ASSERT_OR_RETURN(pKernelGraphicsManager->legacyKgraphicsStaticInfo.bInitialized, 0);
-    NV_ASSERT_OR_RETURN(pKernelGraphicsManager->legacyKgraphicsStaticInfo.pGrInfo != NULL, 0);
+    NV_ASSERT_OR_RETURN(kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->bInitialized, 0);
+    NV_ASSERT_OR_RETURN(kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->pGrInfo != NULL, 0);
 
-    return pKernelGraphicsManager->legacyKgraphicsStaticInfo.pGrInfo->infoList[NV0080_CTRL_GR_INFO_INDEX_MAX_SUBCONTEXT_COUNT].data;
+    return kgrmgrGetLegacyKGraphicsStaticInfo(pGpu, pKernelGraphicsManager)->pGrInfo->infoList[NV0080_CTRL_GR_INFO_INDEX_MAX_SUBCONTEXT_COUNT].data;
 }
 
 NvU32
@@ -2766,6 +2849,16 @@ void kfifoGetDeviceCaps_IMPL
     RMCTRL_OR_CAP(pKfifoCaps, tempCaps, temp,
                    NV0080_CTRL_FIFO_CAPS, _SUPPORT_WDDM_INTERLEAVING);
     return;
+}
+
+/**
+ * @brief Get the start offset of USERD BAR1 map region
+ */
+NvU64
+kfifoGetUserdBar1MapStartOffset_VF(OBJGPU *pGpu, KernelFifo *pKernelFifo)
+{
+
+    return 0;
 }
 
 /*!
@@ -2952,56 +3045,63 @@ kfifoTriggerPostSchedulingEnableCallback_IMPL
 {
     NV_STATUS status = NV_OK;
     FifoSchedulingHandlerEntry *pEntry;
-    NvBool bRetry = NV_FALSE;
+    NvBool bFirstPass = NV_TRUE;
+    NvBool bRetry;
 
-    for (pEntry = listHead(&pKernelFifo->postSchedulingEnableHandlerList);
-         pEntry != NULL;
-         pEntry = listNext(&pKernelFifo->postSchedulingEnableHandlerList, pEntry))
+    do
     {
-        NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
-            status = NV_ERR_INVALID_STATE; break;);
+        NvBool bMadeProgress = NV_FALSE;
 
-        pEntry->bHandled = NV_FALSE;
-        status = pEntry->pCallback(pGpu, pEntry->pCallbackParam);
+        bRetry = NV_FALSE;
 
-        // Retry mechanism: Some callbacks depend on other callbacks in this list.
-        bRetry = bRetry || (status == NV_WARN_MORE_PROCESSING_REQUIRED);
+        for (pEntry = listHead(&pKernelFifo->postSchedulingEnableHandlerList);
+             pEntry != NULL;
+             pEntry = listNext(&pKernelFifo->postSchedulingEnableHandlerList, pEntry))
+        {
+            NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
+                status = NV_ERR_INVALID_STATE; break;);
 
-        if (status == NV_WARN_MORE_PROCESSING_REQUIRED)
-            // Quash retry status
-            status = NV_OK;
-        else if (status == NV_OK)
-            // Successfully handled, no need to retry
-            pEntry->bHandled = NV_TRUE;
-        else
-            // Actual error, abort
-            break;
-    }
+            if (bFirstPass)
+            {
+                // Reset bHandled set by previous call (fore example, for dor suspend-resume)
+                pEntry->bHandled = NV_FALSE;
+            }
+            else if (pEntry->bHandled)
+            {
+                continue;
+            }
 
-    // If we hit an actual error or completed everything successfully, return early.
-    if ((status != NV_OK) || !bRetry)
-        return status;
+            status = pEntry->pCallback(pGpu, pEntry->pCallbackParam);
 
-    // Second pass, retry anything that asked nicely to be deferred
-    for (pEntry = listHead(&pKernelFifo->postSchedulingEnableHandlerList);
-         pEntry != NULL;
-         pEntry = listNext(&pKernelFifo->postSchedulingEnableHandlerList, pEntry))
-    {
-        NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
-            status = NV_ERR_INVALID_STATE; break;);
+            if (status == NV_WARN_MORE_PROCESSING_REQUIRED)
+            {
+                // Retry mechanism: Some callbacks depend on other callbacks in this list.
+                bRetry = NV_TRUE;
+                // Quash retry status
+                status = NV_OK;
+            }
+            else if (status == NV_OK)
+            {
+                // Successfully handled, no need to retry
+                pEntry->bHandled = NV_TRUE;
+                bMadeProgress = NV_TRUE;
+            }
+            else
+            {
+                // Actual error, abort
+                NV_ASSERT(0);
+                break;
+            }
+        }
 
-        // Skip anything that was completed successfully
-        if (pEntry->bHandled)
-            continue;
+        // We are stuck in a loop, and all remaining callbacks are returning NV_WARN_MORE_PROCESSING_REQUIRED
+        NV_ASSERT_OR_RETURN(bMadeProgress || status != NV_OK, NV_ERR_INVALID_STATE);
 
-        NV_CHECK_OK_OR_ELSE(status, LEVEL_ERROR,
-            pEntry->pCallback(pGpu, pEntry->pCallbackParam),
-            break; );
-    }
+        bFirstPass = NV_FALSE;
+    } while (bRetry && status == NV_OK);
 
     return status;
 }
-
 
 /*!
  * @brief Notify handlers that scheduling will soon be disabled.
@@ -3020,53 +3120,60 @@ kfifoTriggerPreSchedulingDisableCallback_IMPL
 {
     NV_STATUS status = NV_OK;
     FifoSchedulingHandlerEntry *pEntry;
-    NvBool bRetry = NV_FALSE;
+    NvBool bFirstPass = NV_TRUE;
+    NvBool bRetry;
 
-    // First pass
-    for (pEntry = listHead(&pKernelFifo->preSchedulingDisableHandlerList);
-         pEntry != NULL;
-         pEntry = listNext(&pKernelFifo->preSchedulingDisableHandlerList, pEntry))
+    do
     {
-        NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
-            status = NV_ERR_INVALID_STATE; break;);
+        NvBool bMadeProgress = NV_FALSE;
 
-        pEntry->bHandled = NV_FALSE;
-        status = pEntry->pCallback(pGpu, pEntry->pCallbackParam);
+        bRetry = NV_FALSE;
 
-        // Retry mechanism: Some callbacks depend on other callbacks in this list.
-        bRetry = bRetry || (status == NV_WARN_MORE_PROCESSING_REQUIRED);
+        for (pEntry = listHead(&pKernelFifo->preSchedulingDisableHandlerList);
+             pEntry != NULL;
+             pEntry = listNext(&pKernelFifo->preSchedulingDisableHandlerList, pEntry))
+        {
+            NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
+                status = NV_ERR_INVALID_STATE; break;);
 
-        if (status == NV_WARN_MORE_PROCESSING_REQUIRED)
-            // Quash retry status
-            status = NV_OK;
-        else if (status == NV_OK)
-            // Successfully handled, no need to retry
-            pEntry->bHandled = NV_TRUE;
-        else
-            // Actual error, abort
-            break;
-    }
+            if (bFirstPass)
+            {
+                // Reset bHandled set by previous call (fore example, for dor suspend-resume)
+                pEntry->bHandled = NV_FALSE;
+            }
+            else if (pEntry->bHandled)
+            {
+                continue;
+            }
 
-    // If we hit an actual error or completed everything successfully, return early.
-    if ((status != NV_OK) || !bRetry)
-        return status;
+            status = pEntry->pCallback(pGpu, pEntry->pCallbackParam);
 
-    // Second pass, retry anything that asked nicely to be deferred
-    for (pEntry = listHead(&pKernelFifo->preSchedulingDisableHandlerList);
-         pEntry != NULL;
-         pEntry = listNext(&pKernelFifo->preSchedulingDisableHandlerList, pEntry))
-    {
-        NV_ASSERT_OR_ELSE(pEntry->pCallback != NULL,
-            status = NV_ERR_INVALID_STATE; break;);
+            if (status == NV_WARN_MORE_PROCESSING_REQUIRED)
+            {
+                // Retry mechanism: Some callbacks depend on other callbacks in this list.
+                bRetry = NV_TRUE;
+                // Quash retry status
+                status = NV_OK;
+            }
+            else if (status == NV_OK)
+            {
+                // Successfully handled, no need to retry
+                pEntry->bHandled = NV_TRUE;
+                bMadeProgress = NV_TRUE;
+            }
+            else
+            {
+                // Actual error, abort
+                NV_ASSERT(0);
+                break;
+            }
+        }
 
-        // Skip anything that was completed successfully
-        if (pEntry->bHandled)
-            continue;
+        // We are stuck in a loop, and all remaining callbacks are returning NV_WARN_MORE_PROCESSING_REQUIRED
+        NV_ASSERT_OR_RETURN(bMadeProgress || status != NV_OK, NV_ERR_INVALID_STATE);
 
-        NV_CHECK_OK_OR_ELSE(status, LEVEL_ERROR,
-            pEntry->pCallback(pGpu, pEntry->pCallbackParam),
-            break; );
-    }
+        bFirstPass = NV_FALSE;
+    } while (bRetry && status == NV_OK);
 
     return status;
 }
@@ -3118,7 +3225,7 @@ kfifoSetChidOffset_IMPL
     NvU32             gfid,
     NvU32            *pChidOffset,
     NvU32            *pChannelCount,
-    NvU32             hMigClient,
+    Device           *pMigDevice,
     NvU32             engineFifoListNumEntries,
     FIFO_ENGINE_LIST *pEngineFifoList
 )
@@ -3145,7 +3252,7 @@ kfifoSetChidOffset_IMPL
     }
 
     NV_ASSERT_OK_OR_GOTO(status, kfifoProgramChIdTable_HAL(pGpu, pKernelFifo, pChidMgr, offset, numChannels, gfid,
-                                                           hMigClient, engineFifoListNumEntries, pEngineFifoList), cleanup);
+                                                           pMigDevice, engineFifoListNumEntries, pEngineFifoList), cleanup);
 
 cleanup:
 
@@ -3382,9 +3489,9 @@ kfifoGetGuestEngineLookupTable_IMPL
         {NV2080_ENGINE_TYPE_COPY7,      MC_ENGINE_IDX_CE7},
         {NV2080_ENGINE_TYPE_COPY8,      MC_ENGINE_IDX_CE8},
         {NV2080_ENGINE_TYPE_COPY9,      MC_ENGINE_IDX_CE9},
-        {NV2080_ENGINE_TYPE_NVENC0,     MC_ENGINE_IDX_MSENC},
-        {NV2080_ENGINE_TYPE_NVENC1,     MC_ENGINE_IDX_MSENC1},
-        {NV2080_ENGINE_TYPE_NVENC2,     MC_ENGINE_IDX_MSENC2},
+        {NV2080_ENGINE_TYPE_NVENC0,     MC_ENGINE_IDX_NVENC},
+        {NV2080_ENGINE_TYPE_NVENC1,     MC_ENGINE_IDX_NVENC1},
+        {NV2080_ENGINE_TYPE_NVENC2,     MC_ENGINE_IDX_NVENC2},
         {NV2080_ENGINE_TYPE_NVDEC0,     MC_ENGINE_IDX_NVDEC0},
         {NV2080_ENGINE_TYPE_NVDEC1,     MC_ENGINE_IDX_NVDEC1},
         {NV2080_ENGINE_TYPE_NVDEC2,     MC_ENGINE_IDX_NVDEC2},
@@ -3403,14 +3510,14 @@ kfifoGetGuestEngineLookupTable_IMPL
         {NV2080_ENGINE_TYPE_NVJPEG5,    MC_ENGINE_IDX_NVJPEG5},
         {NV2080_ENGINE_TYPE_NVJPEG6,    MC_ENGINE_IDX_NVJPEG6},
         {NV2080_ENGINE_TYPE_NVJPEG7,    MC_ENGINE_IDX_NVJPEG7},
-        {NV2080_ENGINE_TYPE_OFA,        MC_ENGINE_IDX_OFA0},
+        {NV2080_ENGINE_TYPE_OFA0,       MC_ENGINE_IDX_OFA0},
     };
 
     //
     // To trap NV2080_ENGINE_TYPE expansions.
     // Please update the table guestEngineLookupTable if this assertion is triggered.
     //
-    ct_assert(NV2080_ENGINE_TYPE_LAST == 0x0000003e);
+    ct_assert(NV2080_ENGINE_TYPE_LAST == 0x00000040);
 
     *pEngLookupTblSize = NV_ARRAY_ELEMENTS(guestEngineLookupTable);
 
@@ -3432,16 +3539,112 @@ kfifoGetMaxSecureChannels_KERNEL
     RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
     NV2080_CTRL_INTERNAL_FIFO_GET_NUM_SECURE_CHANNELS_PARAMS numSecureChannelsParams = {0};
 
-    NV_ASSERT_OK_OR_RETURN(
-        pRmApi->Control(pRmApi,
-                        pGpu->hInternalClient,
-                        pGpu->hInternalSubdevice,
-                        NV2080_CTRL_CMD_INTERNAL_FIFO_GET_NUM_SECURE_CHANNELS,
-                        &numSecureChannelsParams,
-                        sizeof(numSecureChannelsParams)));
+    if (gpuIsCCFeatureEnabled(pGpu))
+    {
+        NV_ASSERT_OK_OR_RETURN(
+            pRmApi->Control(pRmApi,
+                            pGpu->hInternalClient,
+                            pGpu->hInternalSubdevice,
+                            NV2080_CTRL_CMD_INTERNAL_FIFO_GET_NUM_SECURE_CHANNELS,
+                            &numSecureChannelsParams,
+                            sizeof(numSecureChannelsParams)));
+    }
 
     pKernelFifo->maxSec2SecureChannels = numSecureChannelsParams.maxSec2SecureChannels;
     pKernelFifo->maxCeSecureChannels = numSecureChannelsParams.maxCeSecureChannels;
 
     return NV_OK;
+}
+
+/**
+ * @brief Checking if the engine ID belongs to a PBDMA or not
+ * @param[in] pGpu
+ * @param[in] pKernelFifo
+ * @param[in] engineId
+ *
+ * @return TRUE if engine ID belongs to a PBDMA
+ */
+NvBool
+kfifoIsMmuFaultEngineIdPbdma_IMPL
+(
+    OBJGPU     *pGpu,
+    KernelFifo *pKernelFifo,
+    NvU32       engineId
+)
+{
+    const ENGINE_INFO *pEngineInfo = kfifoGetEngineInfo(pKernelFifo);
+
+    NV_ASSERT_OR_RETURN(pEngineInfo != NULL, NV_FALSE);
+    return bitVectorTest(&pEngineInfo->validEngineIdsForPbdmas, engineId);
+}
+
+/**
+ * @brief Function to get PBDMA ID from the given MMU falut ID
+  *
+ * @param[in] pGpu
+ * @param[in] pKernelFifo
+ * @param[in] mmuFaultId
+ * @param[out] pPbdmaId
+ */
+NV_STATUS
+kfifoGetPbdmaIdFromMmuFaultId_IMPL
+(
+    OBJGPU     *pGpu,
+    KernelFifo *pKernelFifo,
+    NvU32       mmuFaultId,
+    NvU32      *pPbdmaId
+)
+{
+    const ENGINE_INFO *pEngineInfo = kfifoGetEngineInfo(pKernelFifo);
+    NvU32 pbdmaFaultIdStart;
+
+    NV_ASSERT_OR_RETURN(pEngineInfo != NULL, NV_ERR_INVALID_STATE);
+
+    //
+    // HW guarantees mmu fault engine ids used for PBDMAs will be assigned in sequential order
+    // "PBDMA of MMU_ENGINE_ID = MMU_ENGINE_ID - BASE_PBDMA_FAULT_ID" relation holds for all assignments
+    // This is helping SW to derive the pbdma id using base pbdma fault id and mmu fault engine id
+    //
+    pbdmaFaultIdStart = bitVectorCountTrailingZeros(&pEngineInfo->validEngineIdsForPbdmas);
+    *pPbdmaId = mmuFaultId - pbdmaFaultIdStart;
+
+    return NV_OK;
+}
+
+/*!
+ * @brief Function to get RM engine type from the given pbdma falut id
+ *
+ * @param[in]  pGpu
+ * @param[in]  pKernelFifo
+ * @param[in]  pbdmaFaultId
+ * @param[out] pRmEngineType
+ *
+ * @returns NV_OK when engine type found for given pbdma falut id
+ */
+NV_STATUS
+kfifoGetEngineTypeFromPbdmaFaultId_IMPL
+(
+    OBJGPU          *pGpu,
+    KernelFifo      *pKernelFifo,
+    NvU32            pbdmaFaultId,
+    RM_ENGINE_TYPE  *pRmEngineType
+)
+{
+    const ENGINE_INFO *pEngineInfo = kfifoGetEngineInfo(pKernelFifo);
+    NvU32 i, j;
+
+    for (i = 0; i < pEngineInfo->engineInfoListSize; i++)
+    {
+        for (j = 0; j < pEngineInfo->engineInfoList[i].numPbdmas; j++)
+        {
+            if (pbdmaFaultId == pEngineInfo->engineInfoList[i].pbdmaFaultIds[j])
+            {
+                *pRmEngineType = pEngineInfo->engineInfoList[i].engineData[ENGINE_INFO_TYPE_RM_ENGINE_TYPE];
+                return NV_OK;
+            }
+        }
+    }
+
+    *pRmEngineType = RM_ENGINE_TYPE_NULL;
+    return NV_ERR_OBJECT_NOT_FOUND;
 }

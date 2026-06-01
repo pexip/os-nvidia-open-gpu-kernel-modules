@@ -21,14 +21,15 @@
 
 *******************************************************************************/
 
-#include <uvm_common.h>
-#include <uvm_gpu.h>
-#include <uvm_mem.h>
-#include <uvm_push.h>
-#include <uvm_hal.h>
-#include <uvm_test.h>
-#include <uvm_va_space.h>
-#include <uvm_kvmalloc.h>
+#include "uvm_common.h"
+#include "uvm_global.h"
+#include "uvm_gpu.h"
+#include "uvm_mem.h"
+#include "uvm_push.h"
+#include "uvm_hal.h"
+#include "uvm_test.h"
+#include "uvm_va_space.h"
+#include "uvm_kvmalloc.h"
 #include <linux/string.h>
 #include "nv_uvm_interface.h"
 
@@ -321,6 +322,7 @@ static NV_STATUS cpu_decrypt(uvm_channel_t *channel,
                              uvm_mem_t *dst_mem,
                              uvm_mem_t *src_mem,
                              UvmCslIv *decrypt_iv,
+                             NvU32 key_version,
                              uvm_mem_t *auth_tag_mem,
                              size_t size,
                              size_t copy_size)
@@ -337,6 +339,7 @@ static NV_STATUS cpu_decrypt(uvm_channel_t *channel,
                                                          dst_plain,
                                                          src_cipher,
                                                          &decrypt_iv[i],
+                                                         key_version,
                                                          copy_size,
                                                          auth_tag_buffer));
 
@@ -367,7 +370,7 @@ static void gpu_encrypt(uvm_push_t *push,
     uvm_gpu_address_t auth_tag_address = uvm_mem_gpu_address_virtual_kernel(auth_tag_mem, gpu);
 
     for (i = 0; i < num_iterations; i++) {
-        uvm_conf_computing_log_gpu_encryption(push->channel, decrypt_iv);
+        uvm_conf_computing_log_gpu_encryption(push->channel, copy_size, decrypt_iv);
 
         if (i > 0)
             uvm_push_set_flag(push, UVM_PUSH_FLAG_CE_NEXT_PIPELINED);
@@ -426,6 +429,7 @@ static NV_STATUS test_cpu_to_gpu_roundtrip(uvm_gpu_t *gpu, size_t copy_size, siz
     size_t auth_tag_buffer_size = (size / copy_size) * UVM_CONF_COMPUTING_AUTH_TAG_SIZE;
     uvm_push_t push;
     UvmCslIv *decrypt_iv;
+    NvU32 key_version;
 
     decrypt_iv = uvm_kvmalloc_zero((size / copy_size) * sizeof(UvmCslIv));
     if (!decrypt_iv)
@@ -455,6 +459,11 @@ static NV_STATUS test_cpu_to_gpu_roundtrip(uvm_gpu_t *gpu, size_t copy_size, siz
 
     gpu_encrypt(&push, dst_cipher, dst_plain, decrypt_iv, auth_tag_mem, size, copy_size);
 
+    // There shouldn't be any key rotation between the end of the push and the
+    // CPU decryption(s), but it is more robust against test changes to force
+    // decryption to use the saved key.
+    key_version = uvm_channel_pool_key_version(push.channel->pool);
+
     TEST_NV_CHECK_GOTO(uvm_push_end_and_wait(&push), out);
 
     TEST_CHECK_GOTO(!mem_match(src_plain, src_cipher), out);
@@ -464,6 +473,7 @@ static NV_STATUS test_cpu_to_gpu_roundtrip(uvm_gpu_t *gpu, size_t copy_size, siz
                                    dst_plain_cpu,
                                    dst_cipher,
                                    decrypt_iv,
+                                   key_version,
                                    auth_tag_mem,
                                    size,
                                    copy_size),
@@ -514,8 +524,6 @@ static NV_STATUS test_sec2(uvm_va_space_t *va_space)
     uvm_gpu_t *gpu;
 
     for_each_va_space_gpu(gpu, va_space) {
-        TEST_CHECK_RET(uvm_conf_computing_mode_enabled(gpu));
-
         TEST_NV_CHECK_RET(test_semaphore_release(gpu));
         TEST_NV_CHECK_RET(test_semaphore_timestamp(gpu));
         TEST_NV_CHECK_RET(test_encryption_decryption(gpu));
@@ -529,13 +537,12 @@ NV_STATUS uvm_test_sec2_sanity(UVM_TEST_SEC2_SANITY_PARAMS *params, struct file 
     NV_STATUS status;
     uvm_va_space_t *va_space = uvm_va_space_get(filp);
 
+    TEST_CHECK_RET(g_uvm_global.conf_computing_enabled);
+
     uvm_va_space_down_read_rm(va_space);
 
     status = test_sec2(va_space);
-    if (status != NV_OK)
-        goto done;
 
-done:
     uvm_va_space_up_read_rm(va_space);
 
     return status;
@@ -547,11 +554,11 @@ NV_STATUS uvm_test_sec2_cpu_gpu_roundtrip(UVM_TEST_SEC2_CPU_GPU_ROUNDTRIP_PARAMS
     uvm_va_space_t *va_space = uvm_va_space_get(filp);
     uvm_gpu_t *gpu;
 
+    TEST_CHECK_RET(g_uvm_global.conf_computing_enabled);
+
     uvm_va_space_down_read(va_space);
 
     for_each_va_space_gpu(gpu, va_space) {
-        TEST_CHECK_RET(uvm_conf_computing_mode_enabled(gpu));
-
         // To exercise certain SEC2 context save/restore races, do a looped
         // decrypt with smaller copy sizes instead of larger copy sizes since we
         // need SEC2 to context switch with pending work in different channels

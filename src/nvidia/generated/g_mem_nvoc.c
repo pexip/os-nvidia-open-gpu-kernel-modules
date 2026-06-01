@@ -128,10 +128,6 @@ static void __nvoc_thunk_RsResource_memAddAdditionalDependants(struct RsClient *
     resAddAdditionalDependants(pClient, (struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset), pReference);
 }
 
-static NV_STATUS __nvoc_thunk_RsResource_memUnmapFrom(struct Memory *pResource, RS_RES_UNMAP_FROM_PARAMS *pParams) {
-    return resUnmapFrom((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset), pParams);
-}
-
 static NV_STATUS __nvoc_thunk_RmResource_memControlSerialization_Prologue(struct Memory *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return rmresControlSerialization_Prologue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RmResource.offset), pCallContext, pParams);
 }
@@ -142,6 +138,10 @@ static NV_STATUS __nvoc_thunk_RmResource_memControl_Prologue(struct Memory *pRes
 
 static NvBool __nvoc_thunk_RsResource_memCanCopy(struct Memory *pResource) {
     return resCanCopy((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset));
+}
+
+static NvBool __nvoc_thunk_RsResource_memIsPartialUnmapSupported(struct Memory *pResource) {
+    return resIsPartialUnmapSupported((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset));
 }
 
 static void __nvoc_thunk_RsResource_memPreDestruct(struct Memory *pResource) {
@@ -160,8 +160,8 @@ static void __nvoc_thunk_RmResource_memControl_Epilogue(struct Memory *pResource
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RmResource.offset), pCallContext, pParams);
 }
 
-static NV_STATUS __nvoc_thunk_RsResource_memControlLookup(struct Memory *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset), pParams, ppEntry);
+static NV_STATUS __nvoc_thunk_RsResource_memUnmapFrom(struct Memory *pResource, RS_RES_UNMAP_FROM_PARAMS *pParams) {
+    return resUnmapFrom((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_Memory_RsResource.offset), pParams);
 }
 
 static NvBool __nvoc_thunk_RmResource_memAccessCallback(struct Memory *pResource, struct RsClient *pInvokingClient, void *pAllocParams, RsAccessRight accessRight) {
@@ -175,6 +175,21 @@ static NvBool __nvoc_thunk_RmResource_memAccessCallback(struct Memory *pResource
 static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[] = 
 {
     {               /*  [0] */
+#if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+        /*pFunc=*/      (void (*)(void)) NULL,
+#else
+        /*pFunc=*/      (void (*)(void)) memCtrlCmdGetSurfacePhysAttrLvm_IMPL,
+#endif // NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+        /*flags=*/      0x0u,
+        /*accessRight=*/0x0u,
+        /*methodId=*/   0x410103u,
+        /*paramSize=*/  sizeof(NV0041_CTRL_GET_SURFACE_PHYS_ATTR_PARAMS),
+        /*pClassInfo=*/ &(__nvoc_class_def_Memory.classInfo),
+#if NV_PRINTF_STRINGS_ALLOWED
+        /*func=*/       "memCtrlCmdGetSurfacePhysAttrLvm"
+#endif
+    },
+    {               /*  [1] */
 #if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
@@ -189,13 +204,13 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
         /*func=*/       "memCtrlCmdGetSurfaceInfoLvm"
 #endif
     },
-    {               /*  [1] */
-#if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
+    {               /*  [2] */
+#if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x2010u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
         /*pFunc=*/      (void (*)(void)) memCtrlCmdGetSurfaceCompressionCoverageLvm_IMPL,
-#endif // NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
-        /*flags=*/      0x10u,
+#endif // NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x2010u)
+        /*flags=*/      0x2010u,
         /*accessRight=*/0x0u,
         /*methodId=*/   0x410112u,
         /*paramSize=*/  sizeof(NV0041_CTRL_GET_SURFACE_COMPRESSION_COVERAGE_PARAMS),
@@ -204,7 +219,7 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
         /*func=*/       "memCtrlCmdGetSurfaceCompressionCoverageLvm"
 #endif
     },
-    {               /*  [2] */
+    {               /*  [3] */
 #if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
@@ -219,7 +234,7 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
         /*func=*/       "memCtrlCmdSurfaceFlushGpuCache"
 #endif
     },
-    {               /*  [3] */
+    {               /*  [4] */
 #if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
@@ -234,7 +249,7 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
         /*func=*/       "memCtrlCmdGetMemPageSize"
 #endif
     },
-    {               /*  [4] */
+    {               /*  [5] */
 #if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
@@ -249,7 +264,7 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
         /*func=*/       "memCtrlCmdSetTag"
 #endif
     },
-    {               /*  [5] */
+    {               /*  [6] */
 #if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
         /*pFunc=*/      (void (*)(void)) NULL,
 #else
@@ -269,7 +284,7 @@ static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_Memory[]
 
 const struct NVOC_EXPORT_INFO __nvoc_export_info_Memory = 
 {
-    /*numEntries=*/     6,
+    /*numEntries=*/     7,
     /*pExportEntries=*/ __nvoc_exported_method_def_Memory
 };
 
@@ -328,7 +343,9 @@ static void __nvoc_init_funcTable_Memory_1(Memory *pThis) {
 
     pThis->__memIsGpuMapAllowed__ = &memIsGpuMapAllowed_0c883b;
 
-#if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
+    pThis->__memIsExportAllowed__ = &memIsExportAllowed_0c883b;
+
+#if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x2010u)
     pThis->__memCtrlCmdGetSurfaceCompressionCoverageLvm__ = &memCtrlCmdGetSurfaceCompressionCoverageLvm_IMPL;
 #endif
 
@@ -350,6 +367,10 @@ static void __nvoc_init_funcTable_Memory_1(Memory *pThis) {
 
 #if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
     pThis->__memCtrlCmdGetTag__ = &memCtrlCmdGetTag_IMPL;
+#endif
+
+#if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x0u)
+    pThis->__memCtrlCmdGetSurfacePhysAttrLvm__ = &memCtrlCmdGetSurfacePhysAttrLvm_IMPL;
 #endif
 
     pThis->__nvoc_base_RmResource.__nvoc_base_RsResource.__resIsDuplicate__ = &__nvoc_thunk_Memory_resIsDuplicate;
@@ -374,13 +395,13 @@ static void __nvoc_init_funcTable_Memory_1(Memory *pThis) {
 
     pThis->__memAddAdditionalDependants__ = &__nvoc_thunk_RsResource_memAddAdditionalDependants;
 
-    pThis->__memUnmapFrom__ = &__nvoc_thunk_RsResource_memUnmapFrom;
-
     pThis->__memControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_memControlSerialization_Prologue;
 
     pThis->__memControl_Prologue__ = &__nvoc_thunk_RmResource_memControl_Prologue;
 
     pThis->__memCanCopy__ = &__nvoc_thunk_RsResource_memCanCopy;
+
+    pThis->__memIsPartialUnmapSupported__ = &__nvoc_thunk_RsResource_memIsPartialUnmapSupported;
 
     pThis->__memPreDestruct__ = &__nvoc_thunk_RsResource_memPreDestruct;
 
@@ -390,7 +411,7 @@ static void __nvoc_init_funcTable_Memory_1(Memory *pThis) {
 
     pThis->__memControl_Epilogue__ = &__nvoc_thunk_RmResource_memControl_Epilogue;
 
-    pThis->__memControlLookup__ = &__nvoc_thunk_RsResource_memControlLookup;
+    pThis->__memUnmapFrom__ = &__nvoc_thunk_RsResource_memUnmapFrom;
 
     pThis->__memAccessCallback__ = &__nvoc_thunk_RmResource_memAccessCallback;
 }
@@ -410,21 +431,26 @@ void __nvoc_init_Memory(Memory *pThis) {
     __nvoc_init_funcTable_Memory(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_Memory(Memory **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_Memory(Memory **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     Memory *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(Memory), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(Memory));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_Memory);
 
     pThis->__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -439,16 +465,25 @@ NV_STATUS __nvoc_objCreate_Memory(Memory **ppThis, Dynamic *pParent, NvU32 creat
     status = __nvoc_ctor_Memory(pThis, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_Memory_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_Memory_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(Memory));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

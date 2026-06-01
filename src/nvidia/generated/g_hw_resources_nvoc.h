@@ -39,11 +39,16 @@ extern "C" {
 /*!
  * Allocator for normal virtual, video and system memory
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_HW_RESOURCES_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct MemoryHwResources {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Memory __nvoc_base_Memory;
@@ -58,19 +63,20 @@ struct MemoryHwResources {
     NvBool (*__hwresShareCallback__)(struct MemoryHwResources *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__hwresMapTo__)(struct MemoryHwResources *, RS_RES_MAP_TO_PARAMS *);
     NV_STATUS (*__hwresGetMapAddrSpace__)(struct MemoryHwResources *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NvBool (*__hwresIsExportAllowed__)(struct MemoryHwResources *);
     NvU32 (*__hwresGetRefCount__)(struct MemoryHwResources *);
     void (*__hwresAddAdditionalDependants__)(struct RsClient *, struct MemoryHwResources *, RsResourceRef *);
     NV_STATUS (*__hwresControl_Prologue__)(struct MemoryHwResources *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__hwresIsGpuMapAllowed__)(struct MemoryHwResources *, struct OBJGPU *);
     NV_STATUS (*__hwresUnmapFrom__)(struct MemoryHwResources *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__hwresControl_Epilogue__)(struct MemoryHwResources *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__hwresControlLookup__)(struct MemoryHwResources *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__hwresControl__)(struct MemoryHwResources *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__hwresUnmap__)(struct MemoryHwResources *, CALL_CONTEXT *, RsCpuMapping *);
     NV_STATUS (*__hwresGetMemInterMapParams__)(struct MemoryHwResources *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__hwresGetMemoryMappingDescriptor__)(struct MemoryHwResources *, MEMORY_DESCRIPTOR **);
     NV_STATUS (*__hwresControlFilter__)(struct MemoryHwResources *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__hwresControlSerialization_Prologue__)(struct MemoryHwResources *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NvBool (*__hwresIsPartialUnmapSupported__)(struct MemoryHwResources *);
     NV_STATUS (*__hwresIsReady__)(struct MemoryHwResources *, NvBool);
     NV_STATUS (*__hwresCheckCopyPermissions__)(struct MemoryHwResources *, struct OBJGPU *, struct Device *);
     void (*__hwresPreDestruct__)(struct MemoryHwResources *);
@@ -113,19 +119,20 @@ NV_STATUS __nvoc_objCreate_MemoryHwResources(MemoryHwResources**, Dynamic*, NvU3
 #define hwresShareCallback(pResource, pInvokingClient, pParentRef, pSharePolicy) hwresShareCallback_DISPATCH(pResource, pInvokingClient, pParentRef, pSharePolicy)
 #define hwresMapTo(pResource, pParams) hwresMapTo_DISPATCH(pResource, pParams)
 #define hwresGetMapAddrSpace(pMemory, pCallContext, mapFlags, pAddrSpace) hwresGetMapAddrSpace_DISPATCH(pMemory, pCallContext, mapFlags, pAddrSpace)
+#define hwresIsExportAllowed(pMemory) hwresIsExportAllowed_DISPATCH(pMemory)
 #define hwresGetRefCount(pResource) hwresGetRefCount_DISPATCH(pResource)
 #define hwresAddAdditionalDependants(pClient, pResource, pReference) hwresAddAdditionalDependants_DISPATCH(pClient, pResource, pReference)
 #define hwresControl_Prologue(pResource, pCallContext, pParams) hwresControl_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define hwresIsGpuMapAllowed(pMemory, pGpu) hwresIsGpuMapAllowed_DISPATCH(pMemory, pGpu)
 #define hwresUnmapFrom(pResource, pParams) hwresUnmapFrom_DISPATCH(pResource, pParams)
 #define hwresControl_Epilogue(pResource, pCallContext, pParams) hwresControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define hwresControlLookup(pResource, pParams, ppEntry) hwresControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define hwresControl(pMemory, pCallContext, pParams) hwresControl_DISPATCH(pMemory, pCallContext, pParams)
 #define hwresUnmap(pMemory, pCallContext, pCpuMapping) hwresUnmap_DISPATCH(pMemory, pCallContext, pCpuMapping)
 #define hwresGetMemInterMapParams(pMemory, pParams) hwresGetMemInterMapParams_DISPATCH(pMemory, pParams)
 #define hwresGetMemoryMappingDescriptor(pMemory, ppMemDesc) hwresGetMemoryMappingDescriptor_DISPATCH(pMemory, ppMemDesc)
 #define hwresControlFilter(pResource, pCallContext, pParams) hwresControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define hwresControlSerialization_Prologue(pResource, pCallContext, pParams) hwresControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
+#define hwresIsPartialUnmapSupported(pResource) hwresIsPartialUnmapSupported_DISPATCH(pResource)
 #define hwresIsReady(pMemory, bCopyConstructorContext) hwresIsReady_DISPATCH(pMemory, bCopyConstructorContext)
 #define hwresCheckCopyPermissions(pMemory, pDstGpu, pDstDevice) hwresCheckCopyPermissions_DISPATCH(pMemory, pDstGpu, pDstDevice)
 #define hwresPreDestruct(pResource) hwresPreDestruct_DISPATCH(pResource)
@@ -155,6 +162,10 @@ static inline NV_STATUS hwresGetMapAddrSpace_DISPATCH(struct MemoryHwResources *
     return pMemory->__hwresGetMapAddrSpace__(pMemory, pCallContext, mapFlags, pAddrSpace);
 }
 
+static inline NvBool hwresIsExportAllowed_DISPATCH(struct MemoryHwResources *pMemory) {
+    return pMemory->__hwresIsExportAllowed__(pMemory);
+}
+
 static inline NvU32 hwresGetRefCount_DISPATCH(struct MemoryHwResources *pResource) {
     return pResource->__hwresGetRefCount__(pResource);
 }
@@ -179,10 +190,6 @@ static inline void hwresControl_Epilogue_DISPATCH(struct MemoryHwResources *pRes
     pResource->__hwresControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS hwresControlLookup_DISPATCH(struct MemoryHwResources *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__hwresControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NV_STATUS hwresControl_DISPATCH(struct MemoryHwResources *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pMemory->__hwresControl__(pMemory, pCallContext, pParams);
 }
@@ -205,6 +212,10 @@ static inline NV_STATUS hwresControlFilter_DISPATCH(struct MemoryHwResources *pR
 
 static inline NV_STATUS hwresControlSerialization_Prologue_DISPATCH(struct MemoryHwResources *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pResource->__hwresControlSerialization_Prologue__(pResource, pCallContext, pParams);
+}
+
+static inline NvBool hwresIsPartialUnmapSupported_DISPATCH(struct MemoryHwResources *pResource) {
+    return pResource->__hwresIsPartialUnmapSupported__(pResource);
 }
 
 static inline NV_STATUS hwresIsReady_DISPATCH(struct MemoryHwResources *pMemory, NvBool bCopyConstructorContext) {
@@ -249,4 +260,5 @@ void hwresDestruct_IMPL(struct MemoryHwResources *pMemoryHwResources);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_HW_RESOURCES_NVOC_H_

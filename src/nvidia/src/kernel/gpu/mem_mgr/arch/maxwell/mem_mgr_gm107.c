@@ -28,13 +28,17 @@
 #include "gpu/mem_sys/kern_mem_sys.h"
 #include "gpu/mem_mgr/heap.h"
 #include "gpu/mem_mgr/mem_desc.h"
+#include "gpu/mem_mgr/fermi_dma.h"
 #include "gpu/mem_mgr/virt_mem_allocator.h"
 #include "kernel/gpu/gr/kernel_graphics.h"
 #include "gpu/mmu/kern_gmmu.h"
 #include "gpu/bus/kern_bus.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
+#include "platform/sli/sli.h"
+#include "nvrm_registry.h"
 
 #include "gpu/bif/kernel_bif.h"
+#include "gpu/device/device.h"
 #include "gpu/subdevice/subdevice.h"
 #include "gpu/disp/inst_mem/disp_inst_mem.h"
 
@@ -255,22 +259,38 @@ static void
 memmgrSetZbcReferenced
 (
     OBJGPU *pGpu,
+    NvHandle hClient,
+    NvHandle hDevice,
     NvBool  bZbcSurfacesExist
 )
 {
     RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
     NV2080_CTRL_INTERNAL_MEMSYS_SET_ZBC_REFERENCED_PARAMS params = {0};
+    RsClient *pClient;
+    Subdevice *pSubdevice;
+    NvHandle hSubdevice;
+    NvU32 subDevInst;
 
     // Allocations are RPCed to host, so they are counted there
     if (IS_VIRTUAL_WITHOUT_SRIOV(pGpu))
         return;
 
     params.bZbcSurfacesExist = bZbcSurfacesExist;
+
+    NV_ASSERT_OR_RETURN_VOID(
+        serverGetClientUnderLock(&g_resServ, hClient, &pClient) == NV_OK);
+
+    subDevInst = gpumgrGetSubDeviceInstanceFromGpu(pGpu);
+
+    NV_ASSERT_OR_RETURN_VOID(subdeviceGetByInstance(pClient, hDevice, subDevInst, &pSubdevice) == NV_OK);
+
+    hSubdevice = RES_GET_HANDLE(pSubdevice);
+
     NV_ASSERT_OK(
         pRmApi->Control(
             pRmApi,
-            pGpu->hInternalClient,
-            pGpu->hInternalSubdevice,
+            hClient,
+            hSubdevice,
             NV2080_CTRL_CMD_INTERNAL_MEMSYS_SET_ZBC_REFERENCED,
             &params,
             sizeof(params)));
@@ -290,7 +310,7 @@ memmgrAllocHal_GM107
 {
     KernelMemorySystem *pKernelMemorySystem   = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
     NV_STATUS           status                = NV_OK;
-    NvU32               comprAttr, tiledAttr, zcullAttr, type;
+    NvU32               comprAttr, zcullAttr, type;
     NvU32               cacheAttr;
     NvU32               format, kind, bAlignPhase;
     NvU32               retAttr               = pFbAllocInfo->retAttr;
@@ -302,7 +322,6 @@ memmgrAllocHal_GM107
 
     // get the specified attribute values
     comprAttr     = DRF_VAL(OS32, _ATTR, _COMPR, pFbAllocInfo->pageFormat->attr);
-    tiledAttr     = DRF_VAL(OS32, _ATTR, _TILED, pFbAllocInfo->pageFormat->attr);
     zcullAttr     = DRF_VAL(OS32, _ATTR, _ZCULL, pFbAllocInfo->pageFormat->attr);
     format        = DRF_VAL(OS32, _ATTR, _FORMAT, pFbAllocInfo->pageFormat->attr);
     cacheAttr     = DRF_VAL(OS32, _ATTR2, _GPU_CACHEABLE, pFbAllocInfo->pageFormat->attr2);
@@ -321,9 +340,6 @@ memmgrAllocHal_GM107
     // So the caller is urged to verify integrity.
     //
     if (
-        // Tiling is not supported in nv50+
-        (tiledAttr == NVOS32_ATTR_TILED_REQUIRED) ||
-        (tiledAttr == NVOS32_ATTR_TILED_DEFERRED) ||
         // check the value of compression attribute
         // attributes verification for compressed surfaces
         !(memmgrVerifyComprAttrs_HAL(pMemoryManager, type, format, comprAttr)) ||
@@ -334,9 +350,6 @@ memmgrAllocHal_GM107
     {
         return NV_ERR_INVALID_ARGUMENT;
     }
-
-    // Fermi does not support tiling
-    retAttr = FLD_SET_DRF(OS32, _ATTR, _TILED, _NONE, retAttr);
 
     if (cacheAttr == NVOS32_ATTR2_GPU_CACHEABLE_DEFAULT)
     {
@@ -481,7 +494,7 @@ memmgrAllocHal_GM107
                           pMemoryManager->zbcSurfaces, pFbAllocInfo->hwResId);
 
                 if (pMemoryManager->zbcSurfaces == 1)
-                    memmgrSetZbcReferenced(pGpu, NV_TRUE);
+                    memmgrSetZbcReferenced(pGpu, pFbAllocInfo->hClient, pFbAllocInfo->hDevice, NV_TRUE);
             }
         }
         else
@@ -551,7 +564,7 @@ memmgrFreeHal_GM107
             pMemoryManager->zbcSurfaces--;
 
             if (pMemoryManager->zbcSurfaces == 0)
-                memmgrSetZbcReferenced(pGpu, NV_FALSE);
+                memmgrSetZbcReferenced(pGpu, pFbAllocInfo->hClient, pFbAllocInfo->hDevice, NV_FALSE);
         }
 
         NV_PRINTF(LEVEL_INFO,
@@ -561,83 +574,6 @@ memmgrFreeHal_GM107
 
         NV_PRINTF(LEVEL_INFO, "[2] zbcSurfaces = 0x%x\n",
                   pMemoryManager->zbcSurfaces);
-    }
-
-    return NV_OK;
-}
-
-NV_STATUS
-memmgrGetSurfacePhysAttr_GM107
-(
-    OBJGPU           *pGpu,
-    MemoryManager    *pMemoryManager,
-    Memory           *pMemory,
-    NvU64            *pOffset,
-    NvU32            *pMemAperture,
-    NvU32            *pMemKind,
-    NvU32            *pComprOffset,
-    NvU32            *pComprKind,
-    NvU32            *pLineMin,
-    NvU32            *pLineMax,
-    NvU32            *pZCullId,
-    NvU32            *pGpuCacheAttr,
-    NvU32            *pGpuP2PCacheAttr,
-    NvU64            *contigSegmentSize
-)
-{
-    NV_STATUS                   rmStatus;
-    PMEMORY_DESCRIPTOR          pMemDesc      = memdescGetMemDescFromGpu(pMemory->pMemDesc, pGpu);
-    COMPR_INFO                  comprInfo;
-    NvU32                       unused;
-
-    NV_ASSERT(pMemDesc);
-
-    rmStatus = memmgrFillMemdescForPhysAttr(pGpu, pMemoryManager, pMemDesc, AT_GPU, pOffset, pMemAperture,
-                                            pMemKind, pZCullId, pGpuCacheAttr, pGpuP2PCacheAttr,
-                                            contigSegmentSize);
-    if (NV_OK != rmStatus)
-    {
-        return rmStatus;
-    }
-
-    if ((!memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, *pMemKind)) ||
-         !FB_HWRESID_CTAGID_VAL_FERMI(memdescGetHwResId(pMemDesc)))
-    {
-        *pComprKind = 0;
-        return NV_OK;
-    }
-    // vGPU: pPrivate->pCompTags is not
-    // currently initialized in the guest RM
-    // vGPU does not use compression tags yet.
-    // GSPTODO: sort out ctags
-    if (IS_VIRTUAL(pGpu) || IS_GSP_CLIENT(pGpu))
-    {
-        *pComprOffset = 0x0;
-        *pLineMin = 0x0;
-        *pLineMax = 0x0;
-        return NV_OK;
-    }
-
-    rmStatus = memmgrGetKindComprFromMemDesc(pMemoryManager, pMemDesc, 0, &unused, &comprInfo);
-    if (rmStatus != NV_OK)
-    {
-        NV_PRINTF(LEVEL_ERROR, "dmaGetKidnCompr failed: %x\n", rmStatus);
-        return rmStatus;
-    }
-
-    if (memmgrIsKind_HAL(pMemoryManager, FB_IS_KIND_COMPRESSIBLE, comprInfo.kind))
-    {
-        *pLineMin = comprInfo.compTagLineMin;
-        *pLineMax = comprInfo.compPageIndexHi - comprInfo.compPageIndexLo + comprInfo.compTagLineMin;
-        *pComprOffset = comprInfo.compPageIndexLo;
-        *pComprKind = 1;
-    }
-    else
-    {
-        // No coverage at all (stripped by release/reacquire or invalid hw res).
-        *pLineMin = ~0;
-        *pLineMax = ~0;
-        *pComprKind = 0;
     }
 
     return NV_OK;
@@ -670,7 +606,11 @@ memmgrGetBAR1InfoForDevice_GM107
         NV2080_CTRL_FB_GET_INFO_V2_PARAMS fbInfoParams = {0};
         Subdevice *pSubdevice;
 
-        NV_ASSERT_OK_OR_RETURN(subdeviceGetByGpu(pClient, pGpu, &pSubdevice));
+        NV_ASSERT_OK_OR_RETURN(
+            subdeviceGetByInstance(pClient,
+                                   RES_GET_HANDLE(pDevice),
+                                   gpumgrGetSubDeviceInstanceFromGpu(pGpu),
+                                   &pSubdevice));
 
         fbInfoParams.fbInfoList[0].index = NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE;
         fbInfoParams.fbInfoList[1].index = NV2080_CTRL_FB_INFO_INDEX_BAR1_AVAIL_SIZE;
@@ -698,7 +638,7 @@ memmgrGetBAR1InfoForDevice_GM107
         NV_ASSERT_OR_RETURN(pBar1VAS != NULL, NV_ERR_INVALID_STATE);
         pVASHeap = vaspaceGetHeap(pBar1VAS);
 
-        NV_ASSERT_OK_OR_RETURN(kbusGetBar1VARangeForClient(pGpu, pKernelBus, pClient->hClient, &bar1VARange));
+        NV_ASSERT_OK_OR_RETURN(kbusGetBar1VARangeForDevice(pGpu, pKernelBus, pDevice, &bar1VARange));
         bar1Info->bar1Size = (NvU32)(rangeLength(bar1VARange) / 1024);
         bar1Info->bankSwizzleAlignment = vaspaceGetBigPageSize(pBar1VAS);
 
@@ -759,7 +699,7 @@ memmgrStateInitReservedMemory
     MemoryManager *pMemoryManager
 )
 {
-    if (IS_GSP_CLIENT(pGpu))
+    if (IS_GSP_CLIENT(pGpu) || IS_VIRTUAL(pGpu))
         return;
 
 }
@@ -775,6 +715,100 @@ memmgrStateInitAdjustReservedMemory
     MemoryManager *pMemoryManager
 )
 {
+
+    if (!IS_GSP_CLIENT(pGpu))
+    {
+        NV_STATUS              status;
+        KernelMemorySystem    *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
+        KernelBus             *pKernelBus          = GPU_GET_KERNEL_BUS(pGpu);
+        NvU32                  allocFlags          = MEMDESC_FLAGS_NONE;
+        const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
+            kmemsysGetStaticConfig(pGpu, pKernelMemorySystem);
+
+        // check for allocating VPR memory
+        if (pKernelBus->bInstProtectedMem)
+            allocFlags |= MEMDESC_ALLOC_FLAGS_PROTECTED;
+
+        if ((status = memdescCreate(&pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc, pGpu,
+                                    GF100_BUS_INSTANCEBLOCK_SIZE,
+                                    GF100_BUS_INSTANCEBLOCK_SIZE,
+                                    NV_TRUE,
+                                    pKernelBus->InstBlkAperture,
+                                    pKernelBus->InstBlkAttr,
+                                    allocFlags)) != NV_OK)
+        {
+            return status;
+        }
+
+        if ((memdescGetAddressSpace(pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc) == ADDR_SYSMEM) &&
+            (gpuIsInstanceMemoryAlwaysCached(pGpu)))
+        {
+            memdescSetGpuCacheAttrib(pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc, NV_MEMORY_CACHED);
+        }
+
+        if ((status = memdescCreate(&pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc, pGpu,
+                                    GF100_BUS_INSTANCEBLOCK_SIZE,
+                                    GF100_BUS_INSTANCEBLOCK_SIZE,
+                                    NV_TRUE,
+                                    pKernelBus->InstBlkAperture,
+                                    pKernelBus->InstBlkAttr,
+                                    allocFlags)) != NV_OK)
+        {
+            return status;
+        }
+
+        if ((memdescGetAddressSpace(pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc) == ADDR_SYSMEM) &&
+            (gpuIsInstanceMemoryAlwaysCached(pGpu)))
+        {
+            memdescSetGpuCacheAttrib(pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc, NV_MEMORY_CACHED);
+        }
+
+        switch (pKernelBus->InstBlkAperture)
+        {
+            default:
+            case ADDR_FBMEM:
+                pKernelBus->bar1[GPU_GFID_PF].instBlockBase += pMemoryManager->rsvdMemoryBase;
+                memdescDescribe(pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc,
+                                pKernelBus->InstBlkAperture,
+                                pKernelBus->bar1[GPU_GFID_PF].instBlockBase,
+                                GF100_BUS_INSTANCEBLOCK_SIZE);
+                pKernelBus->bar2[GPU_GFID_PF].instBlockBase += pMemoryManager->rsvdMemoryBase;
+                memdescDescribe(pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc,
+                                pKernelBus->InstBlkAperture,
+                                pKernelBus->bar2[GPU_GFID_PF].instBlockBase,
+                                GF100_BUS_INSTANCEBLOCK_SIZE);
+
+                // Pre-fill cache to prevent FB read accesses if in cache only mode and not doing one time pre-fill
+                if (gpuIsCacheOnlyModeEnabled(pGpu) &&
+                    !pMemorySystemConfig->bL2PreFill)
+                {
+                    kmemsysPreFillCacheOnlyMemory_HAL(pGpu, pKernelMemorySystem, pKernelBus->bar1[GPU_GFID_PF].instBlockBase, GF100_BUS_INSTANCEBLOCK_SIZE);
+                    kmemsysPreFillCacheOnlyMemory_HAL(pGpu, pKernelMemorySystem, pKernelBus->bar2[GPU_GFID_PF].instBlockBase, GF100_BUS_INSTANCEBLOCK_SIZE);
+                }
+                break;
+
+            case ADDR_SYSMEM:
+                memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_135, 
+                                (pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc));
+                if (status != NV_OK)
+                {
+                    NV_PRINTF(LEVEL_ERROR,
+                              "couldn't allocate BAR1 instblk in sysmem\n");
+                    return status;
+                }
+                pKernelBus->bar1[GPU_GFID_PF].instBlockBase = memdescGetPhysAddr(pKernelBus->bar1[GPU_GFID_PF].pInstBlkMemDesc, AT_GPU, 0);
+                memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_136, 
+                                (pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc));
+                if (status != NV_OK)
+                {
+                    NV_PRINTF(LEVEL_ERROR,
+                              "couldn't allocate BAR2 instblk in sysmem\n");
+                    return status;
+                }
+                pKernelBus->bar2[GPU_GFID_PF].instBlockBase = memdescGetPhysAddr(pKernelBus->bar2[GPU_GFID_PF].pInstBlkMemDesc, AT_GPU, 0);
+                break;
+        }
+    }
 
     return NV_OK;
 }
@@ -818,8 +852,6 @@ memmgrInitReservedMemory_GM107
     NvU64                  rsvdTopOfMem     = 0;
     NvU64                  rsvdAlignment    = 0;
     NvBool                 bMemoryProtectionEnabled = NV_FALSE;
-    const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
-        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
 
     if (!IS_VIRTUAL(pGpu) && !IS_GSP_CLIENT(pGpu))
     {
@@ -898,8 +930,16 @@ memmgrInitReservedMemory_GM107
     // In L2 cache only mode, base this off the size of L2 cache
     // If reserved memory at top of FB, base this off the size of FB
     //
-    if (gpuIsCacheOnlyModeEnabled(pGpu) || !pMemorySystemConfig->bReservedMemAtBottom)
+    if (gpuIsCacheOnlyModeEnabled(pGpu) || !pMemoryManager->bReservedMemAtBottom)
     {
+        const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
+            kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
+
+        if (gpuIsCacheOnlyModeEnabled(pGpu))
+        {
+            rsvdTopOfMem = pMemorySystemConfig->l2CacheSize;
+        }
+        else
         {
             rsvdTopOfMem = pMemoryManager->Ram.fbAddrSpaceSizeMb << 20;
 
@@ -1315,11 +1355,12 @@ memmgrGetRsvdSizeForSr_GM107
     MemoryManager *pMemoryManager
 )
 {
-    if ((pMemoryManager->Ram.fbTotalMemSizeMb >> 10) > 32)
+    if (((pMemoryManager->Ram.fbTotalMemSizeMb >> 10) > 32) || IS_GSP_CLIENT(pGpu))
     {
         //
-        // For SKUs with more than 32GB FB, need to reserve for more memory for S/R
-        // Bug Id:2468357
+        // We need to reserve more memory for S/R if
+        // 1. FB size is > 32GB  Bug Id: 2468357
+        // 2. Or GSP is enabled  Bug Id: 4312881
         //
         return 512 * 1024 * 1024;
     }
@@ -1549,8 +1590,7 @@ memmgrGetBlackListPages_GM107
     }
     portMemSet(pParams, 0, sizeof(*pParams));
 
-    pRmApi = IS_GSP_CLIENT(pGpu) ? GPU_GET_PHYSICAL_RMAPI(pGpu) :
-                                    rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
+    pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
 
     status = pRmApi->Control(pRmApi,
                              pGpu->hInternalClient,
@@ -1612,15 +1652,13 @@ memmgrGetBlackListPagesForHeap_GM107
     Heap          *pHeap
 )
 {
+    KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
     BLACKLIST_ADDRESS  *pBlAddrs;
     NvU32               idx;
     NV_STATUS           status;
     NvU32               count;
 
-    const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig =
-        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
-
-    count = pMemorySystemConfig->maximumBlacklistPages;
+    count = kmemsysGetMaximumBlacklistPages(pGpu, pKernelMemorySystem);
     pBlAddrs = portMemAllocNonPaged(sizeof(BLACKLIST_ADDRESS) * count);
     if (pBlAddrs == NULL)
     {
@@ -1652,4 +1690,309 @@ memmgrGetBlackListPagesForHeap_GM107
 
     // Failure to read offlined pages from host is not fatal
     return NV_OK;
+}
+
+NvU32
+memmgrGetFBEndReserveSizeEstimate_GM107
+(
+    OBJGPU *pGpu,
+    MemoryManager *pMemoryManager
+)
+{
+    const NvU32 ESTIMATED_RESERVE_FB = 0x200000;
+
+    return ESTIMATED_RESERVE_FB;
+}
+
+/*!
+ *  @brief Calculate the reserved memory requirement
+ *         per FB region for mixed type/density
+ *
+ *  @param[out] rsvdFastSize   generic reserved RM memory needed in fast region
+ *  @param[out] rsvdSlowSize   generic reserved RM memory needed in slow region
+ *  @param[out] rsvdISOSize    ISO-specific reserved RM memory needed
+ *
+ *  @returns void
+ *
+ */
+void
+memmgrCalcReservedFbSpaceHal_GM107
+(
+    OBJGPU        *pGpu,
+    MemoryManager *pMemoryManager,
+    NvU64         *rsvdFastSize,
+    NvU64         *rsvdSlowSize,
+    NvU64         *rsvdISOSize
+)
+{
+    KernelGmmu            *pKernelGmmu   = GPU_GET_KERNEL_GMMU(pGpu);
+    KernelFifo            *pKernelFifo   = GPU_GET_KERNEL_FIFO(pGpu);
+    KernelGraphics        *pKernelGraphics = GPU_GET_KERNEL_GRAPHICS(pGpu, 0);
+    NvU64                  smallPagePte  = 0;
+    NvU64                  bigPagePte    = 0;
+    NvU32                  attribBufferSize;
+    NvU64                  maxContextSize = 0;
+    NvU64                  userdReservedSize = 0;
+    NvU64                  runlistEntriesReservedSize = 0;
+    NvU64                  mmuFaultBufferSize = 0;
+    NvU64                  faultMethodBufferSize = 0;
+    NV_STATUS              status = NV_OK;
+
+    // Initialize reserved block logging data structure
+    NV_FB_RSVD_BLOCK_LOG_INIT(pMemoryManager);
+
+    if (IS_VIRTUAL_WITHOUT_SRIOV(pGpu) ||
+        (IS_VIRTUAL(pGpu) && gpuIsWarBug200577889SriovHeavyEnabled(pGpu)))
+    {
+        //
+        // 4MB of reserved memory for vGPU.
+        // Mainly to satisfy KMD memory allocations.
+        //
+        *rsvdFastSize = 4 * 1024 * 1024;
+        *rsvdSlowSize = 0;
+        *rsvdISOSize = 0;
+        return;
+    }
+
+#if defined(NV_UNIX)
+    if (IS_VIRTUAL_WITH_SRIOV(pGpu) && pMemoryManager->Ram.fbTotalMemSizeMb <= 1024)
+    {
+        //
+        // 88MB of reserved memory for vGPU guest with lower FB size(1GB)
+        // in full SRIOV mode. On lower vGPU profiles, available FB memory
+        // is already very less. To compensate for that, reducing the guest
+        // reserved FB memory.
+        //
+        *rsvdFastSize = 88 * 1024 * 1024;
+        *rsvdSlowSize = 0;
+        *rsvdISOSize = 0;
+        return;
+    }
+#endif
+
+    {
+        *rsvdFastSize = 0;
+
+        // Allow reservation up to half of usable FB size
+        if (pMemoryManager->rsvdMemorySizeIncrement > (pMemoryManager->Ram.fbUsableMemSize / 2))
+        {
+            pMemoryManager->rsvdMemorySizeIncrement = pMemoryManager->Ram.fbUsableMemSize / 2;
+            NV_PRINTF(LEVEL_ERROR,
+                      "RM can only increase reserved heap by 0x%llx bytes\n",
+                      pMemoryManager->rsvdMemorySizeIncrement);
+        }
+        NV_PRINTF(LEVEL_INFO, "RT::: incrementing the reserved size by: %llx\n",
+                   pMemoryManager->rsvdMemorySizeIncrement);
+        *rsvdSlowSize = pMemoryManager->rsvdMemorySizeIncrement;
+        *rsvdISOSize = 0;
+    }
+
+    if (RMCFG_FEATURE_PLATFORM_WINDOWS && pMemoryManager->bBug2301372IncreaseRmReserveMemoryWar)
+    {
+        *rsvdFastSize += 30 * 1024 * 1024;
+    }
+
+    attribBufferSize = memmgrGetGrHeapReservationSize_HAL(pGpu, pMemoryManager);
+
+    // Fast: Attribute buffer
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_ATTR_BUFFER,
+                         attribBufferSize);
+    *rsvdFastSize += attribBufferSize;
+
+    // Fast: Circular buffer & fudge
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_CIRCULAR_BUFFER,
+                        1 *1024 *1024);
+    *rsvdFastSize += 1 *1024 *1024;
+
+    if (!RMCFG_FEATURE_PLATFORM_GSP)
+    {
+        // smallPagePte = FBSize /4k * 8 (Small page PTE for whole FB)
+        smallPagePte = NV_ROUNDUP((pMemoryManager->Ram.fbUsableMemSize / FERMI_SMALL_PAGESIZE) * 8, RM_PAGE_SIZE);
+
+        // bigPagePte = FBSize /bigPageSize * 8 (Big page PTE for whole FB)
+        bigPagePte = NV_ROUNDUP((pMemoryManager->Ram.fbUsableMemSize / (kgmmuGetMaxBigPageSize_HAL(pKernelGmmu))) * 8,
+                                     RM_PAGE_SIZE);
+
+        NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_PAGE_PTE,
+                    (smallPagePte + bigPagePte));
+    }
+
+    userdReservedSize = memmgrGetUserdReservedFbSpace_HAL(pGpu, pMemoryManager);
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_USERD_BUFFER,
+                         userdReservedSize);
+
+    runlistEntriesReservedSize = memmgrGetRunlistEntriesReservedFbSpace_HAL(pGpu, pMemoryManager);
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_RUNLIST_ENTRIES,
+                         runlistEntriesReservedSize);
+
+    maxContextSize = memmgrGetMaxContextSize_HAL(pGpu, pMemoryManager);
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_CONTEXT_BUFFER,
+                         maxContextSize);
+    *rsvdSlowSize +=
+             userdReservedSize +  // Kepler USERD
+             runlistEntriesReservedSize +   // Kepler Runlist entries
+             smallPagePte +       // small page Pte
+             bigPagePte +         // big page pte
+             maxContextSize;
+
+    // Reserve FB for UVM on WDDM
+    memmgrCalcReservedFbSpaceForUVM_HAL(pGpu, pMemoryManager, rsvdSlowSize);
+
+    // Reserve FB for MMU fault buffers
+    mmuFaultBufferSize = kgmmuGetFaultBufferReservedFbSpaceSize(pGpu, pKernelGmmu);
+    NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_MMU_FAULT_BUFFER,
+                         mmuFaultBufferSize);
+    *rsvdSlowSize += mmuFaultBufferSize;
+
+    // Reserve FB for Fault method buffers
+    if (!RMCFG_FEATURE_PLATFORM_GSP)
+    {
+        faultMethodBufferSize = kfifoCalcTotalSizeOfFaultMethodBuffers_HAL(pGpu, pKernelFifo, NV_TRUE);
+        NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_FAULT_METHOD,
+                        faultMethodBufferSize);
+        *rsvdSlowSize += faultMethodBufferSize;
+    }
+
+    // The access map is fairly large (512KB) so we account for it specifically
+    if (kgraphicsDoesUcodeSupportPrivAccessMap(pGpu, pKernelGraphics))
+    {
+        *rsvdSlowSize += pGpu->userRegisterAccessMapSize;
+        NV_FB_RSVD_BLOCK_LOG_ENTRY_ADD(status, pMemoryManager, NV_FB_ALLOC_RM_INTERNAL_OWNER_ACCESS_MAP,
+                        pGpu->userRegisterAccessMapSize);
+    }
+
+    if (*rsvdFastSize + *rsvdSlowSize > pMemoryManager->Ram.fbUsableMemSize / 2)
+    {
+        NV_PRINTF(LEVEL_ERROR,
+                  "Before capping: rsvdFastSize = 0x%llx bytes rsvdSlowSize = 0x%llx "
+                  "bytes Usable FB = 0x%llx bytes\n", *rsvdFastSize,
+                  *rsvdSlowSize, pMemoryManager->Ram.fbUsableMemSize);
+        if (pMemoryManager->rsvdMemorySizeIncrement > 0)
+        {
+            NV_PRINTF(LEVEL_ERROR,
+                      "Fail the rsvd memory capping in case of user specified increase = %llx bytes\n",
+                      pMemoryManager->rsvdMemorySizeIncrement);
+            *rsvdFastSize = 0;
+            *rsvdSlowSize = 0;
+            NV_ASSERT(0);
+            return;
+        }
+        // Scale down fast and slow proportionally
+        *rsvdFastSize = *rsvdFastSize * pMemoryManager->Ram.fbUsableMemSize / 2
+            / (*rsvdFastSize + *rsvdSlowSize);
+        *rsvdSlowSize = pMemoryManager->Ram.fbUsableMemSize / 2 - *rsvdFastSize;
+        NV_PRINTF(LEVEL_ERROR,
+                  "After capping: rsvdFastSize = 0x%llx bytes rsvdSlowSize = 0x%llx bytes\n",
+                  *rsvdFastSize, *rsvdSlowSize);
+    }
+
+    if (!pMemoryManager->bPreferSlowRegion)
+    {
+        *rsvdFastSize = *rsvdFastSize + *rsvdSlowSize;
+        *rsvdSlowSize = 0;
+    }
+
+    //
+    // Memory should be blocked off with 64K granularity.  This makes PMA and
+    // and VA space management more efficient.
+    //
+    *rsvdFastSize = NV_ROUNDUP(*rsvdFastSize, RM_PAGE_SIZE_64K);
+    *rsvdSlowSize = NV_ROUNDUP(*rsvdSlowSize, RM_PAGE_SIZE_64K);
+    *rsvdISOSize  = NV_ROUNDUP(*rsvdISOSize, RM_PAGE_SIZE_64K);
+
+    // If any of the reservation logging fails then print error message
+    if (status != NV_OK)
+    {
+        NV_PRINTF(LEVEL_WARNING, "Error logging the FB reservation entries\n");
+    }
+}
+
+/*!
+ * Set up RM reserved memory space
+ */
+NV_STATUS
+memmgrPreInitReservedMemory_GM107
+(
+    OBJGPU        *pGpu,
+    MemoryManager *pMemoryManager
+)
+{
+    KernelDisplay         *pKernelDisplay      = GPU_GET_KERNEL_DISPLAY(pGpu);
+    KernelBus             *pKernelBus          = GPU_GET_KERNEL_BUS(pGpu);
+    NvU64                  tmpAddr             = 0;
+    NV_STATUS              status              = NV_OK;
+    NvU32                  instBlkBarOverride  = 0;
+
+    // ***************************************************************
+    // Determine the size of reserved memory & tell the HW where it is
+    // Note that the order of these matters for optimum alignment &
+    // FB usage. The order must be highest alignment requirement to
+    // lowest alignment requirement, with the last item being the
+    // vbios image / workspace area
+    // ***************************************************************
+
+    if (IS_GSP_CLIENT(pGpu) && pKernelDisplay != NULL)
+    {
+        // TODO: Determine the correct size of display instance memory
+        // via instmemGetSize_HAL(), as well as other parameters.
+        // I.e. refactor and leverage the code performing these tasks
+        // in memmgrPreInitReservedMemory_GM107() today.
+        tmpAddr += 0x10000;
+    }
+
+    {
+        instBlkBarOverride = DRF_VAL(_REG_STR_RM, _INST_LOC, _INSTBLK, pGpu->instLocOverrides);
+    }
+
+    pKernelBus->InstBlkAperture = ADDR_FBMEM;
+    pKernelBus->InstBlkAttr = NV_MEMORY_WRITECOMBINED;
+
+    memdescOverrideInstLoc(instBlkBarOverride, "BAR instblk",
+                           &pKernelBus->InstBlkAperture,
+                           &pKernelBus->InstBlkAttr);
+
+    if (pKernelBus->InstBlkAperture == ADDR_FBMEM)
+    {
+        // Reserve space for BAR1 and BAR2 instance blocks
+        tmpAddr = NV_ROUNDUP(tmpAddr, GF100_BUS_INSTANCEBLOCK_SIZE);
+        pKernelBus->bar1[GPU_GFID_PF].instBlockBase = tmpAddr;
+        tmpAddr += GF100_BUS_INSTANCEBLOCK_SIZE;
+
+        tmpAddr = NV_ROUNDUP(tmpAddr, GF100_BUS_INSTANCEBLOCK_SIZE);
+        pKernelBus->bar2[GPU_GFID_PF].instBlockBase = tmpAddr;
+        tmpAddr += GF100_BUS_INSTANCEBLOCK_SIZE;
+
+        NV_PRINTF(LEVEL_INFO, "Reserve space for Bar1 inst block offset = 0x%llx size = 0x%x\n",
+            pKernelBus->bar1[GPU_GFID_PF].instBlockBase, GF100_BUS_INSTANCEBLOCK_SIZE);
+
+        NV_PRINTF(LEVEL_INFO, "Reserve space for Bar2 inst block offset = 0x%llx size = 0x%x\n",
+            pKernelBus->bar2[GPU_GFID_PF].instBlockBase, GF100_BUS_INSTANCEBLOCK_SIZE);
+    }
+
+    if (gpuIsSelfHosted(pGpu) && !RMCFG_FEATURE_PLATFORM_GSP)
+    {
+        //
+        // Reserve space for the test buffer used in coherent link test
+        // that is run early when memory allocation is not ready yet.
+        //
+        pKernelBus->coherentLinkTestBufferBase = tmpAddr;
+        tmpAddr += BUS_COHERENT_LINK_TEST_BUFFER_SIZE;
+    }
+
+    //
+    // This has to be the very *last* thing in reserved memory as it
+    // will may grow past the 1MB reserved memory window.  We cannot
+    // size it until memsysStateInitLockedHal_GM107.
+    //
+    memmgrReserveBar2BackingStore(pGpu, pMemoryManager, &tmpAddr);
+
+    //
+    // Store the size of rsvd memory excluding VBIOS space. Size finalized in memmgrStateInitReservedMemory.
+    //
+    NV_ASSERT(NvU64_LO32(tmpAddr) == tmpAddr);
+    pMemoryManager->rsvdMemorySize = NvU64_LO32(tmpAddr);
+
+    NV_PRINTF(LEVEL_INFO, "Calculated size of reserved memory = 0x%x. Size finalized in StateInit.\n", pMemoryManager->rsvdMemorySize);
+
+    return status;
 }

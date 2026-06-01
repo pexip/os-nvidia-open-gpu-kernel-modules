@@ -1001,6 +1001,8 @@ nvswitch_ctl_get_devices_v2(NVSWITCH_GET_DEVICES_V2_PARAMS *p)
                                                  &p->info[index].deviceState,
                                                  &p->info[index].deviceReason,
                                                  &p->info[index].driverState);
+
+            p->info[index].bTnvlEnabled = nvswitch_lib_is_tnvl_enabled(nvswitch_dev->lib_device);
             mutex_unlock(&nvswitch_dev->device_mutex);
         }
         index++;
@@ -1866,11 +1868,10 @@ nvswitch_os_print
     switch (log_level)
     {
         case NVSWITCH_DBG_LEVEL_MMIO:
+        case NVSWITCH_DBG_LEVEL_NOISY:
             kern_level = KERN_DEBUG;
             break;
         case NVSWITCH_DBG_LEVEL_INFO:
-            kern_level = KERN_INFO;
-            break;
         case NVSWITCH_DBG_LEVEL_SETUP:
             kern_level = KERN_INFO;
             break;

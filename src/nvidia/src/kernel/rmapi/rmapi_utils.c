@@ -31,6 +31,8 @@
 #include "class/cl0080.h"
 #include "class/cl2080.h"
 
+#include "ctrl/ctrl2080.h"
+
 NV_STATUS
 rmapiutilAllocClientAndDeviceHandles
 (
@@ -187,3 +189,25 @@ rmapiutilGetControlInfo
 
     return NV_ERR_OBJECT_NOT_FOUND;
 }
+
+NvBool rmapiutilSkipErrorMessageForUnsupportedVgpuGuestControl(NvU32 cmd)
+{
+    switch (cmd)
+    {
+        case NV2080_CTRL_CMD_GPU_GET_OEM_BOARD_INFO:
+        case NV2080_CTRL_CMD_GPU_GET_INFOROM_IMAGE_VERSION:
+        case NV2080_CTRL_CMD_GPU_GET_INFOROM_OBJECT_VERSION:
+        case NV2080_CTRL_CMD_GPU_GET_RESET_STATUS:
+        case NV2080_CTRL_CMD_GPU_GET_DRAIN_AND_RESET_STATUS:
+        case NV2080_CTRL_CMD_BUS_GET_PEX_COUNTERS:
+        case NV2080_CTRL_CMD_FB_GET_OFFLINED_PAGES:
+        case NV2080_CTRL_CMD_FB_GET_REMAPPED_ROWS:
+        case NV2080_CTRL_CMD_ECC_GET_VOLATILE_COUNTS:
+        case NV2080_CTRL_CMD_GPU_QUERY_INFOROM_ECC_SUPPORT:
+            return NV_TRUE;
+
+        default:
+            return NV_FALSE;
+    }
+}
+

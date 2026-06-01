@@ -25,6 +25,7 @@
 #include "core/locks.h"
 #include <rmp2pdefines.h>
 #include "gpu/gpu.h"
+#include "gpu/subdevice/subdevice.h"
 #include "gpu/mem_sys/kern_mem_sys.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "kernel/mem_mgr/p2p.h"
@@ -156,12 +157,9 @@ NV_STATUS _createThirdPartyP2PMappingExtent
     NV_STATUS status;
     KernelBus *pKernelBus;
     PCLI_THIRD_PARTY_P2P_MAPPING_EXTENT_INFO pExtentInfoTmp;
-    Device *pDevice;
+    Device *pDevice = GPU_RES_GET_DEVICE(pSubDevice);
     NvBool bGpuLockTaken = (rmDeviceGpuLockIsOwner(gpuGetInstance(pGpu)) ||
                             rmGpuLockIsOwner());
-
-    status = deviceGetByGpu(pClient, pGpu, NV_TRUE, &pDevice);
-    NV_ASSERT_OR_RETURN(status == NV_OK, NV_ERR_INVALID_STATE);
 
     NV_PRINTF(LEVEL_INFO, "New allocation for address: 0x%llx\n", address);
 
@@ -171,6 +169,17 @@ NV_STATUS _createThirdPartyP2PMappingExtent
     NV_ASSERT_OR_RETURN((pMappingStart != NULL), NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN((pMappingLength != NULL), NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN((pMemDesc != NULL), NV_ERR_INVALID_ARGUMENT);
+
+    if (IS_VIRTUAL(pGpu))
+    {
+        VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+
+        if (FLD_TEST_DRF(A080, _CTRL_CMD_VGPU_GET_CONFIG, _PARAMS_VGPU_DEV_CAPS_GPU_DIRECT_RDMA_ENABLED,
+                      _FALSE, pVSI->vgpuConfig.vgpuDeviceCapsBits))
+        {
+            return NV_ERR_NOT_SUPPORTED;
+        }
+    }
 
     *ppExtentInfo = NULL;
 
@@ -365,7 +374,7 @@ NV_STATUS RmThirdPartyP2PMappingFree
     NvU64                               startOffset;
     PCLI_THIRD_PARTY_P2P_MAPPING_EXTENT_INFO pExtentInfo = NULL;
     PCLI_THIRD_PARTY_P2P_MAPPING_EXTENT_INFO pExtentInfoNext = NULL;
-    Device                             *pDevice;
+    Device                             *pDevice = GPU_RES_GET_DEVICE(pSubDevice);
     NvBool                              bGpuLockTaken;
     NvBool                              bVgpuRpc;
 
@@ -376,11 +385,18 @@ NV_STATUS RmThirdPartyP2PMappingFree
     NV_ASSERT_OR_RETURN((pMappingInfo != NULL), NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN((pSubDevice != NULL), NV_ERR_INVALID_ARGUMENT);
     NV_ASSERT_OR_RETURN((pThirdPartyP2PInfo != NULL), NV_ERR_INVALID_ARGUMENT);
-
-    status = deviceGetByGpu(pClient, pGpu, NV_TRUE, &pDevice);
-    NV_ASSERT_OR_RETURN(status == NV_OK, NV_ERR_INVALID_STATE);
-
     NV_ASSERT_OR_RETURN((pDevice != NULL), NV_ERR_INVALID_STATE);
+
+    if (IS_VIRTUAL(pGpu))
+    {
+        VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+
+        if (FLD_TEST_DRF(A080, _CTRL_CMD_VGPU_GET_CONFIG, _PARAMS_VGPU_DEV_CAPS_GPU_DIRECT_RDMA_ENABLED,
+                      _FALSE, pVSI->vgpuConfig.vgpuDeviceCapsBits))
+        {
+            return NV_ERR_NOT_SUPPORTED;
+        }
+    }
 
     pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
 
@@ -628,6 +644,11 @@ NV_STATUS RmThirdPartyP2PNVLinkGetPages
     NvU32 entries = 0;
     RmPhysAddr physAddr;
     KernelMemorySystem *pKernelMemorySystem = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu);
+
+    if (memdescGetPageSize(pMemDesc, AT_CPU) < NVRM_P2P_PAGESIZE_BIG_64K)
+    {
+        return NV_ERR_INVALID_STATE;
+    }
 
     NV_ASSERT(!(address & (NVRM_P2P_PAGESIZE_BIG_64K - 1)));
     NV_ASSERT(!(length & (NVRM_P2P_PAGESIZE_BIG_64K - 1)));
@@ -1132,12 +1153,7 @@ CLI_THIRD_PARTY_P2P_VIDMEM_INFO* _createOrReuseVidmemInfoPersistent
     }
 
     pClientInternal = RES_GET_CLIENT(pThirdPartyP2PInternal);
-
-    status = deviceGetByGpu(pClientInternal, pGpu, NV_TRUE, &pDevice);
-    if (status != NV_OK)
-    {
-        goto failed;
-    }
+    pDevice = GPU_RES_GET_DEVICE(pThirdPartyP2PInternal);
 
     // Dupe user client's hMemory
     status = pRmApi->DupObject(pRmApi,
@@ -1235,11 +1251,6 @@ NV_STATUS RmP2PGetPagesPersistent(
     }
 
     pThirdPartyP2PInternal = dynamicCast(pResourceRef->pResource, ThirdPartyP2P);
-
-    if (status != NV_OK)
-    {
-        return NV_ERR_INVALID_OBJECT_HANDLE;
-    }
 
     pVidmemInfo = _createOrReuseVidmemInfoPersistent(pGpu, address, length, &offset,
                                                      pThirdPartyP2P,

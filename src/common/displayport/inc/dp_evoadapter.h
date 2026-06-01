@@ -39,10 +39,11 @@
 #include "dp_regkeydatabase.h"
 
 #include <nvos.h>
+#include <ctrl/ctrl0073/ctrl0073dfp.h>
+#include <ctrl/ctrl0073/ctrl0073dp.h>
 
 #define HDCP_DUMMY_CN    (0x1)
 #define HDCP_DUMMY_CKSV  (0xFFFFF)
-
 
 namespace DisplayPort
 {
@@ -132,10 +133,7 @@ namespace DisplayPort
 
     class EvoMainLink : public MainLink
     {
-        EvoInterface * provider;
-        Timer * timer;
-        NvU32 displayId;
-        NvU32 subdeviceIndex;
+      private:
         NvU32 _maxLinkRateSupportedGpu;
         NvU32 _maxLinkRateSupportedDfp;
         unsigned allHeadMask;
@@ -148,8 +146,7 @@ namespace DisplayPort
         // Bit mask for GPU supported DP versions.
         // Defines the same as NV0073_CTRL_CMD_DP_GET_CAPS_PARAMS.dpVersionsSupported
         //
-        NvU32 _gpuSupportedDpVersions;
-
+        NvU32   _gpuSupportedDpVersions;
         bool _isStreamCloningEnabled;
         bool _needForceRmEdid;
         bool _skipPowerdownEDPPanelWhenHeadDetach;
@@ -160,7 +157,6 @@ namespace DisplayPort
         bool _applyLinkBwOverrideWarRegVal;
         bool _isDynamicMuxCapable;
         bool _enableMSAOverrideOverMST;
-        bool _enableFecCheckForDDS;
 
         bool _isLTPhyRepeaterSupported;
         bool _isMSTPCONCapsReadDisabled;
@@ -182,10 +178,18 @@ namespace DisplayPort
             unsigned maxNumHztSlices;
             unsigned lineBufferBitDepth;
         }_DSC;
-
-    private:
         void initializeRegkeyDatabase();
         void applyRegkeyOverrides();
+
+    protected:
+        EvoInterface * provider;
+        Timer * timer;
+
+        NvU32 displayId;
+        NvU32 subdeviceIndex;
+
+        NV0073_CTRL_DFP_GET_INFO_PARAMS     dfpParams;
+        NV0073_CTRL_CMD_DP_GET_CAPS_PARAMS  dpParams;
 
     public:
         EvoMainLink(EvoInterface * provider, Timer * timer);
@@ -209,7 +213,6 @@ namespace DisplayPort
         {
             return _gpuSupportedDpVersions;
         }
-
         virtual bool isFECSupported()
         {
             return _isFECSupported;
@@ -386,7 +389,6 @@ namespace DisplayPort
         bool skipPowerdownEdpPanelWhenHeadDetach();
         bool isMSTPCONCapsReadDisabled();
         bool supportMSAOverMST();
-        bool queryAndUpdateDfpParams();
         bool controlRateGoverning(NvU32 head, bool enable, bool updateNow);
 
         bool getDpTestPattern(NV0073_CTRL_DP_TESTPATTERN *testPattern);
@@ -399,14 +401,15 @@ namespace DisplayPort
         NvU32 monitorDenylistInfo(NvU32 ManufacturerID, NvU32 ProductID, DpMonitorDenylistData *pDenylistData);
         NvU32 allocDisplayId();
         bool freeDisplayId(NvU32 displayId);
-        void queryGPUCapability();
+        virtual bool queryAndUpdateDfpParams();
+        virtual bool queryGPUCapability();
         bool getEdpPowerData(bool *panelPowerOn, bool *dpcdPowerStateD0);
         virtual bool vrrRunEnablementStage(unsigned stage, NvU32 *status);
 
         void configureTriggerSelect(NvU32 head,
             DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID streamIdentifier = DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID_PRIMARY);
         void configureTriggerAll(NvU32 head, bool enable);
-        bool configureLinkRateTable(const NvU16 *pLinkRateTable, LinkRates *pLinkRates);
+        virtual bool configureLinkRateTable(const NvU16 *pLinkRateTable, LinkRates *pLinkRates);
         bool configureFec(const bool bEnableFec);
     };
 

@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -47,11 +47,16 @@ extern "C" {
  *      CCSL module header.                                                  *
  *                                                                           *
  ****************************************************************************/
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_CCSL_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct Ccsl {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Ccsl *__nvoc_pbase_Ccsl;
@@ -85,17 +90,23 @@ NV_STATUS __nvoc_objCreate_Ccsl(Ccsl**, Dynamic*, NvU32);
 #define __objCreate_Ccsl(ppNewObj, pParent, createFlags) \
     __nvoc_objCreate_Ccsl((ppNewObj), staticCast((pParent), Dynamic), (createFlags))
 
-NV_STATUS ccslContextInitViaChannel_IMPL(pCcslContext *ppCtx, NvHandle hClient, NvHandle hChannel);
+NV_STATUS ccslContextInitViaChannel_IMPL(pCcslContext *ppCtx, NvHandle hClient, NvHandle hSubdevice, NvHandle hChannel);
 
 
-#define ccslContextInitViaChannel(ppCtx, hClient, hChannel) ccslContextInitViaChannel_IMPL(ppCtx, hClient, hChannel)
-#define ccslContextInitViaChannel_HAL(ppCtx, hClient, hChannel) ccslContextInitViaChannel(ppCtx, hClient, hChannel)
+#define ccslContextInitViaChannel(ppCtx, hClient, hSubdevice, hChannel) ccslContextInitViaChannel_IMPL(ppCtx, hClient, hSubdevice, hChannel)
+#define ccslContextInitViaChannel_HAL(ppCtx, hClient, hSubdevice, hChannel) ccslContextInitViaChannel(ppCtx, hClient, hSubdevice, hChannel)
 
 NV_STATUS ccslContextInitViaKeyId_KERNEL(struct ConfidentialCompute *pConfCompute, pCcslContext *ppCtx, NvU32 globalKeyId);
 
 
 #define ccslContextInitViaKeyId(pConfCompute, ppCtx, globalKeyId) ccslContextInitViaKeyId_KERNEL(pConfCompute, ppCtx, globalKeyId)
 #define ccslContextInitViaKeyId_HAL(pConfCompute, ppCtx, globalKeyId) ccslContextInitViaKeyId(pConfCompute, ppCtx, globalKeyId)
+
+NV_STATUS ccslContextUpdate_KERNEL(pCcslContext ctx);
+
+
+#define ccslContextUpdate(ctx) ccslContextUpdate_KERNEL(ctx)
+#define ccslContextUpdate_HAL(ctx) ccslContextUpdate(ctx)
 
 NV_STATUS ccslRotateIv_IMPL(pCcslContext ctx, NvU8 direction);
 
@@ -115,11 +126,23 @@ NV_STATUS ccslEncrypt_KERNEL(pCcslContext ctx, NvU32 bufferSize, const NvU8 *inp
 #define ccslEncrypt(ctx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslEncrypt_KERNEL(ctx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer)
 #define ccslEncrypt_HAL(ctx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslEncrypt(ctx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer)
 
-NV_STATUS ccslDecrypt_KERNEL(pCcslContext ctx, NvU32 bufferSize, const NvU8 *inputBuffer, const NvU8 *decryptIv, const NvU8 *aadBuffer, NvU32 aadSize, NvU8 *outputBuffer, const NvU8 *authTagBuffer);
+NV_STATUS ccslEncryptWithRotationChecks_KERNEL(pCcslContext pCtx, NvU32 bufferSize, const NvU8 *inputBuffer, const NvU8 *aadBuffer, NvU32 aadSize, NvU8 *outputBuffer, NvU8 *authTagBuffer);
 
 
-#define ccslDecrypt(ctx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecrypt_KERNEL(ctx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer)
-#define ccslDecrypt_HAL(ctx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecrypt(ctx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+#define ccslEncryptWithRotationChecks(pCtx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslEncryptWithRotationChecks_KERNEL(pCtx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+#define ccslEncryptWithRotationChecks_HAL(pCtx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslEncryptWithRotationChecks(pCtx, bufferSize, inputBuffer, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+
+NV_STATUS ccslDecrypt_KERNEL(pCcslContext ctx, NvU32 bufferSize, const NvU8 *inputBuffer, const NvU8 *decryptIv, NvU32 keyRotationId, const NvU8 *aadBuffer, NvU32 aadSize, NvU8 *outputBuffer, const NvU8 *authTagBuffer);
+
+
+#define ccslDecrypt(ctx, bufferSize, inputBuffer, decryptIv, keyRotationId, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecrypt_KERNEL(ctx, bufferSize, inputBuffer, decryptIv, keyRotationId, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+#define ccslDecrypt_HAL(ctx, bufferSize, inputBuffer, decryptIv, keyRotationId, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecrypt(ctx, bufferSize, inputBuffer, decryptIv, keyRotationId, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+
+NV_STATUS ccslDecryptWithRotationChecks_KERNEL(pCcslContext pCtx, NvU32 bufferSize, const NvU8 *inputBuffer, const NvU8 *decryptIv, const NvU8 *aadBuffer, NvU32 aadSize, NvU8 *outputBuffer, const NvU8 *authTagBuffer);
+
+
+#define ccslDecryptWithRotationChecks(pCtx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecryptWithRotationChecks_KERNEL(pCtx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer)
+#define ccslDecryptWithRotationChecks_HAL(pCtx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer) ccslDecryptWithRotationChecks(pCtx, bufferSize, inputBuffer, decryptIv, aadBuffer, aadSize, outputBuffer, authTagBuffer)
 
 NV_STATUS ccslSign_IMPL(pCcslContext ctx, NvU32 bufferSize, const NvU8 *inputBuffer, NvU8 *authTagBuffer);
 
@@ -138,6 +161,20 @@ NV_STATUS ccslIncrementIv_IMPL(pCcslContext pCtx, NvU8 direction, NvU64 incremen
 
 #define ccslIncrementIv(pCtx, direction, increment, iv) ccslIncrementIv_IMPL(pCtx, direction, increment, iv)
 #define ccslIncrementIv_HAL(pCtx, direction, increment, iv) ccslIncrementIv(pCtx, direction, increment, iv)
+
+NV_STATUS ccslLogEncryption_IMPL(pCcslContext pCtx, NvU8 direction, NvU32 bufferSize);
+
+
+#define ccslLogEncryption(pCtx, direction, bufferSize) ccslLogEncryption_IMPL(pCtx, direction, bufferSize)
+#define ccslLogEncryption_HAL(pCtx, direction, bufferSize) ccslLogEncryption(pCtx, direction, bufferSize)
+
+static inline void ccslUpdateRotationThreshold_b3696a(NvU64 threshold) {
+    return;
+}
+
+
+#define ccslUpdateRotationThreshold(threshold) ccslUpdateRotationThreshold_b3696a(threshold)
+#define ccslUpdateRotationThreshold_HAL(threshold) ccslUpdateRotationThreshold(threshold)
 
 void ccslContextClear_IMPL(pCcslContext ctx);
 
@@ -159,4 +196,5 @@ NV_STATUS NVOC_PRIVATE_FUNCTION(ccslIncrementCounter)(pCcslContext pCtx, NvU8 *c
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_CCSL_NVOC_H_

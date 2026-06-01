@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -39,12 +39,19 @@
 #include "ctrl/ctrl2080/ctrl2080internal.h"
 #include "ctrl/ctrl2080/ctrl2080spdm.h"
 #include "kernel/gpu/conf_compute/ccsl.h"
+#include "kernel/gpu/fifo/kernel_fifo.h"
+#include "kernel/gpu/fifo/kernel_channel.h"
+#include "gpu/conf_compute/conf_compute_api.h"
+#include "class/clcb33.h"
 
 /*!
  * Local object related functions
  */
-static void _confComputeInitRegistryOverrides(OBJGPU *, ConfidentialCompute*);
+static NV_STATUS _confComputeInitRegistryOverrides(OBJGPU *, ConfidentialCompute*);
+static NvU32 _confComputeGetKeyspaceSize(NvU16 keyspace);
 
+#define KEY_ROTATION_THRESHOLD_DELTA 100000000ull
+#define KEY_ROTATION_TIMEOUT         5
 
 NV_STATUS
 confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
@@ -52,9 +59,14 @@ confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
                                 ENGDESCRIPTOR           engDesc)
 {
     OBJSYS *pSys = SYS_GET_INSTANCE();
+    NV_STATUS status = NV_OK;
     NvU32 data = 0;
     NvBool bForceEnableCC = 0;
-    pConfCompute->pSpdm = NULL;
+
+    pConfCompute->pSpdm              = NULL;
+    pConfCompute->pGspHeartbeatTimer = NULL;
+    pConfCompute->heartbeatPeriodSec = 0;
+
     portMemSet(&pConfCompute->ccStaticInfo, 0, sizeof(pConfCompute->ccStaticInfo));
     pConfCompute->gspProxyRegkeys = 0;
 
@@ -62,6 +74,7 @@ confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
     pConfCompute->pDmaCcslCtx                = NULL;
     pConfCompute->pReplayableFaultCcslCtx    = NULL;
     pConfCompute->pNonReplayableFaultCcslCtx = NULL;
+    pConfCompute->pGspSec2RpcCcslCtx         = NULL;
 
     if (gpuIsCCEnabledInHw_HAL(pGpu))
     {
@@ -73,7 +86,36 @@ confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
         pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_DEVTOOLS_MODE_ENABLED, NV_TRUE);
     }
 
-    _confComputeInitRegistryOverrides(pGpu, pConfCompute);
+    if (gpuIsProtectedPcieEnabledInHw_HAL(pGpu))
+    {
+        NV_PRINTF(LEVEL_INFO, "Enabling protected PCIe in secure PRI\n");
+        // Internally, RM must use CC code paths for protected pcie as well
+        pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENABLED, NV_TRUE);
+        pConfCompute->setProperty(pConfCompute,
+            PDB_PROP_CONFCOMPUTE_MULTI_GPU_PROTECTED_PCIE_MODE_ENABLED, NV_TRUE);
+    }
+
+    status = _confComputeInitRegistryOverrides(pGpu, pConfCompute);
+    if (status != NV_OK)
+    {
+        NV_PRINTF(LEVEL_ERROR, "Unexpected failure in confComputeConstructEngine! Status:0x%x\n", status);
+        return status;
+    }
+
+    if ((sysGetStaticConfig(pSys)->bOsCCEnabled) && !gpuIsCCEnabledInHw_HAL(pGpu) &&
+        !gpuIsProtectedPcieEnabledInHw_HAL(pGpu))
+    {
+        if (pGpu->getProperty(pGpu, PDB_PROP_GPU_CC_FEATURE_CAPABLE))
+        {
+            NV_PRINTF(LEVEL_ERROR, "GPU confidential compute capability is not enabled.\n");
+        }
+        else
+        {
+            NV_PRINTF(LEVEL_ERROR, "GPU does not support confidential compute.\n");
+        }
+
+        NV_ASSERT_OR_RETURN(0, NV_ERR_INVALID_REQUEST);
+    }
 
     if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENABLED))
     {
@@ -114,6 +156,23 @@ confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
             return NV_ERR_INVALID_OPERATION;
         }
     }
+    // init key rotation state
+    pConfCompute->attackerAdvantage = SECURITY_POLICY_ATTACKER_ADVANTAGE_DEFAULT;
+    pConfCompute->keyRotationThresholdDelta = KEY_ROTATION_THRESHOLD_DELTA;
+    pConfCompute->keyRotationTimeout = KEY_ROTATION_TIMEOUT;
+    NV_ASSERT_OK_OR_RETURN(confComputeSetKeyRotationThreshold(pConfCompute,
+                                                              pConfCompute->attackerAdvantage));
+
+    for (NvU32 i = 0; i < CC_KEYSPACE_TOTAL_SIZE; i++)
+    {
+        pConfCompute->keyRotationState[i] = KEY_ROTATION_STATUS_IDLE;
+        pConfCompute->keyRotationTimeoutInfo[i].pTimer = NULL;
+        pConfCompute->keyRotationCount[i] = 0;
+    }
+    portMemSet(pConfCompute->aggregateStats, 0, sizeof(pConfCompute->aggregateStats));
+    portMemSet(pConfCompute->freedChannelAggregateStats, 0, sizeof(pConfCompute->freedChannelAggregateStats));
+    pConfCompute->keyRotationEnableMask = 0;
+    pConfCompute->keyRotationInternalThreshold = 0;
 
     return NV_OK;
 }
@@ -124,7 +183,7 @@ confComputeConstructEngine_IMPL(OBJGPU                  *pGpu,
  * @param[in]  pGpu              GPU object pointer
  * @param[in]  pConfCompute      ConfidentialCompute pointer
  */
-static void
+static NV_STATUS
 _confComputeInitRegistryOverrides
 (
     OBJGPU                *pGpu,
@@ -184,6 +243,23 @@ _confComputeInitRegistryOverrides
                 pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED, NV_FALSE);
             }
         }
+
+        if (IS_FMODEL(pGpu))
+        {
+            // Skip SPDM support on fmodel due to bugs 3553627 and 3556621.
+            NV_PRINTF(LEVEL_INFO, "Confidential Compute SPDM disabled on Fmodel.\n");
+            pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED, NV_FALSE);
+        }
+
+        if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED))
+        {
+            NV_STATUS status = objCreate(&pConfCompute->pSpdm, pConfCompute, Spdm);
+            if (status != NV_OK)
+            {
+                NV_PRINTF(LEVEL_ERROR, "SPDM child object creation failed! Status:0x%x\n", status);
+                return status;
+            }
+        }
     }
 
     if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENABLED))
@@ -204,6 +280,7 @@ _confComputeInitRegistryOverrides
             }
         }
     }
+    return NV_OK;
 }
 
 /*!
@@ -215,7 +292,7 @@ _confComputeInitRegistryOverrides
  * to be initialized in the GPU child order list, and therefore
  * SPDM session establishment is the first thing to happen. If another
  * object precedes Confidential Compute - it will be initialized before
- * SPDM session establishment. 
+ * SPDM session establishment.
  *
  * @param[in]  pGpu              GPU object pointer
  * @param[in]  pConfCompute      ConfidentialCompute pointer
@@ -229,26 +306,12 @@ confComputeEstablishSpdmSessionAndKeys_KERNEL
 {
     NV_STATUS status = NV_OK;
 
-    if (IS_FMODEL(pGpu))
-    {
-        // Skip SPDM support on fmodel due to bugs 3553627 and 3556621.
-        return NV_OK;
-    }
-
     //
     // Initialize SPDM session between Guest RM and SPDM Responder on GPU.
     // The session lifetime will track Confidential Compute object state lifetime.
     //
     if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED))
     {
-        status = objCreate(&pConfCompute->pSpdm, pConfCompute, Spdm);
-        if (status != NV_OK)
-        {
-            return status;
-        }
-
-        NV_ASSERT(pConfCompute->pSpdm);
-
         // Initialize SPDM context & begin session.
         NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
                             spdmContextInit(pGpu, pConfCompute->pSpdm),
@@ -277,13 +340,20 @@ confComputeEstablishSpdmSessionAndKeys_KERNEL
                             confComputeDeriveSecrets_HAL(pConfCompute, MC_ENGINE_IDX_GSP),
                             ErrorExit);
 
-        // Enable encryption for all traffic between CPU and GPU
-        status = confComputeStartEncryption_HAL(pGpu, pConfCompute);
-        if (status != NV_OK)
-        {
-            NV_PRINTF(LEVEL_ERROR, "ConfCompute : Failed enabling encryption!");
-            return status;
-        }
+        // Initialize encryption contexts for encrypted traffic between Kernel-RM and GSP.
+        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
+            &pConfCompute->pRpcCcslCtx, CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_CPU_GSP_LOCKED_RPC)));
+
+        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
+            &pConfCompute->pDmaCcslCtx, CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_CPU_GSP_DMA)));
+
+        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
+            &pConfCompute->pReplayableFaultCcslCtx,
+            CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_GSP_CPU_REPLAYABLE_FAULT)));
+
+        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
+            &pConfCompute->pNonReplayableFaultCcslCtx,
+            CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_GSP_CPU_NON_REPLAYABLE_FAULT)));
     }
 ErrorExit:
 
@@ -296,26 +366,20 @@ ErrorExit:
  * Note: This assumes that Confidential Compute is the first object
  * to be initialized in the GPU child order list, and therefore
  * SPDM deinitialization is the last thing to happen. If another
- * object precedes Confidential Compute - it will be deinitialized 
- * before SPDM. 
+ * object precedes Confidential Compute - it will be deinitialized
+ * before SPDM.
  *
  * @param[in]  pGpu              GPU object pointer
  * @param[in]  pConfCompute      ConfidentialCompute pointer
  */
 static NV_STATUS
-_confComputeDeinitSpdmSession
+_confComputeDeinitSpdmSessionAndKeys
 (
     OBJGPU              *pGpu,
     ConfidentialCompute *pConfCompute
 )
 {
     NV_STATUS status = NV_OK;
-
-    if (IS_FMODEL(pGpu))
-    {
-        // Skip SPDM support on fmodel due to bugs 3553627 and 3556621.
-        return NV_OK;
-    }
 
     //
     // Tear down SPDM session between Guest RM and SPDM Responder on GPU.
@@ -326,10 +390,10 @@ _confComputeDeinitSpdmSession
         if (pConfCompute->pSpdm == NULL)
         {
             //
-            // If SPDM object doesn't exist, we must have failed earlier.
-            // Alert in logs and move on.
+            // If SPDM object doesn't exist, alert in logs and move on.
+            // This means we either never established the session, or have already torn down.
             //
-            NV_PRINTF(LEVEL_ERROR, "SPDM teardown did not occur, as SPDM object is null!\n");
+            NV_PRINTF(LEVEL_INFO, "SPDM teardown did not occur, as SPDM object is null!\n");
             return NV_OK;
         }
 
@@ -337,26 +401,24 @@ _confComputeDeinitSpdmSession
 
         objDelete(pConfCompute->pSpdm);
         pConfCompute->pSpdm = NULL;
+        NV_PRINTF(LEVEL_INFO, "SPDM teardown successful.\n");
+
+        // Deinitialize CCSL contexts.
+        ccslContextClear(pConfCompute->pRpcCcslCtx);
+        ccslContextClear(pConfCompute->pDmaCcslCtx);
+        ccslContextClear(pConfCompute->pReplayableFaultCcslCtx);
+        ccslContextClear(pConfCompute->pNonReplayableFaultCcslCtx);
+
+        pConfCompute->pRpcCcslCtx                = NULL;
+        pConfCompute->pDmaCcslCtx                = NULL;
+        pConfCompute->pReplayableFaultCcslCtx    = NULL;
+        pConfCompute->pNonReplayableFaultCcslCtx = NULL;
+        pConfCompute->pGspSec2RpcCcslCtx         = NULL;
+
+        confComputeKeyStoreDeinit_HAL(pConfCompute);
     }
 
     return status;
-}
-
-
-/*!
- * Perform any work that must be done before GPU initialization.
- *
- * @param[in]  pGpu              GPU object pointer
- * @param[in]  pConfCompute      ConfidentialCompute pointer
- */
-NV_STATUS
-confComputeStatePreInitLocked_IMPL
-(
-    OBJGPU              *pGpu,
-    ConfidentialCompute *pConfCompute
-)
-{
-    return confComputeEstablishSpdmSessionAndKeys_HAL(pGpu, pConfCompute);
 }
 
 /*!
@@ -374,8 +436,8 @@ confComputeStatePostLoad_IMPL
     NvU32                flags
 )
 {
-    NV_STATUS status = NV_OK;
-    RM_API   *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+    NV_STATUS  status = NV_OK;
+    RM_API    *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
 
     NV_ASSERT_OK_OR_RETURN(pRmApi->Control(pRmApi,
                                     pGpu->hInternalClient,
@@ -388,6 +450,42 @@ confComputeStatePostLoad_IMPL
     {
         NV_PRINTF(LEVEL_INFO, "Performing late SPDM initialization!\n");
         status = confComputeEstablishSpdmSessionAndKeys_HAL(pGpu, pConfCompute);
+        if (status != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "ConfCompute : Failed initializing SPDM!");
+            return status;
+        }
+    }
+
+    if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED))
+    {
+        status = spdmSendInitRmDataCommand_HAL(pGpu, pConfCompute->pSpdm);
+        if (status != NV_OK)
+        {
+            return status;
+        }
+
+        if (IS_GSP_CLIENT(pGpu) && (pConfCompute->heartbeatPeriodSec != 0))
+        {
+            NV_PRINTF(LEVEL_INFO, "ConfCompute: Registering for SPDM heartbeats with period of 0x%x sec.\n",
+                      pConfCompute->heartbeatPeriodSec);
+            status = spdmRegisterForHeartbeats(pGpu, pConfCompute->pSpdm, pConfCompute->heartbeatPeriodSec);
+            if (status != NV_OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_KEY_ROTATION_SUPPORTED) &&
+        pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_KEY_ROTATION_ENABLED))
+    {
+        status = confComputeEnableKeyRotationCallback_HAL(pGpu, pConfCompute, NV_TRUE);
+        if (status != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "ConfCompute : Failed to enable key rotation callback!");
+            return status;
+        }
     }
 
     return status;
@@ -401,15 +499,55 @@ confComputeStatePostLoad_IMPL
  * @param[in]  flags         Optional flags describing state unload conditions
  */
 NV_STATUS
-confComputeStatePreUnload_IMPL
+confComputeStatePreUnload_KERNEL
 (
     OBJGPU              *pGpu,
     ConfidentialCompute *pConfCompute,
     NvU32                flags
 )
 {
-    NV_PRINTF(LEVEL_INFO, "Performing SPDM deinitialization in Pre Unload!\n");
-    return _confComputeDeinitSpdmSession(pGpu, pConfCompute);
+    NV_STATUS status = NV_OK;
+    NV_STATUS tempStatus = NV_OK;
+    if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_KEY_ROTATION_SUPPORTED) &&
+        pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_KEY_ROTATION_ENABLED))
+    {
+        OBJTMR *pTmr = GPU_GET_TIMER(pGpu);
+        for (NvU32 i = 0; i < CC_KEYSPACE_TOTAL_SIZE; i++)
+        {
+            if (pConfCompute->keyRotationTimeoutInfo[i].pTimer != NULL)
+            {
+                tmrEventCancel(pTmr, pConfCompute->keyRotationTimeoutInfo[i].pTimer);
+                portMemFree(pConfCompute->keyRotationTimeoutInfo[i].pTimer->pUserData);
+                tmrEventDestroy(pTmr, pConfCompute->keyRotationTimeoutInfo[i].pTimer);
+                pConfCompute->keyRotationTimeoutInfo[i].pTimer = NULL;
+            }
+        }
+        tempStatus = confComputeEnableKeyRotationCallback_HAL(pGpu, pConfCompute, NV_FALSE);
+        if (tempStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "Failed to disable key rotation 0x%x\n", tempStatus);
+            status = tempStatus;
+        }
+    }
+    if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED))
+    {
+        if (IS_GSP_CLIENT(pGpu) && (pConfCompute->heartbeatPeriodSec != 0))
+        {
+            tempStatus = spdmUnregisterFromHeartbeats(pGpu, pConfCompute->pSpdm);
+        }
+        else if (!IS_GSP_CLIENT(pGpu))
+        {
+            NV_PRINTF(LEVEL_INFO, "Performing SPDM deinitialization in Pre Unload!\n");
+            tempStatus = _confComputeDeinitSpdmSessionAndKeys(pGpu, pConfCompute);
+        }
+        if (tempStatus != NV_OK)
+        {
+            NV_PRINTF(LEVEL_ERROR, "Failed to deinit spdm 0x%x\n", tempStatus);
+            status = tempStatus;
+        }
+    }
+
+    return status;
 }
 
 NvBool
@@ -439,8 +577,7 @@ confComputeStateInitLocked_IMPL
     ConfidentialCompute *pConfCompute
 )
 {
-    RM_API *pRmApi = IS_GSP_CLIENT(pGpu) ? GPU_GET_PHYSICAL_RMAPI(pGpu) :
-                                           rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
+    RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
 
     NV_ASSERT_OK_OR_RETURN(pRmApi->Control(pRmApi,
                                            pGpu->hInternalClient,
@@ -455,160 +592,235 @@ confComputeStateInitLocked_IMPL
     return NV_OK;
 }
 
-NV_STATUS
-confComputeStartEncryption_KERNEL
+/*!
+ * Sets fatal error state in ConfCompute session by setting GPU ready
+ * state to false and invalidating the SPDM session.
+ *
+ * @param[in] pGpu                     : OBJGPU Pointer
+ * @param[in] pConfCompute             : ConfidentialCompute pointer
+ */
+void
+confComputeSetErrorState_KERNEL
 (
     OBJGPU              *pGpu,
     ConfidentialCompute *pConfCompute
 )
 {
-    NV_STATUS                                                        status = NV_OK;
-    RM_API                                                          *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-    NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_ENCRYPTION_CONTROL_PARAMS  params;
+    OBJSYS                                                     *pSys    = SYS_GET_INSTANCE();
+    OBJGPUMGR                                                  *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    NV_STATUS                                                   status  = NV_OK;
+    RM_API                                                     *pRmApi  = NULL;
+    NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_SET_GPU_STATE_PARAMS  params  = {0};
 
-    if (!IS_GSP_CLIENT(pGpu))
+    NV_PRINTF(LEVEL_ERROR, "ConfCompute: Fatal error hit!\n");
+
+    // Set ready state to false
+    pConfCompute->bAcceptClientRequest   = NV_FALSE;
+    pGpuMgr->ccCaps.bAcceptClientRequest = NV_FALSE;
+    pGpuMgr->ccCaps.bFatalFailure        = NV_TRUE;
+    pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+    status = pRmApi->Control(pRmApi,
+                             pGpu->hInternalClient,
+                             pGpu->hInternalSubdevice,
+                             NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_SET_GPU_STATE,
+                             &params,
+                             sizeof(params));
+
+    if (status != NV_OK)
     {
-        return NV_ERR_INVALID_STATE;
+        NV_PRINTF(LEVEL_ERROR, "ConfCompute: Failed setting GPU state to not ready!\n");
     }
 
-    if ((pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_READY) ==  NV_FALSE) &&
-        (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_ENABLED) ==  NV_FALSE))
+    // Invalidate SPDM session and all keys
+    status = _confComputeDeinitSpdmSessionAndKeys(pGpu, pConfCompute);
+    if (status != NV_OK)
     {
-        NV_PRINTF(LEVEL_INFO, "ConfCompute: Enabling encryption on Kernel-RM!\n");
-
-        pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_READY,   NV_TRUE);
-        pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_ENABLED, NV_TRUE);
-
-        //
-        // GSP-RM has already initialized all its secrets successfully.
-        // We must initialize our own before we attempt to start encryption.
-        //
-        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
-                                                       &pConfCompute->pRpcCcslCtx,
-                                                       CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_CPU_GSP_LOCKED_RPC)));
-        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
-                                                       &pConfCompute->pDmaCcslCtx,
-                                                       CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_CPU_GSP_DMA)));
-        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
-                                                       &pConfCompute->pReplayableFaultCcslCtx,
-                                                       CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_GSP_CPU_REPLAYABLE_FAULT)));
-        NV_ASSERT_OK_OR_RETURN(ccslContextInitViaKeyId(pConfCompute,
-                                                       &pConfCompute->pNonReplayableFaultCcslCtx,
-                                                       CC_GKEYID_GEN(CC_KEYSPACE_GSP, CC_LKEYID_GSP_CPU_NON_REPLAYABLE_FAULT)));
-
-        portMemSet(&params, 0, sizeof(params));
-        params.bEncryptionControl = NV_TRUE;
-
-        // Tell GSP-RM to start encrypting its responses.
-        NV_ASSERT_OK_OR_RETURN(status = pRmApi->Control(pRmApi,
-                                        pGpu->hInternalClient,
-                                        pGpu->hInternalSubdevice,
-                                        NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_ENCRYPTION_CONTROL,
-                                        &params,
-                                        sizeof(params)));
+        NV_PRINTF(LEVEL_ERROR, "ConfCompute: Failed tearing down SPDM!: 0x%x!\n", status);
     }
-    else
-    {
-        return NV_ERR_INVALID_STATE;
-    }
+}
 
+/*!
+ * Init channel iterator for a given global key
+ *
+ * @param[in] pGpu                     : OBJGPU Pointer
+ * @param[in] pConfCompute             : ConfidentialCompute pointer
+ * @param[in] globalKey                : Key used by channels
+ * @param[in/out] pIter                : kernelchannel iterator
+ */
+NV_STATUS
+confComputeInitChannelIterForKey_IMPL
+(
+    OBJGPU *pGpu,
+    ConfidentialCompute *pConfCompute,
+    NvU32 globalKey,
+    CHANNEL_ITERATOR *pIter
+)
+{
+    KernelFifo *pKernelFifo = GPU_GET_KERNEL_FIFO(pGpu);
+    NvU32 keySpace = CC_GKEYID_GET_KEYSPACE(globalKey);
+    NvU32 engineId = confComputeGetEngineIdFromKeySpace_HAL(pConfCompute, keySpace);
+    NV_ASSERT_OR_RETURN(engineId != RM_ENGINE_TYPE_NULL, NV_ERR_INVALID_ARGUMENT);
+
+    NvU32 runlistId;
+    NV_ASSERT_OK_OR_RETURN(kfifoEngineInfoXlate(pGpu, pKernelFifo, ENGINE_INFO_TYPE_RM_ENGINE_TYPE, engineId,
+                                                ENGINE_INFO_TYPE_RUNLIST, &runlistId));
+    kfifoGetChannelIterator(pGpu, pKernelFifo, pIter, runlistId);
     return NV_OK;
 }
 
+/*!
+ * Gets next channel for a given global key
+ *
+ * @param[in] pGpu                     : OBJGPU Pointer
+ * @param[in] pConfCompute             : ConfidentialCompute pointer
+ * @param[in] pIt                      : channel iterator for a runlist
+ * @param[in] globalKey                : Key used by channels
+ * @param[out] ppKernelChannel         : kernelchannel
+ */
 NV_STATUS
-confComputeStopEncryption_KERNEL
+confComputeGetNextChannelForKey_IMPL
 (
-    OBJGPU              *pGpu,
-    ConfidentialCompute *pConfCompute
+    OBJGPU *pGpu,
+    ConfidentialCompute *pConfCompute,
+    CHANNEL_ITERATOR *pIt,
+    NvU32 globalKey,
+    KernelChannel **ppKernelChannel
 )
 {
-    RM_API                                                         *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-    NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_ENCRYPTION_CONTROL_PARAMS params;
-    NV_STATUS                                                       status = NV_OK;
+    NV_ASSERT_OR_RETURN(ppKernelChannel != NULL, NV_ERR_INVALID_ARGUMENT);
+    *ppKernelChannel = NULL;
 
-    if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_SPDM_ENABLED))
+    KernelFifo *pKernelFifo = GPU_GET_KERNEL_FIFO(pGpu);
+    NvBool bKernelPriv = confComputeGlobalKeyIsKernelPriv_HAL(pConfCompute, globalKey);
+    NvBool bUvmKey = confComputeGlobalKeyIsUvmKey_HAL(pConfCompute, globalKey);
+    KernelChannel *pKernelChannel = NULL;
+    while(kfifoGetNextKernelChannel(pGpu, pKernelFifo, pIt, &pKernelChannel) == NV_OK)
     {
-        if (!IS_GSP_CLIENT(pGpu))
+        if (kchannelGetRunlistId(pKernelChannel) != pIt->runlistId)
+            continue;
+
+        if (!pKernelChannel->bCCSecureChannel)
+            continue;
+
+        if (!(bKernelPriv ^ kchannelCheckIsKernel(pKernelChannel)))
         {
-            return NV_ERR_INVALID_STATE;
+            if (bKernelPriv)
+            {
+                if (bUvmKey && !pKernelChannel->bUseScrubKey)
+                {
+                    // return all kern channels that don't use scrub key
+                   *ppKernelChannel = pKernelChannel;
+                }
+                else if (!bUvmKey && pKernelChannel->bUseScrubKey)
+                {
+                    // return all kern channels that use scrub key
+                   *ppKernelChannel = pKernelChannel;
+                }
+            }
+            else
+            {
+                // return all user channels
+               *ppKernelChannel = pKernelChannel;
+            }
+
+            // if we found a channel then return early
+            if (*ppKernelChannel != NULL)
+                return NV_OK;
         }
-
-        if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_READY))
-        {
-            NV_PRINTF(LEVEL_INFO, "ConfCompute: Turning off receive encryption on Kernel-RM!\n");
-            pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_READY, NV_FALSE);
-        }
-
-        portMemSet(&params, 0, sizeof(params));
-        params.bEncryptionControl = NV_FALSE;
-
-        //
-        // Tell GSP-RM to stop encrypting its data.
-        // Always have GPU delete secrets, regardless of CPU-RM state.
-        //
-        status = pRmApi->Control(pRmApi,
-            pGpu->hInternalClient,
-            pGpu->hInternalSubdevice,
-            NV2080_CTRL_CMD_INTERNAL_CONF_COMPUTE_ENCRYPTION_CONTROL,
-            &params,
-            sizeof(params));
-
-        // Regardless of response, be sure to disable and clear all encryption secrets from kernel side.
-        if (pConfCompute->getProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_ENABLED))
-        {
-            NV_PRINTF(LEVEL_INFO, "ConfCompute: Turning off send encryption on Kernel-RM!\n");
-            pConfCompute->setProperty(pConfCompute, PDB_PROP_CONFCOMPUTE_ENCRYPT_ENABLED, NV_FALSE);
-        }
-
-        // Deinitialize CCSL contexts.
-        ccslContextClear(pConfCompute->pRpcCcslCtx);
-        ccslContextClear(pConfCompute->pDmaCcslCtx);
-        ccslContextClear(pConfCompute->pReplayableFaultCcslCtx);
-        ccslContextClear(pConfCompute->pNonReplayableFaultCcslCtx);
-
-        pConfCompute->pRpcCcslCtx = NULL;
-        pConfCompute->pDmaCcslCtx = NULL;
-        pConfCompute->pReplayableFaultCcslCtx = NULL;
-        pConfCompute->pNonReplayableFaultCcslCtx = NULL;
     }
-
-    return status;
+    return NV_ERR_OBJECT_NOT_FOUND;
 }
 
 /*!
  * Deinitialize all keys required for the Confidential Compute session.
  *
- * Note: This assumes that Confidential Compute is the first object
- * to be initialized in the GPU child order list, and therefore
- * SPDM deinitialization is the last thing to happen. If another
- * object precedes Confidential Compute - it will be deinitialized 
- * before SPDM. 
+ * Note: Must occur in destructor, rather than confComputeStateDestroy
+ * as engine state is set to destroy before GSP-RM teardown. Since we
+ * still need encryption until after GSP-RM teardown, we wait until
+ * object destruction.
  *
- * @param[in]  pGpu              GPU object pointer
- * @param[in]  pConfCompute      ConfidentialCompute pointer
+ * @param[in]  pConfCompute  ConfidentialCompute pointer
  */
 void
-confComputeStateDestroy_IMPL
+confComputeDestruct_KERNEL
 (
-    OBJGPU              *pGpu,
     ConfidentialCompute *pConfCompute
 )
 {
-    NV_STATUS status = NV_OK;
+    NV_STATUS  status = NV_OK;
+    OBJGPU    *pGpu   = ENG_GET_GPU(pConfCompute);
 
-    status = _confComputeDeinitSpdmSession(pGpu, pConfCompute);
-    if (status != NV_OK) 
+    status = _confComputeDeinitSpdmSessionAndKeys(pGpu, pConfCompute);
+    if (status != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR, "ConfCompute: Failed deinitializing SPDM: 0x%x!\n", status);
     }
 
-    status = confComputeStopEncryption_HAL(pGpu, pConfCompute);
-    if (status != NV_OK) 
+    return;
+}
+
+/*!
+ * Get key slot from global key 
+ *
+ * @param[in]  pConfCompute             : ConfidentialCompute pointer
+ * @param[in]  globalKeyId              : globalKeyId
+ * @param[out] pSlot                    : key slot
+ */
+NV_STATUS
+confComputeGetKeySlotFromGlobalKeyId_IMPL
+(
+    ConfidentialCompute *pConfCompute,
+    NvU32  globalKeyId,
+    NvU32 *pSlot
+)
+{
+    NvU32 slot;
+    NvU16 keyspace = CC_GKEYID_GET_KEYSPACE(globalKeyId);
+    NvU32 keySlotIndex = 0;
+
+    NV_ASSERT_OR_RETURN(pSlot != NULL, NV_ERR_INVALID_ARGUMENT);
+    for (NvU16 index = 0; index < CC_KEYSPACE_SIZE; index++)
     {
-        NV_PRINTF(LEVEL_ERROR, "ConfCompute: Failed disabling encryption: 0x%x!\n", status);
+        if (index == keyspace)
+        {
+            break;
+        }
+        else
+        {
+            keySlotIndex += _confComputeGetKeyspaceSize(index);
+        }
     }
 
-    confComputeKeyStoreDeinit_HAL(pConfCompute);
+    slot = keySlotIndex + CC_GKEYID_GET_LKEYID(globalKeyId);
+    if (slot >= CC_KEYSPACE_TOTAL_SIZE)
+        return NV_ERR_INVALID_ARGUMENT;
 
-    return;
+    *pSlot = slot;
+    return NV_OK;
+}
+
+static NvU32
+_confComputeGetKeyspaceSize
+(
+    NvU16 keyspace
+)
+{
+    switch (keyspace)
+    {
+        case CC_KEYSPACE_GSP:
+            return CC_KEYSPACE_GSP_SIZE;
+        case CC_KEYSPACE_SEC2:
+            return CC_KEYSPACE_SEC2_SIZE;
+        case CC_KEYSPACE_LCE0:
+        case CC_KEYSPACE_LCE1:
+        case CC_KEYSPACE_LCE2:
+        case CC_KEYSPACE_LCE3:
+        case CC_KEYSPACE_LCE4:
+        case CC_KEYSPACE_LCE5:
+        case CC_KEYSPACE_LCE6:
+        case CC_KEYSPACE_LCE7:
+            return CC_KEYSPACE_LCE_SIZE;
+        default:
+            NV_ASSERT_OR_RETURN(NV_FALSE, 0);
+    }
 }

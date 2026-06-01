@@ -50,10 +50,11 @@ extern "C" {
 #define NVSWITCH_NSEC_PER_SEC           1000000000ULL
 
 #define NVSWITCH_DBG_LEVEL_MMIO         0x0
-#define NVSWITCH_DBG_LEVEL_INFO         0x1
-#define NVSWITCH_DBG_LEVEL_SETUP        0x2
-#define NVSWITCH_DBG_LEVEL_WARN         0x3
-#define NVSWITCH_DBG_LEVEL_ERROR        0x4
+#define NVSWITCH_DBG_LEVEL_NOISY        0x1
+#define NVSWITCH_DBG_LEVEL_INFO         0x2
+#define NVSWITCH_DBG_LEVEL_SETUP        0x3
+#define NVSWITCH_DBG_LEVEL_WARN         0x4
+#define NVSWITCH_DBG_LEVEL_ERROR        0x5
 
 #define NVSWITCH_LOG_BUFFER_SIZE         512
 
@@ -337,7 +338,7 @@ nvswitch_lib_service_interrupts
 );
 
 /*
- * @Brief : Get depth of error logs
+ * @Brief : Get depth of error logs and port event log
  *
  * @Description :
  *
@@ -345,6 +346,7 @@ nvswitch_lib_service_interrupts
  *
  * @param[out] fatal        Count of fatal errors
  * @param[out] nonfatal     Count of non-fatal errors
+ * @param[out] portEvent    Count of port events
  *
  * @returns                 NVL_SUCCESS if there were no errors and interrupts were handled
  *                          -NVL_NOT_FOUND if bad arguments provided
@@ -353,7 +355,7 @@ NvlStatus
 nvswitch_lib_get_log_count
 (
     nvswitch_device *device,
-    NvU32 *fatal, NvU32 *nonfatal
+    NvU32 *fatal, NvU32 *nonfatal, NvU32 *portEvent
 );
 
 /*
@@ -994,6 +996,22 @@ nvswitch_os_get_supported_register_events_params
 (
     NvBool *bSupportsManyEvents,
     NvBool *bUserSuppliesOsData
+);
+
+/*
+ * @Brief : Is TNVL mode enabled.
+ *
+ * @Description : Returns if TNVL is enabled for the device
+ *
+ * @param[in] device        a reference to the device
+ *
+ * @returns                 NV_TRUE,  if TNVL is enabled
+ *                          NV_FALSE, if TNVL is disabled
+ */
+NvBool
+nvswitch_lib_is_tnvl_enabled
+(
+    nvswitch_device *device
 );
 
 #ifdef __cplusplus

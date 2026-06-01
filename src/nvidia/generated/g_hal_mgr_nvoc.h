@@ -35,7 +35,6 @@ extern "C" {
 #define _HAL_MGR_H_
 
 #include "core/core.h"
-#include "core/info_block.h"
 #include "core/hal.h"
 
 #define HALMGR_GET_HAL(p, halid)     halmgrGetHal((p), halid)
@@ -53,17 +52,22 @@ typedef struct OBJHALMGR OBJHALMGR;
 
 
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_HAL_MGR_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJHALMGR {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
     struct Object *__nvoc_pbase_Object;
     struct OBJHALMGR *__nvoc_pbase_OBJHALMGR;
-    struct OBJHAL *pHalList[68];
+    struct OBJHAL *pHalList[69];
 };
 
 #ifndef __NVOC_CLASS_OBJHALMGR_TYPEDEF__
@@ -141,4 +145,5 @@ static inline struct OBJHAL *halmgrGetHal(struct OBJHALMGR *arg0, NvU32 arg1) {
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_HAL_MGR_NVOC_H_

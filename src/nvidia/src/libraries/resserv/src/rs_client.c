@@ -924,7 +924,7 @@ clientInterMap_IMPL
     return NV_ERR_INVALID_CLIENT;
 }
 
-void
+NV_STATUS
 clientInterUnmap_IMPL
 (
     RsClient *pClient,
@@ -932,7 +932,7 @@ clientInterUnmap_IMPL
     RS_INTER_UNMAP_PARAMS *pParams
 )
 {
-    return;
+    return NV_ERR_INVALID_CLIENT;
 }
 
 NV_STATUS
@@ -1228,9 +1228,9 @@ _unmapInterMapping
     params.hClient = pClient->hClient;
     params.hMapper = pMapperRef->hResource;
     params.hDevice = pMapping->pContextRef->hResource;
-    params.hMappable = pMapping->pMappableRef->hResource;
     params.flags = pMapping->flags;
     params.dmaOffset = pMapping->dmaOffset;
+    params.size = 0;
     params.pMemDesc = pMapping->pMemDesc;
     params.pSecInfo = pSecInfo;
     params.pLockInfo = &lockInfo;

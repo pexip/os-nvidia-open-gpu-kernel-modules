@@ -219,11 +219,16 @@ typedef struct _def_gsync {
 
 typedef struct OBJGSYNCMGR *POBJGSYNCMGR;
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_GSYNC_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJGSYNCMGR {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -288,9 +293,9 @@ NvBool      gsyncAreAllGpusInConfigAttachedToSameGsyncBoard(struct OBJGPU **pGpu
 OBJGSYNC   *gsyncmgrGetGsync(struct OBJGPU *);
 
 #ifdef DEBUG
-void        gsyncDbgPrintGsyncEvents(NvU32 DebugLevel, NvU32 events, NvU32 iface);
+void        gsyncDbgPrintGsyncEvents(NvU32 events, NvU32 iface);
 #else
-#define     gsyncDbgPrintGsyncEvents(DebugLevel, events, iface)
+#define     gsyncDbgPrintGsyncEvents(events, iface)
 #endif
 
 #endif // GSYNC_H_
@@ -298,4 +303,5 @@ void        gsyncDbgPrintGsyncEvents(NvU32 DebugLevel, NvU32 events, NvU32 iface
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_GSYNC_NVOC_H_
