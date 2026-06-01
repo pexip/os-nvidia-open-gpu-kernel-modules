@@ -20,6 +20,7 @@ NVIDIA_TESLA		?=
 LINUX_KMOD_VARIANT	?=
 LINUX_KMOD_TESTED	?=
 ARCH_LIST		?= amd64
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
 
 version			 = $(NVIDIA_RELEASE)
 version_major		 = $(NVIDIA_MAJOR)
