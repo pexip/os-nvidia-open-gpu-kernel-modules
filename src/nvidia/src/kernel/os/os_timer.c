@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2002-2020 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2002-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -109,7 +109,7 @@ osDestroy1HzCallbacks
  * @return  NV_ERR_INVALID_REQUEST  The callback has not been added
  */
 NV_STATUS
-osSchedule1SecondCallback
+osSchedule1HzCallback
 (
     OBJGPU     *pGpu,
     OS1HZPROC   callback,
@@ -161,7 +161,7 @@ osSchedule1SecondCallback
  * @param[in]       pData       Unique identifier for the callback
  */
 void
-osRemove1SecondRepeatingCallback
+osRemove1HzCallback
 (
     OBJGPU     *pGpu,
     OS1HZPROC   callback,
@@ -198,63 +198,16 @@ osRemove1SecondRepeatingCallback
     }
 }
 
-//
-// Return Value(TRUE) is used by Vista to determine if we were able to acquire the lock
-// If we cannot acquire the lock this means the API or ISR/DPC has it
-//
-NvBool
-osRun1HzCallbacksNow
-(
-    OBJGPU *pGpu
-)
+static void _osRunAll1HzCallbacks(OBJGPU *pGpu)
 {
-    OBJSYS             *pSys = SYS_GET_INSTANCE();
     OBJTMR             *pTmr = GPU_GET_TIMER(pGpu);
     OS1HZTIMERENTRY   **ppEntryPtr;
     OS1HZPROC           pProc;
-    THREAD_STATE_NODE   threadState;
     void               *pData;
-    NvBool              bAcquired = NV_TRUE;
-    GPU_MASK            lockedGpus = 0;
-#if !TLS_DPC_HAVE_UNIQUE_ID
-    NvU8 stackAllocator[TLS_ISR_ALLOCATOR_SIZE]; // ISR allocations come from this buffer
-    PORT_MEM_ALLOCATOR *pDpcAllocator;
-    pDpcAllocator = portMemAllocatorCreateOnExistingBlock(stackAllocator, sizeof(stackAllocator));
-    tlsIsrInit(pDpcAllocator);
-#endif
-
-    //
-    // LOCK:
-    //
-    // What irql are we at here?  Should we acquire the API lock in addition to
-    // or instead of the GPUs lock?
-    //
-
-    // LOCK: try to acquire GPU lock
-    if (rmGpuGroupLockAcquire(pGpu->gpuInstance, GPU_LOCK_GRP_DEVICE,
-                GPU_LOCK_FLAGS_COND_ACQUIRE, RM_LOCK_MODULES_TMR,
-                &lockedGpus) != NV_OK)
-    {
-        // Out of conflicting thread
-        bAcquired = NV_FALSE;
-        goto exit;
-    }
-
-    if (osCondAcquireRmSema(pSys->pSema) != NV_OK)
-    {
-        // UNLOCK: release GPU lock
-        rmGpuGroupLockRelease(lockedGpus, GPUS_LOCK_FLAGS_NONE);
-        // Out of conflicting thread
-        bAcquired = NV_FALSE;
-        goto exit;
-    }
-
-    threadStateInitISRAndDeferredIntHandler(&threadState, pGpu,
-        THREAD_STATE_FLAGS_IS_DEFERRED_INT_HANDLER);
 
     if (!gpuIsGpuFullPower(pGpu))
     {
-        goto exit;
+        return;
     }
 
     ppEntryPtr = &pTmr->pOs1HzCallbackList;
@@ -336,6 +289,60 @@ osRun1HzCallbacksNow
             ppEntryPtr = &entry->next;
         }
     }
+    osGetCurrentTick(&pGpu->lastCallbackTime);
+}
+
+//
+// Return Value(TRUE) is used by Vista to determine if we were able to acquire the lock
+// If we cannot acquire the lock this means the API or ISR/DPC has it
+//
+NvBool
+osRun1HzCallbacksNow
+(
+    OBJGPU *pGpu
+)
+{
+    OBJSYS             *pSys = SYS_GET_INSTANCE();
+    THREAD_STATE_NODE   threadState;
+    NvBool              bAcquired = NV_TRUE;
+    GPU_MASK            lockedGpus = 0;
+#if !TLS_DPC_HAVE_UNIQUE_ID
+    NvU8 stackAllocator[TLS_ISR_ALLOCATOR_SIZE]; // ISR allocations come from this buffer
+    PORT_MEM_ALLOCATOR *pDpcAllocator;
+    pDpcAllocator = portMemAllocatorCreateOnExistingBlock(stackAllocator, sizeof(stackAllocator));
+    tlsIsrInit(pDpcAllocator);
+#endif
+
+    //
+    // LOCK:
+    //
+    // What irql are we at here?  Should we acquire the API lock in addition to
+    // or instead of the GPUs lock?
+    //
+
+    // LOCK: try to acquire GPU lock
+    if (rmGpuGroupLockAcquire(pGpu->gpuInstance, GPU_LOCK_GRP_DEVICE,
+                GPU_LOCK_FLAGS_COND_ACQUIRE, RM_LOCK_MODULES_TMR,
+                &lockedGpus) != NV_OK)
+    {
+        // Out of conflicting thread
+        bAcquired = NV_FALSE;
+        goto exit;
+    }
+
+    if (osCondAcquireRmSema(pSys->pSema) != NV_OK)
+    {
+        // UNLOCK: release GPU lock
+        rmGpuGroupLockRelease(lockedGpus, GPUS_LOCK_FLAGS_NONE);
+        // Out of conflicting thread
+        bAcquired = NV_FALSE;
+        goto exit;
+    }
+
+    threadStateInitISRAndDeferredIntHandler(&threadState, pGpu,
+        THREAD_STATE_FLAGS_IS_DEFERRED_INT_HANDLER);
+
+    _osRunAll1HzCallbacks(pGpu);
 
 exit:
     if (bAcquired)
@@ -347,6 +354,10 @@ exit:
         // UNLOCK: release GPU lock
         rmGpuGroupLockRelease(lockedGpus, GPUS_LOCK_FLAGS_NONE);
     }
+    else if (gpuIsCCFeatureEnabled(pGpu)) // bug 4580313 - limit to CC only for r550
+    {
+        portAtomicSetU32(&pGpu->bCallbackQueued, NV_TRUE);
+    }
 
 #if !TLS_DPC_HAVE_UNIQUE_ID
     tlsIsrDestroy(pDpcAllocator);
@@ -354,6 +365,30 @@ exit:
 #endif
 
     return bAcquired;
+}
+
+void osRunQueued1HzCallbacksUnderLock(OBJGPU *pGpu)
+{
+    if (!gpuIsCCFeatureEnabled(pGpu)) // bug 4580313 - limit to CC only for r550
+        return;
+
+    //
+    // In traditional SLI, we might occasionally get called with just the
+    // *sub*device lock held. Since all callbacks were written with the
+    // assumption that they hold the device lock, just bail out here.
+    //
+    if (!rmDeviceGpuLockIsOwner(pGpu->gpuInstance))
+        return;
+
+    // callbacks shouldn't run at > DISPATCH_LEVEL
+    if (!portUtilIsInterruptContext())
+    {
+        if (pGpu->bCallbackQueued)
+        {
+            _osRunAll1HzCallbacks(pGpu);
+            portAtomicSetU32(&pGpu->bCallbackQueued, NV_FALSE);
+        }
+    }
 }
 
 /*!

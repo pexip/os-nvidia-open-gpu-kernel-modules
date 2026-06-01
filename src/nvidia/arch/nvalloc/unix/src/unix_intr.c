@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,6 +26,7 @@
 #include <osapi.h>
 #include <core/thread_state.h>
 #include <core/locks.h>
+#include <gpu_mgr/gpu_mgr.h>
 #include <gpu/gpu.h>
 #include "kernel/gpu/intr/intr.h"
 #include "gpu/bif/kernel_bif.h"
@@ -34,14 +35,13 @@
 #include <nv_sriov_defines.h>
 #include "objtmr.h"
 
-
 static NvBool osInterruptPending(
     OBJGPU            *pGpu,
     NvBool            *serviced,
     THREAD_STATE_NODE *pThreadState
 )
 {
-    POBJDISP pDisp;
+    OBJDISP *pDisp;
     KernelDisplay   *pKernelDisplay;
     NvBool pending, sema_release;
     THREAD_STATE_NODE threadState;
@@ -107,8 +107,11 @@ static NvBool osInterruptPending(
     pIsrAllocator = portMemAllocatorCreateOnExistingBlock(stackAllocator, sizeof(stackAllocator));
     tlsIsrInit(pIsrAllocator);
 
+    //
     // For SWRL granular locking process the countdown timer interrupt.
-    if (pDeviceLockGpu->getProperty(pDeviceLockGpu, PDB_PROP_GPU_SWRL_GRANULAR_LOCKING))
+    // GSP-RM handles SWRL interrupts if GSP-RM is active
+    //
+    if ((!IS_GSP_CLIENT(pGpu)) && (pGpu->getProperty(pGpu, PDB_PROP_GPU_SWRL_GRANULAR_LOCKING)))
     {
         threadStateInitISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
 
@@ -127,12 +130,40 @@ static NvBool osInterruptPending(
                    continue;
                 }
 
-                intrGetPendingStall_HAL(pGpu, pIntr, &intr0Pending, &threadState);
-                POBJTMR pTmr = GPU_GET_TIMER(pGpu);
-                *serviced = tmrServiceSwrlWrapper(pGpu, pTmr, &intr0Pending, &threadState);
+                OBJTMR *pTmr = GPU_GET_TIMER(pGpu);
+                *serviced = tmrServiceSwrlWrapper(pGpu, pTmr, &threadState);
             }
         }
 
+        threadStateFreeISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
+    }
+
+    //
+    // Service nonstall interrupts before possibly acquiring GPUs lock
+    // so that we don't unnecesarily hold the lock while servicing them.
+    //
+    if (pDeviceLockGpu->getProperty(pDeviceLockGpu, PDB_PROP_GPU_ALTERNATE_TREE_ENABLED) &&
+        pDeviceLockGpu->getProperty(pDeviceLockGpu, PDB_PROP_GPU_ALTERNATE_TREE_HANDLE_LOCKLESS))
+    {
+        threadStateInitISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
+
+        gpuMask = gpumgrGetGpuMask(pDeviceLockGpu);
+        gpuInstance = 0;
+        while ((pGpu = gpumgrGetNextGpu(gpuMask, &gpuInstance)) != NULL)
+        {
+            pIntr = GPU_GET_INTR(pGpu);
+            if ((pIntr != NULL) && (INTERRUPT_TYPE_HARDWARE == intrGetIntrEn(pIntr)))
+            {
+                NvBool bCtxswLog = NV_FALSE;
+                intrGetPendingNonStall_HAL(pGpu, pIntr, &intr1Pending, &threadState);
+                intrCheckFecsEventbufferPending(pGpu, pIntr, &intr1Pending, &bCtxswLog);
+                if (!bitVectorTestAllCleared(&intr1Pending))
+                {
+                    intrServiceNonStall_HAL(pGpu, pIntr, &intr1Pending, &threadState);
+                    *serviced = NV_TRUE;
+                }
+            }
+        }
         threadStateFreeISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
     }
 
@@ -220,31 +251,6 @@ static NvBool osInterruptPending(
         {
             rmDeviceGpuLockSetOwner(pDeviceLockGpu, GPUS_LOCK_OWNER_PENDING_DPC_REFRESH);
         }
-    }
-
-    if (pDeviceLockGpu->getProperty(pDeviceLockGpu, PDB_PROP_GPU_ALTERNATE_TREE_ENABLED) &&
-        pDeviceLockGpu->getProperty(pDeviceLockGpu, PDB_PROP_GPU_ALTERNATE_TREE_HANDLE_LOCKLESS))
-    {
-        threadStateInitISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
-
-        gpuMask = gpumgrGetGpuMask(pDeviceLockGpu);
-        gpuInstance = 0;
-        while ((pGpu = gpumgrGetNextGpu(gpuMask, &gpuInstance)) != NULL)
-        {
-            pIntr = GPU_GET_INTR(pGpu);
-            if ((pIntr != NULL) && (INTERRUPT_TYPE_HARDWARE == intrGetIntrEn(pIntr)))
-            {
-                NvBool bCtxswLog = NV_FALSE;
-                intrGetPendingNonStall_HAL(pGpu, pIntr, &intr1Pending, &threadState);
-                intrCheckFecsEventbufferPending(pGpu, pIntr, &intr1Pending, &bCtxswLog);
-                if (!bitVectorTestAllCleared(&intr1Pending))
-                {
-                    intrServiceNonStall_HAL(pGpu, pIntr, &intr1Pending, &threadState);
-                    *serviced = NV_TRUE;
-                }
-            }
-        }
-        threadStateFreeISRLockless(&threadState, pDeviceLockGpu, THREAD_STATE_FLAGS_IS_ISR_LOCKLESS);
     }
 
     tlsIsrDestroy(pIsrAllocator);
@@ -338,18 +344,11 @@ void osEnableInterrupts(OBJGPU *pGpu)
 
         intrEn = intrGetIntrEn(pIntr);
         intrSetIntrEnInHw_HAL(pGpu, pIntr, intrEn, NULL);
-
-        if (pIntr != NULL)
-        {
-            intrSetStall_HAL(pGpu, pIntr, intrEn, NULL);
-        }
+        intrSetStall_HAL(pGpu, pIntr, intrEn, NULL);
 
         if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_ENABLED))
         {
-            if (pIntr != NULL)
-            {
-                intrRestoreNonStall_HAL(pGpu, pIntr, intrGetIntrEn(pIntr), NULL);
-            }
+            intrRestoreNonStall_HAL(pGpu, pIntr, intrGetIntrEn(pIntr), NULL);
         }
 
     }
@@ -373,23 +372,17 @@ void osDisableInterrupts(
 
         intrSetIntrEnInHw_HAL(pGpu, pIntr, new_intr_en_0, NULL);
 
-        if (pIntr != NULL)
-        {
-            intrSetStall_HAL(pGpu, pIntr, new_intr_en_0, NULL);
-        }
+        intrSetStall_HAL(pGpu, pIntr, new_intr_en_0, NULL);
 
         if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_ENABLED))
         {
-            if (pIntr != NULL)
+            if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_HANDLE_LOCKLESS))
             {
-                if (pGpu->getProperty(pGpu, PDB_PROP_GPU_ALTERNATE_TREE_HANDLE_LOCKLESS))
-                {
-                    intrRestoreNonStall_HAL(pGpu, pIntr, intrGetIntrEn(pIntr), NULL);
-                }
-                else
-                {
-                    intrRestoreNonStall_HAL(pGpu, pIntr, new_intr_en_0, NULL);
-                }
+                intrRestoreNonStall_HAL(pGpu, pIntr, intrGetIntrEn(pIntr), NULL);
+            }
+            else
+            {
+                intrRestoreNonStall_HAL(pGpu, pIntr, new_intr_en_0, NULL);
             }
         }
     }
@@ -405,7 +398,7 @@ static void RmIsrBottomHalf(
     NvU32 gpuMask, gpuInstance;
     OBJGPU *pDeviceLockGpu = pGpu;
     Intr *pIntr = NULL;
-    POBJDISP pDisp = NULL;
+    OBJDISP *pDisp = NULL;
     NvU8 stackAllocator[TLS_ISR_ALLOCATOR_SIZE]; // ISR allocations come from this buffer
     PORT_MEM_ALLOCATOR *pIsrAllocator;
 
@@ -606,6 +599,36 @@ NV_STATUS NV_API_CALL rm_gpu_copy_mmu_faults(
         status = NV_OK;
         goto done;
     }
+    else
+    {
+        KernelGmmu *pKernelGmmu = GPU_GET_KERNEL_GMMU(pGpu);
+        PORT_MEM_ALLOCATOR *pIsrAllocator;
+        THREAD_STATE_NODE   threadState;
+        NvU8 stackAllocator[TLS_ISR_ALLOCATOR_SIZE]; // ISR allocations come from this buffer
+
+        if (pKernelGmmu == NULL)
+        {
+            status = NV_ERR_OBJECT_NOT_FOUND;
+            goto done;
+        }
+
+        // If MMU fault buffer is not enabled, return early
+        if (!gpuIsVoltaHubIntrSupported(pGpu))
+            goto done;
+
+        pIsrAllocator = portMemAllocatorCreateOnExistingBlock(stackAllocator, sizeof(stackAllocator));
+        tlsIsrInit(pIsrAllocator);
+        threadStateInitISRAndDeferredIntHandler(&threadState, pGpu, THREAD_STATE_FLAGS_IS_ISR);
+
+        // Copies all valid packets in RM's and client's shadow buffer
+        status  = kgmmuCopyMmuFaults_HAL(pGpu, pKernelGmmu, &threadState, faultsCopied,
+                                         NON_REPLAYABLE_FAULT_BUFFER, NV_FALSE);
+
+        threadStateFreeISRAndDeferredIntHandler(&threadState, pGpu, THREAD_STATE_FLAGS_IS_ISR);
+        tlsIsrDestroy(pIsrAllocator);
+        portMemAllocatorRelease(pIsrAllocator);
+
+    }
 
 done:
     NV_EXIT_RM_RUNTIME(sp,fp);
@@ -623,6 +646,20 @@ static NV_STATUS _rm_gpu_copy_mmu_faults_unlocked(
     THREAD_STATE_NODE *pThreadState
 )
 {
+    KernelGmmu *pKernelGmmu = GPU_GET_KERNEL_GMMU(pGpu);
+
+    if (pKernelGmmu == NULL)
+    {
+        return NV_ERR_OBJECT_NOT_FOUND;
+    }
+
+    // If MMU fault buffer is not enabled, return early
+    if (!gpuIsVoltaHubIntrSupported(pGpu))
+        return NV_OK;
+
+    // Copies all valid packets in RM's and client's shadow buffer
+    return kgmmuCopyMmuFaults_HAL(pGpu, pKernelGmmu, pThreadState, pFaultsCopied,
+                                  NON_REPLAYABLE_FAULT_BUFFER, NV_FALSE);
 
     return NV_OK;
 }

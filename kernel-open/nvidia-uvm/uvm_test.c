@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2022 NVIDIA Corporation
+    Copyright (c) 2015-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -41,15 +41,11 @@
 static NV_STATUS uvm_test_get_gpu_ref_count(UVM_TEST_GET_GPU_REF_COUNT_PARAMS *params, struct file *filp)
 {
     NvU64 retained_count = 0;
-    uvm_parent_gpu_t *parent_gpu;
     uvm_gpu_t *gpu = NULL;
 
     uvm_mutex_lock(&g_uvm_global.global_lock);
 
-    parent_gpu = uvm_parent_gpu_get_by_uuid(&params->gpu_uuid);
-    if (parent_gpu)
-        gpu = uvm_gpu_get_by_parent_and_swizz_id(parent_gpu, params->swizz_id);
-
+    gpu = uvm_gpu_get_by_uuid(&params->gpu_uuid);
     if (gpu != NULL)
         retained_count = uvm_gpu_retained_count(gpu);
 
@@ -107,26 +103,6 @@ static NV_STATUS uvm_test_nv_kthread_q(UVM_TEST_NV_KTHREAD_Q_PARAMS *params, str
     return NV_ERR_INVALID_STATE;
 }
 
-static NV_STATUS uvm_test_numa_get_closest_cpu_node_to_gpu(UVM_TEST_NUMA_GET_CLOSEST_CPU_NODE_TO_GPU_PARAMS *params,
-                                                           struct file *filp)
-{
-    uvm_gpu_t *gpu;
-    NV_STATUS status;
-    uvm_rm_user_object_t user_rm_va_space = {
-        .rm_control_fd = -1,
-        .user_client = params->client,
-        .user_object = params->smc_part_ref
-    };
-
-    status = uvm_gpu_retain_by_uuid(&params->gpu_uuid, &user_rm_va_space, &gpu);
-    if (status != NV_OK)
-        return status;
-
-    params->node_id = gpu->parent->closest_cpu_numa_node;
-    uvm_gpu_release(gpu);
-    return NV_OK;
-}
-
 // Callers of this function should ensure that node is not NUMA_NO_NODE in order
 // to avoid overrunning the kernel's node to cpumask map.
 static NV_STATUS uvm_test_verify_bh_affinity(uvm_intr_handler_t *isr, int node)
@@ -168,27 +144,27 @@ static NV_STATUS uvm_test_numa_check_affinity(UVM_TEST_NUMA_CHECK_AFFINITY_PARAM
     }
 
     if (gpu->parent->replayable_faults_supported) {
-        uvm_gpu_replayable_faults_isr_lock(gpu->parent);
+        uvm_parent_gpu_replayable_faults_isr_lock(gpu->parent);
         status = uvm_test_verify_bh_affinity(&gpu->parent->isr.replayable_faults,
                                               gpu->parent->closest_cpu_numa_node);
-        uvm_gpu_replayable_faults_isr_unlock(gpu->parent);
+        uvm_parent_gpu_replayable_faults_isr_unlock(gpu->parent);
         if (status != NV_OK)
             goto unlock;
 
         if (gpu->parent->non_replayable_faults_supported) {
-            uvm_gpu_non_replayable_faults_isr_lock(gpu->parent);
+            uvm_parent_gpu_non_replayable_faults_isr_lock(gpu->parent);
             status = uvm_test_verify_bh_affinity(&gpu->parent->isr.non_replayable_faults,
                                                   gpu->parent->closest_cpu_numa_node);
-            uvm_gpu_non_replayable_faults_isr_unlock(gpu->parent);
+            uvm_parent_gpu_non_replayable_faults_isr_unlock(gpu->parent);
             if (status != NV_OK)
                 goto unlock;
         }
 
         if (gpu->parent->access_counters_supported) {
-            uvm_gpu_access_counters_isr_lock(gpu->parent);
+            uvm_parent_gpu_access_counters_isr_lock(gpu->parent);
             status = uvm_test_verify_bh_affinity(&gpu->parent->isr.access_counters,
                                                   gpu->parent->closest_cpu_numa_node);
-            uvm_gpu_access_counters_isr_unlock(gpu->parent);
+            uvm_parent_gpu_access_counters_isr_unlock(gpu->parent);
         }
     }
 
@@ -308,8 +284,6 @@ long uvm_test_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_DRAIN_REPLAYABLE_FAULTS,      uvm_test_drain_replayable_faults);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_PMA_GET_BATCH_SIZE,           uvm_test_pma_get_batch_size);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_PMM_QUERY_PMA_STATS,          uvm_test_pmm_query_pma_stats);
-        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_NUMA_GET_CLOSEST_CPU_NODE_TO_GPU,
-                                       uvm_test_numa_get_closest_cpu_node_to_gpu);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_NUMA_CHECK_AFFINITY,          uvm_test_numa_check_affinity);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_SPACE_ADD_DUMMY_THREAD_CONTEXTS,
                                        uvm_test_va_space_add_dummy_thread_contexts);
@@ -332,6 +306,9 @@ long uvm_test_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         UVM_ROUTE_CMD_STACK_NO_INIT_CHECK(UVM_TEST_CGROUP_ACCOUNTING_SUPPORTED, uvm_test_cgroup_accounting_supported);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SPLIT_INVALIDATE_DELAY, uvm_test_split_invalidate_delay);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_CPU_CHUNK_API, uvm_test_cpu_chunk_api);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_FORCE_CPU_TO_CPU_COPY_WITH_CE, uvm_test_force_cpu_to_cpu_copy_with_ce);
+        UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_VA_SPACE_ALLOW_MOVABLE_ALLOCATIONS,
+                                       uvm_test_va_space_allow_movable_allocations);
         UVM_ROUTE_CMD_STACK_INIT_CHECK(UVM_TEST_SKIP_MIGRATE_VMA, uvm_test_skip_migrate_vma);
     }
 

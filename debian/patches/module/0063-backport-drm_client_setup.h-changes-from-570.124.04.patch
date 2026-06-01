@@ -1,0 +1,38 @@
+From 6a645d42fa01efa36676c0ee3410671cad8bac86 Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Thu, 27 Mar 2025 20:33:39 +0100
+Subject: [PATCH] backport drm_client_setup.h changes from 570.124.04
+
+---
+ header-presence-tests.mk    | 1 +
+ nvidia-drm/nvidia-drm-drv.c | 2 ++
+ 2 files changed, 3 insertions(+)
+
+diff --git a/header-presence-tests.mk b/header-presence-tests.mk
+index c5e7f7e9..99237009 100644
+--- a/header-presence-tests.mk
++++ b/header-presence-tests.mk
+@@ -30,6 +30,7 @@ NV_HEADER_PRESENCE_TESTS = \
+   drm/drm_device.h \
+   drm/drm_mode_config.h \
+   drm/drm_modeset_lock.h \
++  drm/clients/drm_client_setup.h \
+   dt-bindings/interconnect/tegra_icc_id.h \
+   generated/autoconf.h \
+   generated/compile.h \
+diff --git a/nvidia-drm/nvidia-drm-drv.c b/nvidia-drm/nvidia-drm-drv.c
+index 0818e36f..1d64592f 100644
+--- a/nvidia-drm/nvidia-drm-drv.c
++++ b/nvidia-drm/nvidia-drm-drv.c
+@@ -78,6 +78,8 @@
+ 
+ #if defined(NV_DRM_DRM_CLIENT_SETUP_H_PRESENT)
+ #include <drm/drm_client_setup.h>
++#elif defined(NV_DRM_CLIENTS_DRM_CLIENT_SETUP_H_PRESENT)
++#include <drm/clients/drm_client_setup.h>
+ #endif
+ 
+ #if defined(NV_DRM_DRM_FBDEV_TTM_H_PRESENT)
+-- 
+2.39.5
+

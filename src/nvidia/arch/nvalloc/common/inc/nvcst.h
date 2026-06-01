@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2004-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -65,6 +65,7 @@ CHIPSET_SETUP_FUNC(Intel_0685_setupFunc)
 CHIPSET_SETUP_FUNC(Intel_4381_setupFunc)
 CHIPSET_SETUP_FUNC(Intel_7A82_setupFunc)
 CHIPSET_SETUP_FUNC(Intel_7A04_setupFunc)
+CHIPSET_SETUP_FUNC(Intel_5795_setupFunc)
 CHIPSET_SETUP_FUNC(Intel_1B81_setupFunc)
 CHIPSET_SETUP_FUNC(SiS_656_setupFunc)
 CHIPSET_SETUP_FUNC(ATI_RS400_setupFunc)
@@ -94,6 +95,8 @@ CHIPSET_SETUP_FUNC(Ampere_AmpereOne_setupFunc)
 CHIPSET_SETUP_FUNC(Nvidia_T210_setupFunc)
 CHIPSET_SETUP_FUNC(Nvidia_T194_setupFunc)
 CHIPSET_SETUP_FUNC(Nvidia_TH500_setupFunc)
+CHIPSET_SETUP_FUNC(PLDA_XpressRichAXI_setupFunc)
+CHIPSET_SETUP_FUNC(Riscv_generic_setupFunc)
 
 
 // Keep string length <=32 (including termination) to avoid string copy overflow
@@ -191,7 +194,7 @@ CSINFO chipsetInfo[] =
     {PCI_VENDOR_ID_INTEL,       0x7A8A, CS_INTEL_1B81,      "Intel-SapphireRapids", Intel_1B81_setupFunc},
     {PCI_VENDOR_ID_INTEL,       0x18DC, CS_INTEL_18DC,      "Intel-IceLake",        NULL},
     {PCI_VENDOR_ID_INTEL,       0x7A04, CS_INTEL_7A04,      "Intel-RaptorLake",     Intel_7A04_setupFunc},
-    {PCI_VENDOR_ID_INTEL,       0x5795, CS_INTEL_5795,      "Intel-GraniteRapids",  NULL},
+    {PCI_VENDOR_ID_INTEL,       0x5795, CS_INTEL_5795,      "Intel-GraniteRapids",  Intel_5795_setupFunc},
 
     {PCI_VENDOR_ID_NVIDIA,      0x0FAE, CS_NVIDIA_T210,      "T210",      Nvidia_T210_setupFunc},
     {PCI_VENDOR_ID_NVIDIA,      0x0FAF, CS_NVIDIA_T210,      "T210",      Nvidia_T210_setupFunc},
@@ -269,6 +272,8 @@ CSINFO chipsetInfo[] =
     {PCI_VENDOR_ID_HYGON,       0x790E, CS_HYGON_C86,      "Hygon-C86-7151",   NULL},
     {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN96XX, "Marvell Octeon CN96xx", ARMV8_generic_setupFunc},
     {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN98XX, "Marvell Octeon CN98xx", ARMV8_generic_setupFunc},
+    {PCI_VENDOR_ID_SIFIVE,      0x0000, CS_SIFIVE_FU740_C000, "SiFive FU740-000", Riscv_generic_setupFunc},
+    {PCI_VENDOR_ID_PLDA,        0x1111, CS_PLDA_XPRESSRICH_AXI_REF, "XpressRich-AXI Ref Design", PLDA_XpressRichAXI_setupFunc},
     {PCI_VENDOR_ID_AMPERE,      0xE200, CS_AMPERE_AMPEREONE, "Ampere AmpereOne", Ampere_AmpereOne_setupFunc},
     {PCI_VENDOR_ID_AMPERE,      0xE201, CS_AMPERE_AMPEREONE, "Ampere AmpereOne", Ampere_AmpereOne_setupFunc},
     {PCI_VENDOR_ID_AMPERE,      0xE202, CS_AMPERE_AMPEREONE, "Ampere AmpereOne", Ampere_AmpereOne_setupFunc},
@@ -312,6 +317,8 @@ VENDORNAME vendorName[] =
     {PCI_VENDOR_ID_CADENCE,     "Cadence"},
     {PCI_VENDOR_ID_ARM,         "ARM"},
     {PCI_VENDOR_ID_ALIBABA,     "Alibaba"},
+    {PCI_VENDOR_ID_SIFIVE,      "SiFive"},
+    {PCI_VENDOR_ID_PLDA,        "PLDA"},
     {0,                         "Unknown"} // Indicates end of the table
 };
 

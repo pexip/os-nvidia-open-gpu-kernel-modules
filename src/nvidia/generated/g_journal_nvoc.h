@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2005-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2005-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -137,10 +137,25 @@ typedef struct
 typedef struct
 {
     NvU32                           id;                 // record id
+    volatile NvS32                  inUse;              // indicates the record is actively being used.
     NV2080_NOCAT_JOURNAL_GPU_STATE  nocatGpuState;      // contains the state of the
                                                         // associated GPU if there is one,
     NV2080_NOCAT_JOURNAL_ENTRY      nocatJournalEntry;  // the NOCAT report data -- IDs, diag data etc.
 } RM_NOCAT_JOURNAL_ENTRY;
+
+typedef struct
+{
+    NvU64       timestamp           NV_ALIGN_BYTES(8);
+    NvU8        recType;
+    NvU32       bugcheck;
+    const char *pSource;
+    NvU32       subsystem;
+    NvU64       errorCode           NV_ALIGN_BYTES(8);
+    NvU32       diagBufferLen;
+    const NvU8 *pDiagBuffer;
+    const char *pFaultingEngine;
+    NvU32       tdrReason;
+} NOCAT_JOURNAL_PARAMS;
 
 #define ASSERT_CALL_STACK_SIZE 10
 #define NOCAT_CACHE_FRESHNESS_PERIOD_MS 10ULL
@@ -156,7 +171,7 @@ typedef struct _nocatQueueDescriptor
     NvU32   nextRecordId;
     NvU32   nextReportedId;
     NvU32   nocatLastRecordType;
-    NvBool  journalLocked;
+    NvU64   lockTimestamp;
     NvU32   lastRecordId[NV2080_NOCAT_JOURNAL_REC_TYPE_COUNT];
     RM_NOCAT_ASSERT_DIAG_BUFFER   lastAssertData;
     NvU8    tag[NV2080_NOCAT_JOURNAL_MAX_STR_LEN];
@@ -167,11 +182,16 @@ typedef struct _nocatQueueDescriptor
     NvU32   nocatEventCounters[NV2080_NOCAT_JOURNAL_REPORT_ACTIVITY_COUNTER_COUNT];
 } nocatQueueDescriptor;
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_JOURNAL_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJRCDB {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -487,18 +507,6 @@ void rcdbCleanupNocatGpuCache_IMPL(struct OBJGPU *pGpu);
 #undef PRIVATE_FIELD
 
 
-typedef struct
-{
-    NvU8        recType;
-    NvU32       bugcheck;
-    const char *pSource;
-    NvU32       subsystem;
-    NvU64       errorCode NV_ALIGN_BYTES(8);
-    NvU32       diagBufferLen;
-    NvU8       *pDiagBuffer;
-    const char *pFaultingEngine;
-    NvU32       tdrReason;
-} NOCAT_JOURNAL_PARAMS;
 
 NV_STATUS rcdbAddRmDclMsg(void* msg, NvU16 size, const PRB_FIELD_DESC *fieldDesc);
 NV_STATUS rcdbAddRmEngDump(struct OBJGPU *pGpu, NvU32 component);
@@ -508,9 +516,11 @@ void rcdbAddCrashedFalcon(struct Falcon *pFlcn);
 
 NV_STATUS rcdbAddAssertJournalRec(void* pGpu, void** ppRec, NvU8 jGroup,
     NvU8 type, NvU16 size, NvU32 level, NvU64 key);
+
 NV_STATUS rcdbAddAssertJournalRecWithLine(void *pVoidGpu, NvU32 lineNum,
     void** ppRec, NvU8 jGroup, NvU8 type, NvU16 size, NvU32 level, NvU64 key);
 
+/*! insert a record into the NOCAT Journal */
 NvU32 rcdbNocatInsertNocatError(struct OBJGPU *pGpu,
     NOCAT_JOURNAL_PARAMS *nocatJournalEntry);
 
@@ -532,12 +542,6 @@ NvU32 rcdbNocatInsertTDRError(struct OBJGPU *pGpu,
     NvU8 *pDiagBuffer, NvU32 diagBufferLen,
     NvU32 tdrReason, const char *pFaultingApp);
 
-NV_STATUS rcdbNocatInitRCErrorEvent(NOCAT_JOURNAL_PARAMS *nocatJournalEntry);
-NvU32 rcdbNocatInsertRCError(struct OBJGPU* pGpu,
-    NvU32 subsystem, NvU64 errorCode,
-    NvU32 rcDiagRecStartIdx, NvU32 rcDiagRecEndIdx,
-    void* pAppId);
-
 NV_STATUS rcdbReportNextNocatJournalEntry(NV2080_NOCAT_JOURNAL_RECORD* pReport);
 
 NV_STATUS rcdbSetNocatTdrReason(NV2080CtrlNocatJournalDataTdrReason *pReasonData);
@@ -551,4 +555,5 @@ NV_STATUS rcdbNocatJournalReportTestFill(void);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_JOURNAL_NVOC_H_

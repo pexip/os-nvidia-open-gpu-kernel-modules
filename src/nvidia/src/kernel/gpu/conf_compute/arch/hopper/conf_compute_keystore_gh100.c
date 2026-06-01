@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,6 +28,8 @@
 #include "libraries/nvport/nvport.h"
 #include "kernel/gpu/spdm/libspdm_includes.h"
 #include "hal/library/cryptlib.h"
+
+//#include "hopper/gh100/dev_se_seb.h"
 
 //
 // The keystore holds keys, IV masks, and IVs for the LCE, SEC2, and GSP channels. It owns the channel
@@ -65,13 +67,8 @@ typedef cryptoBundle_t keySlot_t[CC_KEYSPACE_TOTAL_SIZE];
 static NV_STATUS checkSlot(ConfidentialCompute *pConfCompute, NvU32 slotNumber);
 static void incrementChannelCounter(ConfidentialCompute *pConfCompute, NvU32 slotNumber);
 static NvU64 getChannelCounter(ConfidentialCompute *pConfCompute, NvU32 slotNumber);
-static NV_STATUS getKeyIdLce(KernelChannel *pKernelChannel, ROTATE_IV_TYPE rotateOperation,
-                             NvU16 *keyId);
 static NV_STATUS getKeyIdSec2(KernelChannel *pKernelChannel, ROTATE_IV_TYPE rotateOperation,
                               NvU16 *keyId);
-static NV_STATUS getKeyspaceLce(KernelChannel *pKernelChannel, NvU16 *keyspace);
-static NvU32 getKeySlotFromGlobalKeyId (NvU32 globalKeyId);
-static NvU32 getKeyspaceSize(NvU16 keyspace);
 
 NV_STATUS
 confComputeKeyStoreInit_GH100(ConfidentialCompute *pConfCompute)
@@ -99,8 +96,10 @@ confComputeKeyStoreInit_GH100(ConfidentialCompute *pConfCompute)
     }
 
     // SEC2 key slots are a mix of encryption / decryption with channel counter and HMAC.
-    ct_assert(CC_KEYSPACE_SEC2_SIZE == 4);
+    ct_assert(CC_KEYSPACE_SEC2_SIZE == 6);
 
+    (*pKeyStore)[index++].type = CRYPT_COUNTER;
+    (*pKeyStore)[index++].type = HMAC_COUNTER;
     (*pKeyStore)[index++].type = CRYPT_COUNTER;
     (*pKeyStore)[index++].type = HMAC_COUNTER;
     (*pKeyStore)[index++].type = CRYPT_COUNTER;
@@ -140,54 +139,41 @@ void
 NV_STATUS
 confComputeKeyStoreDeriveKey_GH100(ConfidentialCompute *pConfCompute, NvU32 globalKeyId)
 {
-    const NvU32    slotIndex = getKeySlotFromGlobalKeyId(globalKeyId);
+    NvU32 slotIndex;
     cryptoBundle_t (*pKeyStore)[];
+    uint8_t *pKey = NULL;
+    size_t keySize = 0;
 
     pKeyStore = pConfCompute->m_keySlot;
-
+    NV_ASSERT_OK_OR_RETURN(confComputeGetKeySlotFromGlobalKeyId(pConfCompute, globalKeyId, &slotIndex));
     NV_PRINTF(LEVEL_INFO, "Deriving key for global key ID %x.\n", globalKeyId);
 
-    // SEC2 HMAC keys are not generated from the EMK but from the encryption/decryption key.
     if ((globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_USER)) ||
-        (globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_KERN)))
+        (globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_KERN)) ||
+        (globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_SCRUBBER)))
     {
-        NvU32 sourceSlotIndex = 0;
-
-        switch (CC_GKEYID_GET_LKEYID(globalKeyId))
-        {
-            case CC_LKEYID_CPU_SEC2_HMAC_USER:
-                sourceSlotIndex = getKeySlotFromGlobalKeyId(
-                    CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_DATA_USER));
-                break;
-            case CC_LKEYID_CPU_SEC2_HMAC_KERN:
-                sourceSlotIndex = getKeySlotFromGlobalKeyId(
-                    CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_DATA_KERN));
-                break;
-        }
-
-        if (!libspdm_sha256_hash_all((const void *)(*pKeyStore)[sourceSlotIndex].cryptBundle.key,
-                                     sizeof((*pKeyStore)[sourceSlotIndex].cryptBundle.key),
-                                     (uint8_t *)(*pKeyStore)[slotIndex].hmacBundle.key))
-        {
-            return NV_ERR_FATAL_ERROR;
-        }
+        pKey = (uint8_t *)(*pKeyStore)[slotIndex].hmacBundle.key;
+        keySize = sizeof((*pKeyStore)[slotIndex].hmacBundle.key);
     }
     else
     {
-        if (!libspdm_hkdf_sha256_expand(pConfCompute->m_exportMasterKey,
-                                        sizeof(pConfCompute->m_exportMasterKey),
-                                        (const uint8_t *)(CC_GKEYID_GET_STR(globalKeyId)),
-                                        (size_t)portStringLength(CC_GKEYID_GET_STR(globalKeyId)),
-                                        (uint8_t *)(*pKeyStore)[slotIndex].cryptBundle.key,
-                                        sizeof((*pKeyStore)[slotIndex].cryptBundle.key)))
-        {
-            return NV_ERR_FATAL_ERROR;
-        }
+        pKey = (uint8_t *)(*pKeyStore)[slotIndex].cryptBundle.key;
+        keySize = sizeof((*pKeyStore)[slotIndex].cryptBundle.key);
+    }
+
+    if (!libspdm_hkdf_sha256_expand(pConfCompute->m_exportMasterKey,
+                                sizeof(pConfCompute->m_exportMasterKey),
+                                (const uint8_t *)(CC_GKEYID_GET_STR(globalKeyId)),
+                                (size_t)portStringLength(CC_GKEYID_GET_STR(globalKeyId)),
+                                pKey,
+                                keySize))
+    {
+        return NV_ERR_FATAL_ERROR;
     }
 
     // LCEs will return an error / interrupt if the key is all 0s.
     if ((CC_GKEYID_GET_KEYSPACE(globalKeyId) >= CC_KEYSPACE_LCE0) &&
-        (CC_GKEYID_GET_KEYSPACE(globalKeyId) <= CC_KEYSPACE_LCE7))
+        (CC_GKEYID_GET_KEYSPACE(globalKeyId) <= confComputeGetMaxCeKeySpaceIdx(pConfCompute)))
     {
         for (NvU32 index = 0; index < CC_AES_256_GCM_KEY_SIZE_DWORD; index++)
         {
@@ -211,11 +197,11 @@ confComputeKeyStoreDepositIvMask_GH100
     void                *ivMask
 )
 {
-    NvU32 slotNumber = getKeySlotFromGlobalKeyId(globalKeyId);
+    NvU32 slotNumber;
     cryptoBundle_t (*pKeyStore)[];
 
     pKeyStore = pConfCompute->m_keySlot;
-
+    NV_ASSERT_OR_RETURN_VOID(confComputeGetKeySlotFromGlobalKeyId(pConfCompute, globalKeyId, &slotNumber) == NV_OK);
     NV_PRINTF(LEVEL_INFO, "Depositing IV mask for global key ID %x.\n", globalKeyId);
 
     portMemCopy((*pKeyStore)[slotNumber].cryptBundle.ivMask,
@@ -237,7 +223,7 @@ confComputeKeyStoreRetrieveViaChannel_GH100
     ConfidentialCompute *pConfCompute,
     KernelChannel       *pKernelChannel,
     ROTATE_IV_TYPE       rotateOperation,
-    NvBool               includeSecrets,
+    NvBool               bIncludeIvOrNonce,
     CC_KMB              *keyMaterialBundle
 )
 {
@@ -246,19 +232,21 @@ confComputeKeyStoreRetrieveViaChannel_GH100
 
     if (RM_ENGINE_TYPE_IS_COPY(kchannelGetEngineType(pKernelChannel)))
     {
-        NvU16 keyspace;
+        NvU16 keySpace;
 
-        if (getKeyspaceLce(pKernelChannel, &keyspace) != NV_OK)
+        if (confComputeGetKeySpaceFromKChannel_HAL(pConfCompute, pKernelChannel,
+                                                   &keySpace) != NV_OK)
         {
             return NV_ERR_INVALID_PARAMETER;
         }
 
-        if (getKeyIdLce(pKernelChannel, rotateOperation, &keyId) != NV_OK)
+        if (confComputeGetLceKeyIdFromKChannel_HAL(pConfCompute, pKernelChannel,
+                                                   rotateOperation, &keyId) != NV_OK)
         {
             return NV_ERR_INVALID_PARAMETER;
         }
 
-        globalKeyId = CC_GKEYID_GEN(keyspace, keyId);
+        globalKeyId = CC_GKEYID_GEN(keySpace, keyId);
     }
     else if (kchannelGetEngineType(pKernelChannel) == RM_ENGINE_TYPE_SEC2)
     {
@@ -275,7 +263,7 @@ confComputeKeyStoreRetrieveViaChannel_GH100
     }
 
     return confComputeKeyStoreRetrieveViaKeyId_GH100(pConfCompute, globalKeyId, rotateOperation,
-                                                     includeSecrets, keyMaterialBundle);
+                                                     bIncludeIvOrNonce, keyMaterialBundle);
 }
 
 NV_STATUS
@@ -284,15 +272,16 @@ confComputeKeyStoreRetrieveViaKeyId_GH100
     ConfidentialCompute *pConfCompute,
     NvU32                globalKeyId,
     ROTATE_IV_TYPE       rotateOperation,
-    NvBool               includeSecrets,
+    NvBool               bIncludeIvOrNonce,
     CC_KMB              *keyMaterialBundle
 )
 {
-    NvU32          slotNumber = getKeySlotFromGlobalKeyId(globalKeyId);
+    NvU32          slotNumber;
     cryptoBundle_t (*pKeyStore)[];
 
     pKeyStore = pConfCompute->m_keySlot;
 
+    NV_ASSERT_OK_OR_RETURN(confComputeGetKeySlotFromGlobalKeyId(pConfCompute, globalKeyId, &slotNumber));
     NV_PRINTF(LEVEL_INFO, "Retrieving KMB from slot number = %d and type is %d.\n",
               slotNumber, (*pKeyStore)[slotNumber].type);
 
@@ -301,7 +290,8 @@ confComputeKeyStoreRetrieveViaKeyId_GH100
         slotNumber--;
     }
 
-    if ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID))
+    if (bIncludeIvOrNonce &&
+        ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID)))
     {
         if (checkSlot(pConfCompute, slotNumber) != NV_OK)
         {
@@ -311,8 +301,9 @@ confComputeKeyStoreRetrieveViaKeyId_GH100
         }
     }
 
-    if ((rotateOperation == ROTATE_IV_DECRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID) ||
-        (rotateOperation == ROTATE_IV_HMAC))
+    if (bIncludeIvOrNonce &&
+        ((rotateOperation == ROTATE_IV_DECRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID) ||
+         (rotateOperation == ROTATE_IV_HMAC)))
     {
         if (checkSlot(pConfCompute, slotNumber + 1) != NV_OK)
         {
@@ -324,48 +315,68 @@ confComputeKeyStoreRetrieveViaKeyId_GH100
 
     if ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID))
     {
-        incrementChannelCounter(pConfCompute, slotNumber);
+        if (bIncludeIvOrNonce)
+        {
+            incrementChannelCounter(pConfCompute, slotNumber);
+        }
 
-        if (includeSecrets)
+        if (bIncludeIvOrNonce)
         {
             keyMaterialBundle->encryptBundle = (*pKeyStore)[slotNumber].cryptBundle;
         }
         else
         {
-            portMemCopy(keyMaterialBundle->encryptBundle.iv, sizeof(keyMaterialBundle->encryptBundle.iv),
-                        (*pKeyStore)[slotNumber].cryptBundle.iv, CC_AES_256_GCM_IV_SIZE_BYTES);
+            portMemCopy(keyMaterialBundle->encryptBundle.key,
+                        sizeof(keyMaterialBundle->encryptBundle.key),
+                        (*pKeyStore)[slotNumber].cryptBundle.key,
+                        sizeof((*pKeyStore)[slotNumber].cryptBundle.key));
+            portMemCopy(keyMaterialBundle->encryptBundle.ivMask,
+                        sizeof(keyMaterialBundle->encryptBundle.ivMask),
+                        (*pKeyStore)[slotNumber].cryptBundle.ivMask,
+                        sizeof((*pKeyStore)[slotNumber].cryptBundle.ivMask));
         }
     }
 
     if ((rotateOperation == ROTATE_IV_DECRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID) ||
         (rotateOperation == ROTATE_IV_HMAC))
     {
-        incrementChannelCounter(pConfCompute, slotNumber + 1);
+        if (bIncludeIvOrNonce)
+        {
+            incrementChannelCounter(pConfCompute, slotNumber + 1);
+        }
 
         switch ((*pKeyStore)[slotNumber + 1].type)
         {
             case NO_CHAN_COUNTER:
             case CRYPT_COUNTER:
-                if (includeSecrets)
+                if (bIncludeIvOrNonce)
                 {
                     keyMaterialBundle->decryptBundle = (*pKeyStore)[slotNumber + 1].cryptBundle;
                 }
                 else
                 {
-                    portMemCopy(keyMaterialBundle->decryptBundle.iv, sizeof(keyMaterialBundle->decryptBundle.iv),
-                                (*pKeyStore)[slotNumber].cryptBundle.iv, CC_AES_256_GCM_IV_SIZE_BYTES);
+                    portMemCopy(keyMaterialBundle->decryptBundle.key,
+                                sizeof(keyMaterialBundle->decryptBundle.key),
+                                (*pKeyStore)[slotNumber + 1].cryptBundle.key,
+                                sizeof((*pKeyStore)[slotNumber + 1].cryptBundle.key));
+                    portMemCopy(keyMaterialBundle->decryptBundle.ivMask,
+                                sizeof(keyMaterialBundle->decryptBundle.ivMask),
+                                (*pKeyStore)[slotNumber + 1].cryptBundle.ivMask,
+                                sizeof((*pKeyStore)[slotNumber + 1].cryptBundle.ivMask));
                 }
                 keyMaterialBundle->bIsWorkLaunch = NV_FALSE;
                 break;
             case HMAC_COUNTER:
-                if (includeSecrets)
+                if (bIncludeIvOrNonce)
                 {
                     keyMaterialBundle->hmacBundle = (*pKeyStore)[slotNumber + 1].hmacBundle;
                 }
                 else
                 {
-                    portMemCopy(keyMaterialBundle->hmacBundle.nonce, sizeof(keyMaterialBundle->hmacBundle.nonce),
-                                (*pKeyStore)[slotNumber].hmacBundle.nonce, CC_HMAC_NONCE_SIZE_BYTES);
+                    portMemCopy(keyMaterialBundle->hmacBundle.key,
+                                sizeof(keyMaterialBundle->hmacBundle.key),
+                                (*pKeyStore)[slotNumber + 1].hmacBundle.key,
+                                sizeof((*pKeyStore)[slotNumber + 1].hmacBundle.key));
                 }
                 keyMaterialBundle->bIsWorkLaunch = NV_TRUE;
                 break;
@@ -378,44 +389,170 @@ confComputeKeyStoreRetrieveViaKeyId_GH100
 NV_STATUS
 confComputeKeyStoreUpdateKey_GH100(ConfidentialCompute *pConfCompute, NvU32 globalKeyId)
 {
-    return NV_ERR_NOT_SUPPORTED;
+    NvU32           slotIndex;
+    cryptoBundle_t (*pKeyStore)[];
+    NvU8            tempMem[CC_AES_256_GCM_KEY_SIZE_BYTES];
+    NvU8           *pKey;
+    NvU32           keySize;
+
+    NV_ASSERT_OK_OR_RETURN(confComputeGetKeySlotFromGlobalKeyId(pConfCompute, globalKeyId, &slotIndex));
+    NV_PRINTF(LEVEL_INFO, "Updating key with global key ID %x.\n", globalKeyId);
+
+    pKeyStore = pConfCompute->m_keySlot;
+
+    if ((globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_USER)) ||
+        (globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_KERN)) ||
+        (globalKeyId == CC_GKEYID_GEN(CC_KEYSPACE_SEC2, CC_LKEYID_CPU_SEC2_HMAC_SCRUBBER)))
+    {
+        pKey = (uint8_t *)(*pKeyStore)[slotIndex].hmacBundle.key;
+        keySize = sizeof((*pKeyStore)[slotIndex].hmacBundle.key);
+    }
+    else
+    {
+        pKey = (uint8_t *)(*pKeyStore)[slotIndex].cryptBundle.key;
+        keySize = sizeof((*pKeyStore)[slotIndex].cryptBundle.key);
+    }
+
+    if (!libspdm_sha256_hash_all((const void *)pKey, keySize, tempMem))
+    {
+        return NV_ERR_FATAL_ERROR;
+    }
+
+    if (!libspdm_hkdf_sha256_expand(tempMem,
+                                    sizeof(tempMem),
+                                    (const uint8_t *)(CC_GKEYID_GET_STR(globalKeyId)),
+                                    (size_t)portStringLength(CC_GKEYID_GET_STR(globalKeyId)),
+                                    pKey,
+                                    keySize))
+    {
+        return NV_ERR_FATAL_ERROR;
+    }
+
+    portMemSet(tempMem, 0, (NvLength) sizeof(tempMem));
+
+    // LCEs will return an error / interrupt if the key is all 0s.
+    if ((CC_GKEYID_GET_KEYSPACE(globalKeyId) >= CC_KEYSPACE_LCE0) &&
+        (CC_GKEYID_GET_KEYSPACE(globalKeyId) <= confComputeGetMaxCeKeySpaceIdx(pConfCompute)))
+    {
+        for (NvU32 index = 0; index < CC_AES_256_GCM_KEY_SIZE_DWORD; index++)
+        {
+            if ((*pKeyStore)[slotIndex].cryptBundle.key[index] != 0)
+            {
+                return NV_OK;
+            }
+        }
+
+        return NV_ERR_FATAL_ERROR;
+    }
+
+    return NV_OK;
 }
 
-//
-// Return the key ID for a given LCE channel and rotation operation.
-// If rotateOperation is ROTATE_IV_ALL_VALID then it will return the least
-// key ID of the key pair; ie the one that corresponds to an even numbered slot.
-//
-static NV_STATUS
-getKeyIdLce
+/*!
+ * Get key pair from channel
+ *
+ * @param[in]   pGpu            : OBJGPU pointer
+ * @param[in]   pConfCompute    : conf comp pointer
+ * @param[in]   pKernelChannel  : KernelChannel pointer
+ * @param[out]  pH2DKey         : pointer to h2d key
+ * @param[out]  pD2HKey         : pointer to d2h key
+ */
+NV_STATUS
+confComputeGetKeyPairByChannel_GH100
 (
-    KernelChannel  *pKernelChannel,
-    ROTATE_IV_TYPE  rotateOperation,
-    NvU16          *keyId
+    OBJGPU *pGpu,
+    ConfidentialCompute *pConfCompute,
+    KernelChannel *pKernelChannel,
+    NvU32 *pH2DKey,
+    NvU32 *pD2HKey
+)
+{
+    NvU16 keySpace = 0;
+    NvU16 lh2dKeyId = 0;
+    NvU16 ld2hKeyId = 0;
+    RM_ENGINE_TYPE engineType = kchannelGetEngineType(pKernelChannel);
+    if (engineType == RM_ENGINE_TYPE_SEC2)
+    {
+        keySpace = CC_KEYSPACE_SEC2;
+        NV_ASSERT_OK_OR_RETURN(getKeyIdSec2(pKernelChannel, ROTATE_IV_ENCRYPT, &lh2dKeyId));
+        NV_ASSERT_OK_OR_RETURN(getKeyIdSec2(pKernelChannel, ROTATE_IV_HMAC, &ld2hKeyId));
+    }
+    else
+    {
+        NV_ASSERT_OK_OR_RETURN(confComputeGetKeySpaceFromKChannel_HAL(pConfCompute,
+                                    pKernelChannel, &keySpace) != NV_OK);
+        NV_ASSERT_OK_OR_RETURN(confComputeGetLceKeyIdFromKChannel_HAL(pConfCompute, pKernelChannel,
+                                    ROTATE_IV_ENCRYPT, &lh2dKeyId));
+        NV_ASSERT_OK_OR_RETURN(confComputeGetLceKeyIdFromKChannel_HAL(pConfCompute, pKernelChannel,
+                                    ROTATE_IV_DECRYPT, &ld2hKeyId));
+    }
+
+    if (pH2DKey != NULL)
+    {
+        *pH2DKey = CC_GKEYID_GEN(keySpace, lh2dKeyId);
+    }
+    if (pD2HKey != NULL)
+    {
+        *pD2HKey = CC_GKEYID_GEN(keySpace, ld2hKeyId);
+    }
+    return NV_OK;
+}
+
+NvBool
+confComputeKeyStoreIsValidGlobalKeyId_GH100
+(
+    ConfidentialCompute *pConfCompute,
+    NvU32                globalKeyId
+)
+{
+    const char *globalKeyIdString = CC_GKEYID_GET_STR(globalKeyId);
+
+    return (globalKeyIdString != NULL);
+}
+
+/*!
+ * Return the key ID for a given LCE channel and rotation operation.
+ * If rotateOperation is ROTATE_IV_ALL_VALID then it will return the least
+ * key ID of the key pair; ie the one that corresponds to an even numbered slot.
+ *
+ * @param[in]   pConfCompute    : conf comp pointer
+ * @param[in]   pKernelChannel  : KernelChannel pointer
+ * @param[in]   rotateOperation : The type of rotation operation
+ * @param[out]  pKeyId          : pointer to keyId
+ */
+NV_STATUS
+confComputeGetLceKeyIdFromKChannel_GH100
+(
+    ConfidentialCompute *pConfCompute,
+    KernelChannel       *pKernelChannel,
+    ROTATE_IV_TYPE       rotateOperation,
+    NvU16               *pKeyId
 )
 {
     if (kchannelCheckIsUserMode(pKernelChannel))
     {
-        if ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID))
+        if ((rotateOperation == ROTATE_IV_ENCRYPT) ||
+            (rotateOperation == ROTATE_IV_ALL_VALID))
         {
-            *keyId = CC_LKEYID_LCE_H2D_USER;
+            *pKeyId = CC_LKEYID_LCE_H2D_USER;
         }
         else
         {
-            *keyId = CC_LKEYID_LCE_D2H_USER;
+            *pKeyId = CC_LKEYID_LCE_D2H_USER;
         }
 
         return NV_OK;
     }
     else if (kchannelCheckIsKernel(pKernelChannel))
     {
-        if ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID))
+        if ((rotateOperation == ROTATE_IV_ENCRYPT) ||
+            (rotateOperation == ROTATE_IV_ALL_VALID))
         {
-            *keyId = CC_LKEYID_LCE_H2D_KERN;
+            *pKeyId = CC_LKEYID_LCE_H2D_KERN;
         }
         else
         {
-            *keyId = CC_LKEYID_LCE_D2H_KERN;
+            *pKeyId = CC_LKEYID_LCE_D2H_KERN;
         }
 
         return NV_OK;
@@ -454,24 +591,38 @@ getKeyIdSec2
     {
         if ((rotateOperation == ROTATE_IV_ENCRYPT) || (rotateOperation == ROTATE_IV_ALL_VALID))
         {
-            *keyId = CC_LKEYID_CPU_SEC2_DATA_KERN;
+            if (pKernelChannel->bUseScrubKey)
+                *keyId = CC_LKEYID_CPU_SEC2_DATA_SCRUBBER;
+            else
+                *keyId = CC_LKEYID_CPU_SEC2_DATA_KERN;
         }
         else
         {
-            *keyId = CC_LKEYID_CPU_SEC2_HMAC_KERN;
+            if (pKernelChannel->bUseScrubKey)
+                *keyId = CC_LKEYID_CPU_SEC2_HMAC_SCRUBBER;
+            else
+                *keyId = CC_LKEYID_CPU_SEC2_HMAC_KERN;
         }
-
         return NV_OK;
     }
 
     return NV_ERR_GENERIC;
 }
 
-static NV_STATUS
-getKeyspaceLce
+/*!
+ * Returns a key space corresponding to a channel
+ *
+ * @param[in]   pConfCompute               : ConfidentialCompute pointer
+ * @param[in]   pKernelChannel             : KernelChannel pointer
+ * @param[out]  keySpace                   : value of keyspace from cc_keystore.h
+ *
+ */
+NV_STATUS
+confComputeGetKeySpaceFromKChannel_GH100
 (
-    KernelChannel *pKernelChannel,
-    NvU16         *keyspace
+    ConfidentialCompute *pConfCompute,
+    KernelChannel       *pKernelChannel,
+    NvU16               *keyspace
 )
 {
     // The actual copy engine (2 through 9) is normalized to start at 0.
@@ -506,30 +657,6 @@ getKeyspaceLce
     }
 
     return NV_OK;
-}
-
-static NvU32
-getKeySlotFromGlobalKeyId
-(
-    NvU32 globalKeyId
-)
-{
-    NvU16 keyspace = CC_GKEYID_GET_KEYSPACE(globalKeyId);
-    NvU32 keySlotIndex = 0;
-
-    for (NvU16 index = 0; index < CC_KEYSPACE_SIZE; index++)
-    {
-        if (index == keyspace)
-        {
-            break;
-        }
-        else
-        {
-            keySlotIndex += getKeyspaceSize(index);
-        }
-    }
-
-    return keySlotIndex + CC_GKEYID_GET_LKEYID(globalKeyId);
 }
 
 static NV_STATUS
@@ -573,32 +700,6 @@ incrementChannelCounter
             (*pKeyStore)[slotNumber].hmacBundle.nonce[7] = NvU64_HI32(channelCounter);
             (*pKeyStore)[slotNumber].hmacBundle.nonce[6] = NvU64_LO32(channelCounter);
             break;
-    }
-}
-
-static NvU32
-getKeyspaceSize
-(
-    NvU16 keyspace
-)
-{
-    switch (keyspace)
-    {
-        case CC_KEYSPACE_GSP:
-            return CC_KEYSPACE_GSP_SIZE;
-        case CC_KEYSPACE_SEC2:
-            return CC_KEYSPACE_SEC2_SIZE;
-        case CC_KEYSPACE_LCE0:
-        case CC_KEYSPACE_LCE1:
-        case CC_KEYSPACE_LCE2:
-        case CC_KEYSPACE_LCE3:
-        case CC_KEYSPACE_LCE4:
-        case CC_KEYSPACE_LCE5:
-        case CC_KEYSPACE_LCE6:
-        case CC_KEYSPACE_LCE7:
-            return CC_KEYSPACE_LCE_SIZE;
-        default:
-            NV_ASSERT_OR_RETURN(NV_FALSE, 0);
     }
 }
 

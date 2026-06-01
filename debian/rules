@@ -153,7 +153,7 @@ pack-module-source:
 		--mtime='@$(SOURCE_DATE_EPOCH)' \
 		--clamp-mtime \
 		--remove-files \
-		modules | xz -T1 -9 > $(module_source_txz)
+		modules | xz -T+1 -9 > $(module_source_txz)
 	tar tfv $(module_source_txz)
 
 ############################################################################

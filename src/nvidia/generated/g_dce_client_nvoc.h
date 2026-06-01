@@ -53,11 +53,16 @@ extern "C" {
  * Defines the structure used to contain all generic information related to
  * the DceClient.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_DCE_CLIENT_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJDCECLIENTRM {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct OBJENGSTATE __nvoc_base_OBJENGSTATE;
@@ -186,6 +191,9 @@ static inline NvBool dceclientIsPresent_DISPATCH(POBJGPU pGpu, struct OBJDCECLIE
     return pEngstate->__dceclientIsPresent__(pGpu, pEngstate);
 }
 
+void dceclientDestruct_IMPL(struct OBJDCECLIENTRM *arg0);
+
+#define __nvoc_dceclientDestruct(arg0) dceclientDestruct_IMPL(arg0)
 NV_STATUS dceclientInitRpcInfra_IMPL(struct OBJGPU *arg0, struct OBJDCECLIENTRM *arg1);
 
 #ifdef __nvoc_dce_client_h_disabled
@@ -250,4 +258,5 @@ NV_STATUS rpcDceRmInit_dce(RM_API *pRmApi, NvBool bInit);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_DCE_CLIENT_NVOC_H_

@@ -69,6 +69,20 @@ kmemsysDoCacheOp_GH100
         return rmStatus;
     }
 
+    if (IS_VIRTUAL(pGpu))
+    {
+        switch (reg)
+        {
+            case NV_VIRTUAL_FUNCTION_PRIV_FUNC_L2_SYSMEM_INVALIDATE:
+            case NV_VIRTUAL_FUNCTION_PRIV_FUNC_L2_PEERMEM_INVALIDATE:
+                break;
+            case NV_XAL_EP_UFLUSH_L2_FLUSH_DIRTY:
+                return NV_OK;
+            default:
+                return NV_ERR_NOT_SUPPORTED;
+        }
+    }
+
     switch (reg)
     {
         case NV_XAL_EP_UFLUSH_L2_FLUSH_DIRTY:
@@ -194,9 +208,7 @@ kmemsysDoCacheOp_GH100
 #ifdef DEBUG
     if (cnt > 1)
     {
-        NvU32 intr0 = 0;
-        intr0 = GPU_REG_RD32(pGpu, NV_XAL_EP_INTR_0);
-        NV_ASSERT(DRF_VAL(_XAL_EP, _INTR_0, _FB_ACK_TIMEOUT, intr0) != NV_XAL_EP_INTR_0_FB_ACK_TIMEOUT_PENDING);
+        NV_ASSERT(kmemsysAssertFbAckTimeoutPending_HAL(pGpu, pKernelMemorySystem) == NV_FALSE);
     }
 #endif // DEBUG
 
@@ -280,6 +292,10 @@ kmemsysCacheOp_GH100
             break;
 
         case FB_CACHE_VIDEO_MEMORY:
+            // Fbmem cache ops are not supported from VF -- force NV_OK for MODS
+            if (IS_VIRTUAL(pGpu))
+                return NV_OK;
+
             if (cacheOp == FB_CACHE_EVICT)
             {
                 NvU32 flags = NV2080_CTRL_INTERNAL_MEMSYS_L2_INVALIDATE_EVICT_FLAGS_ALL |
@@ -500,7 +516,7 @@ kmemsysNumaRemoveMemory_GH100
     pKernelMemorySystem->memPartitionNumaInfo[swizzId].size = 0;
     pKernelMemorySystem->memPartitionNumaInfo[swizzId].numaNodeId = NV_U32_MAX;
 
-    NV_PRINTF(LEVEL_INFO, "NVRM: memory partition: %u removed successfully!\n",
+    NV_PRINTF(LEVEL_INFO, "memory partition: %u removed successfully!\n",
               swizzId);
     return;
 }
@@ -574,6 +590,26 @@ kmemsysSwizzIdToVmmuSegmentsRange_GH100
 
     return NV_OK;
 }
+
+/*
+ * @brief   Function to check if an FB ACK timeout occured. Used only for Debug.
+ */
+NvBool
+kmemsysAssertFbAckTimeoutPending_GH100
+(
+    OBJGPU *pGpu,
+    KernelMemorySystem *pKernelMemorySystem
+)
+{
+#ifdef DEBUG
+    NvU32 intr0 = 0;
+    intr0 = GPU_REG_RD32(pGpu, NV_XAL_EP_INTR_0);
+    return DRF_VAL(_XAL_EP, _INTR_0, _FB_ACK_TIMEOUT, intr0) == NV_XAL_EP_INTR_0_FB_ACK_TIMEOUT_PENDING;
+#else
+    return NV_FALSE;
+#endif
+}
+
 NvU32
 kmemsysGetEccDedCountSize_GH100
 (

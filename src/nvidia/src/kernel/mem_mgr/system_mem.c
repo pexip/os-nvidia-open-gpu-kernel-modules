@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -32,6 +32,7 @@
 #include "deprecated/rmapi_deprecated.h"
 #include "gpu/mem_mgr/mem_utils.h"
 #include "core/system.h"
+#include "ctrl/ctrl0000/ctrl0000gpu.h"
 
 #include "gpu/mem_sys/kern_mem_sys.h"
 
@@ -220,7 +221,52 @@ sysmemConstruct_IMPL
 
     memdescSetGpuCacheAttrib(pMemDesc, gpuCacheAttrib);
 
-    rmStatus = memdescAlloc(pMemDesc);
+    if (FLD_TEST_DRF(OS32, _ATTR2, _FIXED_NUMA_NODE_ID, _YES, pAllocData->attr2))
+    {
+
+        if (memdescGetFlag(pMemDesc, MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY))
+        {
+            NV_PRINTF(LEVEL_ERROR, "Cannot specify NUMA node in unprotected memory.\n");
+            memdescDestroy(pMemDesc);
+            rmStatus = NV_ERR_INVALID_ARGUMENT;
+            goto failed;
+        }
+
+        if ((pGpu->cpuNumaNodeId != NV0000_CTRL_NO_NUMA_NODE) && 
+            (pAllocData->numaNode != pGpu->cpuNumaNodeId))
+        {
+            NV_PRINTF(LEVEL_ERROR, "NUMA node mismatch. Requested node: %u CPU node: %u\n",
+                      pAllocData->numaNode, pGpu->cpuNumaNodeId);
+            memdescDestroy(pMemDesc);
+            rmStatus = NV_ERR_INVALID_ARGUMENT;
+            goto failed;
+        }
+
+        memdescSetNumaNode(pMemDesc, pAllocData->numaNode);
+        //
+        // In order to allow EGM memory allocation to specify
+        // the page granularity of the physical allocation
+        // we need to force set the page size here.
+        //
+        // The expectation is that the EGM NUMA allocator is able to support any requested pagesize
+        // and that subsequent memdesc pagesize set requests will NOP as the pagesize matches.
+        //
+        if (memdescIsEgm(pMemDesc))
+        {
+            RM_ATTR_PAGE_SIZE pageSizeAttr = dmaNvos32ToPageSizeAttr(pAllocData->attr, pAllocData->attr2);
+            rmStatus = memmgrSetMemDescPageSize_HAL(pGpu, GPU_GET_MEMORY_MANAGER(pGpu), pMemDesc,
+                                                    AT_GPU, pageSizeAttr);
+            if (rmStatus != NV_OK)
+            {
+                NV_PRINTF(LEVEL_ERROR, "Failed to set memdesc page size for EGM.\n");
+                memdescDestroy(pMemDesc);
+                goto failed;
+            }
+        }
+    }
+
+    memdescTagAlloc(rmStatus, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_132, 
+                    pMemDesc);
     if (rmStatus != NV_OK)
     {
         NV_PRINTF(LEVEL_ERROR,
@@ -282,6 +328,7 @@ sysmemConstruct_IMPL
     else if ((FLD_TEST_DRF(OS32, _ATTR, _PAGE_SIZE, _BIG, pAllocData->attr) ||
               FLD_TEST_DRF(OS32, _ATTR, _PAGE_SIZE, _HUGE, pAllocData->attr)) &&
               FLD_TEST_DRF(OS32, _ATTR, _PHYSICALITY, _NONCONTIGUOUS, pAllocData->attr) &&
+              !memdescIsEgm(pMemDesc) &&
              (stdmemGetSysmemPageSize_HAL(pGpu, pStdMemory) == RM_PAGE_SIZE))
     {
         NV_PRINTF(LEVEL_ERROR,

@@ -66,31 +66,31 @@ const struct NVOC_CLASS_DEF __nvoc_class_def_KernelNvlink =
     /*pExportInfo=*/        &__nvoc_export_info_KernelNvlink
 };
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateConstructEngine(OBJGPU *arg0, struct OBJENGSTATE *arg1, ENGDESCRIPTOR arg2) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateConstructEngine(struct OBJGPU *arg0, struct OBJENGSTATE *arg1, ENGDESCRIPTOR arg2) {
     return knvlinkConstructEngine(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset), arg2);
 }
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePreInitLocked(OBJGPU *arg0, struct OBJENGSTATE *arg1) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePreInitLocked(struct OBJGPU *arg0, struct OBJENGSTATE *arg1) {
     return knvlinkStatePreInitLocked(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset));
 }
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStateLoad(OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStateLoad(struct OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
     return knvlinkStateLoad(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset), arg2);
 }
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePostLoad(OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePostLoad(struct OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
     return knvlinkStatePostLoad(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset), arg2);
 }
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStateUnload(OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStateUnload(struct OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
     return knvlinkStateUnload(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset), arg2);
 }
 
-static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePostUnload(OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
+static NV_STATUS __nvoc_thunk_KernelNvlink_engstateStatePostUnload(struct OBJGPU *arg0, struct OBJENGSTATE *arg1, NvU32 arg2) {
     return knvlinkStatePostUnload(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset), arg2);
 }
 
-static NvBool __nvoc_thunk_KernelNvlink_engstateIsPresent(OBJGPU *arg0, struct OBJENGSTATE *arg1) {
+static NvBool __nvoc_thunk_KernelNvlink_engstateIsPresent(struct OBJGPU *arg0, struct OBJENGSTATE *arg1) {
     return knvlinkIsPresent(arg0, (struct KernelNvlink *)(((unsigned char *)arg1) - __nvoc_rtti_KernelNvlink_OBJENGSTATE.offset));
 }
 
@@ -257,6 +257,8 @@ void __nvoc_init_dataField_KernelNvlink(KernelNvlink *pThis, RmHalspecOwner *pRm
     }
 
     pThis->fabricBaseAddr = (+18446744073709551615ULL);
+
+    pThis->fabricEgmBaseAddr = (+18446744073709551615ULL);
 }
 
 NV_STATUS __nvoc_ctor_OBJENGSTATE(OBJENGSTATE* );
@@ -325,6 +327,28 @@ static void __nvoc_init_funcTable_KernelNvlink_1(KernelNvlink *pThis, RmHalspecO
         pThis->__knvlinkClearUniqueFabricBaseAddress__ = &knvlinkClearUniqueFabricBaseAddress_b3696a;
     }
 
+    // Hal function -- knvlinkSetUniqueFabricEgmBaseAddress
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__knvlinkSetUniqueFabricEgmBaseAddress__ = &knvlinkSetUniqueFabricEgmBaseAddress_GH100;
+    }
+    // default
+    else
+    {
+        pThis->__knvlinkSetUniqueFabricEgmBaseAddress__ = &knvlinkSetUniqueFabricEgmBaseAddress_46f6a7;
+    }
+
+    // Hal function -- knvlinkClearUniqueFabricEgmBaseAddress
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__knvlinkClearUniqueFabricEgmBaseAddress__ = &knvlinkClearUniqueFabricEgmBaseAddress_GH100;
+    }
+    // default
+    else
+    {
+        pThis->__knvlinkClearUniqueFabricEgmBaseAddress__ = &knvlinkClearUniqueFabricEgmBaseAddress_b3696a;
+    }
+
     // Hal function -- knvlinkHandleFaultUpInterrupt
     if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
     {
@@ -349,6 +373,17 @@ static void __nvoc_init_funcTable_KernelNvlink_1(KernelNvlink *pThis, RmHalspecO
     else
     {
         pThis->__knvlinkValidateFabricBaseAddress__ = &knvlinkValidateFabricBaseAddress_46f6a7;
+    }
+
+    // Hal function -- knvlinkValidateFabricEgmBaseAddress
+    if (( ((chipHal_HalVarIdx >> 5) == 1UL) && ((1UL << (chipHal_HalVarIdx & 0x1f)) & 0x10000000UL) )) /* ChipHal: GH100 */ 
+    {
+        pThis->__knvlinkValidateFabricEgmBaseAddress__ = &knvlinkValidateFabricEgmBaseAddress_GH100;
+    }
+    // default
+    else
+    {
+        pThis->__knvlinkValidateFabricEgmBaseAddress__ = &knvlinkValidateFabricEgmBaseAddress_46f6a7;
     }
 
     // Hal function -- knvlinkGetConnectedLinksMask
@@ -621,23 +656,31 @@ void __nvoc_init_KernelNvlink(KernelNvlink *pThis, RmHalspecOwner *pRmhalspecown
     __nvoc_init_funcTable_KernelNvlink(pThis, pRmhalspecowner);
 }
 
-NV_STATUS __nvoc_objCreate_KernelNvlink(KernelNvlink **ppThis, Dynamic *pParent, NvU32 createFlags) {
+NV_STATUS __nvoc_objCreate_KernelNvlink(KernelNvlink **ppThis, Dynamic *pParent, NvU32 createFlags)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     KernelNvlink *pThis;
     RmHalspecOwner *pRmhalspecowner;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(KernelNvlink), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(KernelNvlink));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_KernelNvlink);
 
     pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object.createFlags = createFlags;
 
-    if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
+    // pParent must be a valid object that derives from a halspec owner class.
+    NV_ASSERT_OR_RETURN(pParent != NULL, NV_ERR_INVALID_ARGUMENT);
+
+    // Link the child into the parent unless flagged not to do so.
+    if (!(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
         objAddChild(pParentObj, &pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object);
@@ -655,16 +698,25 @@ NV_STATUS __nvoc_objCreate_KernelNvlink(KernelNvlink **ppThis, Dynamic *pParent,
     status = __nvoc_ctor_KernelNvlink(pThis, pRmhalspecowner);
     if (status != NV_OK) goto __nvoc_objCreate_KernelNvlink_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_KernelNvlink_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_OBJENGSTATE.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(KernelNvlink));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

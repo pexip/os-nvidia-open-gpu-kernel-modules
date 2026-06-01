@@ -204,13 +204,6 @@ extern bool uvm_release_asserts_set_global_error_for_tests;
 #define UVM_ASSERT_MSG_RELEASE(expr, fmt, ...)  _UVM_ASSERT_MSG_RELEASE(expr, #expr, ": " fmt, ##__VA_ARGS__)
 #define UVM_ASSERT_RELEASE(expr)                _UVM_ASSERT_MSG_RELEASE(expr, #expr, "\n")
 
-// Provide a short form of UUID's, typically for use in debug printing:
-#define ABBREV_UUID(uuid) (unsigned)(uuid)
-
-static inline NvBool uvm_uuid_is_cpu(const NvProcessorUuid *uuid)
-{
-    return memcmp(uuid, &NV_PROCESSOR_UUID_CPU_DEFAULT, sizeof(*uuid)) == 0;
-}
 #define UVM_SIZE_1KB (1024ULL)
 #define UVM_SIZE_1MB (1024 * UVM_SIZE_1KB)
 #define UVM_SIZE_1GB (1024 * UVM_SIZE_1MB)
@@ -282,9 +275,6 @@ static inline void kmem_cache_destroy_safe(struct kmem_cache **ppCache)
     }
 }
 
-static const uid_t UVM_ROOT_UID = 0;
-
-
 typedef struct
 {
     NvU64 start_time_ns;
@@ -335,7 +325,6 @@ NV_STATUS errno_to_nv_status(int errnoCode);
 int nv_status_to_errno(NV_STATUS status);
 unsigned uvm_get_stale_process_id(void);
 unsigned uvm_get_stale_thread_id(void);
-NvBool uvm_user_id_security_check(uid_t euidTarget);
 
 extern int uvm_enable_builtin_tests;
 

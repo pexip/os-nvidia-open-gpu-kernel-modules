@@ -171,7 +171,6 @@ static void nv_p2p_free_dma_mapping(
     nv_dma_device_t peer_dma_dev = {{ 0 }};
     NvU32 page_size;
     NV_STATUS status;
-    NvU32 i;
 
     peer_dma_dev.dev = &dma_mapping->pci_dev->dev;
     peer_dma_dev.addressable_range.limit = dma_mapping->pci_dev->dma_mask;
@@ -180,16 +179,64 @@ static void nv_p2p_free_dma_mapping(
 
     if (dma_mapping->private != NULL)
     {
-        WARN_ON(page_size != PAGE_SIZE);
+        /*
+         * If OS page size is smaller than P2P page size,
+         * page inflation logic applies for DMA unmapping too.
+         * Bigger P2P page needs to be split in smaller OS pages.
+         */
+        if (page_size > PAGE_SIZE)
+        {
+            NvU64 *os_dma_addresses = NULL;
+            NvU32 os_pages_per_p2p_page = page_size;
+            NvU32 os_page_count;
+            NvU32 index, i, j;
 
-        status = nv_dma_unmap_alloc(&peer_dma_dev,
-                                    dma_mapping->entries,
-                                    dma_mapping->dma_addresses,
-                                    &dma_mapping->private);
-        WARN_ON(status != NV_OK);
+            do_div(os_pages_per_p2p_page, PAGE_SIZE);
+
+            os_page_count = os_pages_per_p2p_page * dma_mapping->entries;
+
+            status = os_alloc_mem((void **)&os_dma_addresses,
+                        (os_page_count * sizeof(NvU64)));
+            if(WARN_ON(status != NV_OK))
+            {
+                goto failed;
+            }
+
+            index = 0;
+            for (i = 0; i < dma_mapping->entries; i++)
+            {
+                os_dma_addresses[index] = dma_mapping->dma_addresses[i];
+                index++;
+
+                for (j = 1; j < os_pages_per_p2p_page; j++)
+                {
+                    os_dma_addresses[index] = os_dma_addresses[index - 1] + PAGE_SIZE;
+                    index++;
+                }
+            }
+
+            status = nv_dma_unmap_alloc(&peer_dma_dev,
+                                        os_page_count,
+                                        os_dma_addresses,
+                                        &dma_mapping->private);
+            WARN_ON(status != NV_OK);
+
+            os_free_mem(os_dma_addresses);
+        }
+        else
+        {
+            WARN_ON(page_size != PAGE_SIZE);
+
+            status = nv_dma_unmap_alloc(&peer_dma_dev,
+                                        dma_mapping->entries,
+                                        dma_mapping->dma_addresses,
+                                        &dma_mapping->private);
+            WARN_ON(status != NV_OK);
+        }
     }
     else
     {
+        NvU32 i;
         for (i = 0; i < dma_mapping->entries; i++)
         {
             nv_dma_unmap_peer(&peer_dma_dev, page_size / PAGE_SIZE,
@@ -197,6 +244,7 @@ static void nv_p2p_free_dma_mapping(
         }
     }
 
+failed:
     os_free_mem(dma_mapping->dma_addresses);
 
     os_free_mem(dma_mapping);
@@ -645,7 +693,6 @@ int nvidia_p2p_put_pages(
     status = nv_p2p_put_pages(NV_P2P_PAGE_TABLE_TYPE_NON_PERSISTENT,
                               sp, p2p_token, va_space,
                               virtual_address, &page_table);
-
     nv_kmem_cache_free_stack(sp);
 
     return nvidia_p2p_map_status(status);

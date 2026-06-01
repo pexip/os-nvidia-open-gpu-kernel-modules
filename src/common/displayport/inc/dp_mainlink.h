@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -175,7 +175,6 @@ namespace DisplayPort
         virtual bool hasMultistream() = 0;
         virtual bool isPC2Disabled() = 0;
         virtual NvU32 getGpuDpSupportedVersions() = 0;
-
         virtual bool isStreamCloningEnabled() = 0;
         virtual NvU32 maxLinkRateSupported() = 0;
         virtual bool isLttprSupported() = 0;
@@ -246,7 +245,7 @@ namespace DisplayPort
         virtual NvU32 getRootDisplayId() = 0;
         virtual NvU32 allocDisplayId() = 0;
         virtual bool freeDisplayId(NvU32 displayId) = 0;
-        virtual void queryGPUCapability() = 0;
+        virtual bool queryGPUCapability() {return false;}
         virtual bool queryAndUpdateDfpParams() = 0;
         virtual bool getEdpPowerData(bool *panelPowerOn, bool *bDPCDPowerStateD0) = 0;
         virtual bool vrrRunEnablementStage(unsigned stage, NvU32 *status) = 0;

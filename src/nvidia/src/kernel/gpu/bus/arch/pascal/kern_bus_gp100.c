@@ -21,16 +21,18 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-// FIXME XXX
-#define NVOC_KERNEL_NVLINK_H_PRIVATE_ACCESS_ALLOWED
-
 #include "core/core.h"
 #include "gpu/gpu.h"
 #include "mem_mgr/vaspace.h"
 #include "gpu/bus/kern_bus.h"
 #include "gpu/bus/p2p_api.h"
 #include "gpu/mem_mgr/mem_mgr.h"
+#include "gpu/mem_mgr/fermi_dma.h"
 #include "kernel/gpu/nvlink/kernel_nvlink.h"
+#include "vgpu/vgpu_events.h"
+#include "platform/sli/sli.h"
+
+#include "published/pascal/gp100/dev_ram.h"
 
 /*!
  * @brief Create a P2P mapping to a given peer GPU
@@ -515,8 +517,8 @@ _kbusRemoveNvlinkPeerMapping
                                           PDB_PROP_KBUS_NVLINK_DECONFIG_HSHUB_ON_NO_MAPPING))
         {
             // Before removing the NVLink peer mapping in HSHUB flush both ends
-            kbusFlush_HAL(pGpu0, pKernelBus0, BUS_FLUSH_VIDEO_MEMORY | BUS_FLUSH_USE_PCIE_READ);
-            kbusFlush_HAL(pGpu1, GPU_GET_KERNEL_BUS(pGpu1), BUS_FLUSH_VIDEO_MEMORY | BUS_FLUSH_USE_PCIE_READ);
+            kbusFlush_HAL(pGpu0, pKernelBus0, BUS_FLUSH_VIDEO_MEMORY);
+            kbusFlush_HAL(pGpu1, GPU_GET_KERNEL_BUS(pGpu1), BUS_FLUSH_VIDEO_MEMORY);
         }
 
         if (IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu0))
@@ -586,7 +588,7 @@ _kbusRemoveNvlinkPeerMapping
                 return status;
             }
 
-            bBufferReady = ((pKernelNvlink0->initializedLinks & pKernelNvlink0->peerLinkMasks[peerId]) != 0) ? NV_TRUE : NV_FALSE;
+            bBufferReady = ((knvlinkGetInitializedLinkMask(pGpu0, pKernelNvlink0) & knvlinkGetPeerLinkMask(pGpu0, pKernelNvlink0, peerId)) != 0) ? NV_TRUE : NV_FALSE;
             if (!pKernelNvlink0->getProperty(pKernelNvlink0, PDB_PROP_KNVLINK_CONFIG_REQUIRE_INITIALIZED_LINKS_CHECK) ||
                 !bBufferReady)
             {
@@ -816,7 +818,7 @@ kbusGetNvlinkP2PPeerId_GP100
         (knvlinkGetPeersNvlinkMaskFromHshub(pGpu0, pKernelNvlink0) != 0))
     {
         if (knvlinkIsForcedConfig(pGpu0, pKernelNvlink0) ||
-            pKernelNvlink0->bRegistryLinkOverride)
+            knvlinkAreLinksRegistryOverriden(pGpu0, pKernelNvlink0))
         {
             *nvlinkPeer = kbusGetPeerIdFromTable_HAL(pGpu0, pKernelBus0,
                                                      pGpu0->gpuInstance,
@@ -939,4 +941,249 @@ kbusGetNvlinkPeerNumberMask_GP100
     }
 
     return (pKernelBus->p2p.busNvlinkPeerNumberMask[peerId]);
+}
+
+/*!
+ * @brief Initialize NV_RAMIN_ADR_LIMIT at the given location
+ *
+ * @param[in] pGpu            OBJGPU
+ * @param[in] pKernelBus      KernelBus
+ * @param[in] pBar0Wr         Controls whether to MEM_WR using pMap or GPU_REG_WR at addr
+ * @param[in] instBlockAddr   physical address of the instance block to be written
+ * @param[in] pMap            CPU mapped address to start from
+ * @param[in] vaLimit         Virtual address limit to program
+ */
+void
+kbusInstBlkWriteAddrLimit_GP100
+(
+    OBJGPU    *pGpu,
+    KernelBus *pKernelBus,
+    NvBool     bBar0Wr,
+    NvU64      instBlockAddr,
+    NvU8      *pMap,
+    NvU64      vaLimit
+)
+{
+    NV_STATUS         status     = NV_OK;
+    NvU32             adrLimitLo = (NvU64_LO32(vaLimit) | 0xfff);
+    NvU32             adrLimitHi = SF_NUM(_RAMIN_ADR_LIMIT, _HI, NvU64_HI32(vaLimit));
+
+    if (bBar0Wr)
+    {
+        status = kbusMemAccessBar0Window_HAL(pGpu, pKernelBus,
+                              (instBlockAddr + SF_OFFSET(NV_RAMIN_ADR_LIMIT_LO)),
+                              &adrLimitLo,
+                              sizeof(NvU32),
+                              NV_FALSE,
+                              pKernelBus->InstBlkAperture);
+        NV_ASSERT_OR_RETURN_VOID(NV_OK == status);
+
+        status = kbusMemAccessBar0Window_HAL(pGpu, pKernelBus,
+                              (instBlockAddr + SF_OFFSET(NV_RAMIN_ADR_LIMIT_HI)),
+                              &adrLimitHi,
+                              sizeof(NvU32),
+                              NV_FALSE,
+                              pKernelBus->InstBlkAperture);
+        NV_ASSERT_OR_RETURN_VOID(NV_OK == status);
+    }
+    else
+    {
+        MEM_WR32(pMap + SF_OFFSET(NV_RAMIN_ADR_LIMIT_LO), adrLimitLo);
+        MEM_WR32(pMap + SF_OFFSET(NV_RAMIN_ADR_LIMIT_HI), adrLimitHi);
+    }
+}
+
+NV_STATUS
+kbusInitInstBlk_GP100
+(
+    OBJGPU            *pGpu,
+    KernelBus         *pKernelBus,
+    PMEMORY_DESCRIPTOR pInstBlkMemDesc, // NULL if BAR2 aperture not set up yet: BAR2 instance block using BAR0 window
+    PMEMORY_DESCRIPTOR pPDB,
+    NvU64              vaLimit,
+    NvU64              bigPageSize,
+    OBJVASPACE        *pVAS
+)
+{
+    NvU8              *pMap;
+    NvBool             newPteFormat      = NV_FALSE;
+    NvU32              pageDirBaseHi     = 0;
+    NvU32              pageDirBaseTarget = 0;
+    NvU32              gfid;
+
+    NV_ASSERT_OK_OR_RETURN(vgpuGetCallingContextGfid(pGpu, &gfid));
+
+    NV_ASSERT_OR_RETURN(pKernelBus->bar2[gfid].pFmt != NULL, NV_ERR_INVALID_STATE);
+    newPteFormat = (GMMU_FMT_VERSION_2 == pKernelBus->bar2[gfid].pFmt->version);
+
+    if (pInstBlkMemDesc == NULL)
+    {
+        if (kbusIsPhysicalBar2InitPagetableEnabled(pKernelBus))
+        {
+            return kbusSetupBar2InstBlkAtBottomOfFb_HAL(pGpu, pKernelBus, pPDB, vaLimit, bigPageSize, gfid);
+        }
+
+        // Initialize NV_RAMIN_ADR_LIMIT at the given offset
+        kbusInstBlkWriteAddrLimit_HAL(pGpu, pKernelBus, NV_TRUE,
+                                      pKernelBus->bar2[gfid].instBlockBase,
+                                      NULL,
+                                      vaLimit);
+
+        pageDirBaseHi = SF_NUM(_RAMIN_PAGE_DIR_BASE, _HI, NvU64_HI32(memdescGetPhysAddr(pPDB, AT_GPU, 0)));
+        NV_ASSERT_OK_OR_RETURN(kbusMemAccessBar0Window_HAL(pGpu, pKernelBus,
+                               (pKernelBus->bar2[gfid].instBlockBase + SF_OFFSET(NV_RAMIN_PAGE_DIR_BASE_HI)),
+                               &pageDirBaseHi,
+                               sizeof(NvU32),
+                               NV_FALSE,
+                               pKernelBus->InstBlkAperture));
+
+        //
+        // Set up the big page size in the memdesc for this address space
+        //
+        if (bigPageSize == FERMI_BIG_PAGESIZE_128K)
+        {
+            pageDirBaseTarget = SF_NUM(_RAMIN_PAGE_DIR_BASE, _TARGET, kgmmuGetHwPteApertureFromMemdesc(GPU_GET_KERNEL_GMMU(pGpu), pPDB)) |
+                         (newPteFormat ?
+                         SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _TRUE) :
+                         SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _FALSE)) |
+                         SF_DEF(_RAMIN, _BIG_PAGE_SIZE, _128KB) |
+                         SF_NUM(_RAMIN_PAGE_DIR_BASE, _VOL, memdescGetVolatility(pPDB)) |
+                         SF_NUM(_RAMIN_PAGE_DIR_BASE, _LO, NvU64_LO32(memdescGetPhysAddr(pPDB, AT_GPU, 0) >> PDB_SHIFT_FERMI));
+        }
+        else if (bigPageSize == FERMI_BIG_PAGESIZE_64K)
+        {
+            pageDirBaseTarget = SF_NUM(_RAMIN_PAGE_DIR_BASE, _TARGET, kgmmuGetHwPteApertureFromMemdesc(GPU_GET_KERNEL_GMMU(pGpu), pPDB)) |
+                         (newPteFormat ?
+                         SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _TRUE) :
+                         SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _FALSE)) |
+                         SF_DEF(_RAMIN, _BIG_PAGE_SIZE, _64KB) |
+                         SF_NUM(_RAMIN_PAGE_DIR_BASE, _VOL, memdescGetVolatility(pPDB)) |
+                         SF_NUM(_RAMIN_PAGE_DIR_BASE, _LO, NvU64_LO32(memdescGetPhysAddr(pPDB, AT_GPU, 0) >> PDB_SHIFT_FERMI));
+        }
+        NV_ASSERT_OK_OR_RETURN(kbusMemAccessBar0Window_HAL(pGpu, pKernelBus,
+                               (pKernelBus->bar2[gfid].instBlockBase + SF_OFFSET(NV_RAMIN_PAGE_DIR_BASE_TARGET)),
+                               &pageDirBaseTarget,
+                               sizeof(NvU32),
+                               NV_FALSE,
+                               pKernelBus->InstBlkAperture));
+    }
+    else
+    {
+        SLI_LOOP_START(SLI_LOOP_FLAGS_BC_ONLY)
+        pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
+        pMap = kbusMapRmAperture_HAL(pGpu, pInstBlkMemDesc);
+        if (pMap == NULL)
+        {
+            SLI_LOOP_RETURN(NV_ERR_INSUFFICIENT_RESOURCES);
+        }
+        kbusBar2InstBlkWrite_HAL(pGpu, pKernelBus, pMap, pPDB, vaLimit, bigPageSize);
+        kbusUnmapRmAperture_HAL(pGpu, pInstBlkMemDesc, &pMap, NV_TRUE);
+        if (pKernelBus->bar2[gfid].bMigrating)
+        {
+            //
+            // Remove memdesc from cached mappings as the page tables backing
+            // this mapping will be discarded and the old VA to PA translation
+            // won't be valid.
+            //
+            kbusReleaseRmAperture_HAL(pGpu, pKernelBus, pInstBlkMemDesc);
+        }
+        SLI_LOOP_END
+        pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
+    }
+    return NV_OK;
+}
+
+void
+kbusBar2InstBlkWrite_GP100
+(
+    OBJGPU            *pGpu,
+    KernelBus         *pKernelBus,
+    NvU8              *pMap,
+    PMEMORY_DESCRIPTOR pPDB,
+    NvU64              vaLimit,
+    NvU64              bigPageSize
+)
+{
+    NvBool            newPteFormat = NV_FALSE;
+
+    NV_ASSERT_OR_RETURN_VOID(NULL != pMap);
+    NV_ASSERT_OR_RETURN_VOID(NULL != pKernelBus->bar2[GPU_GFID_PF].pFmt);
+
+    newPteFormat = (GMMU_FMT_VERSION_2 == pKernelBus->bar2[GPU_GFID_PF].pFmt->version);
+
+    // Initialize NV_RAMIN_ADR_LIMIT in the mapped instblk
+    kbusInstBlkWriteAddrLimit_HAL(pGpu, pKernelBus, NV_FALSE, 0x0, pMap, vaLimit);
+    MEM_WR32(pMap + SF_OFFSET(NV_RAMIN_PAGE_DIR_BASE_HI),
+                    SF_NUM(_RAMIN_PAGE_DIR_BASE, _HI,
+                           NvU64_HI32(memdescGetPhysAddr(pPDB, AT_GPU, 0))));
+
+    if (bigPageSize == FERMI_BIG_PAGESIZE_128K)
+    {
+        MEM_WR32(pMap + SF_OFFSET(NV_RAMIN_PAGE_DIR_BASE_TARGET),
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _TARGET, kgmmuGetHwPteApertureFromMemdesc(GPU_GET_KERNEL_GMMU(pGpu), pPDB)) |
+                        (newPteFormat ?
+                        SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _TRUE) :
+                        SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _FALSE)) |
+                        SF_DEF(_RAMIN, _BIG_PAGE_SIZE, _128KB) |
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _VOL, memdescGetVolatility(pPDB)) |
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _LO,
+                               NvU64_LO32(memdescGetPhysAddr(pPDB, AT_GPU, 0) >> PDB_SHIFT_FERMI)));
+    }
+    else if (bigPageSize == FERMI_BIG_PAGESIZE_64K)
+    {
+        MEM_WR32(pMap + SF_OFFSET(NV_RAMIN_PAGE_DIR_BASE_TARGET),
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _TARGET, kgmmuGetHwPteApertureFromMemdesc(GPU_GET_KERNEL_GMMU(pGpu), pPDB)) |
+                        (newPteFormat ?
+                        SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _TRUE) :
+                        SF_DEF(_RAMIN, _USE_NEW_PT_FORMAT, _FALSE)) |
+                        SF_DEF(_RAMIN, _BIG_PAGE_SIZE, _64KB) |
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _VOL, memdescGetVolatility(pPDB)) |
+                        SF_NUM(_RAMIN_PAGE_DIR_BASE, _LO,
+                               NvU64_LO32(memdescGetPhysAddr(pPDB, AT_GPU, 0) >> PDB_SHIFT_FERMI)));
+    }
+}
+
+/*!
+ * @brief Calculate the base and limit of BAR2 cpu-invisible range
+ *
+ * @param[in]  pGpu        OBJGPU pointer
+ * @param[in]  pKernelBus  KernelBus pointer
+ */
+void
+kbusCalcCpuInvisibleBar2Range_GP100
+(
+    OBJGPU    *pGpu,
+    KernelBus *pKernelBus,
+    NvU32      gfid
+)
+{
+    NvU32 cpuInvisibleSize = 0;
+
+    if (pKernelBus->bar2[gfid].cpuInvisibleLimit == 0)
+    {
+        cpuInvisibleSize = kbusCalcCpuInvisibleBar2ApertureSize_HAL(pGpu, pKernelBus);
+        if (cpuInvisibleSize != 0)
+        {
+            cpuInvisibleSize--;
+
+            if (pKernelBus->bar2[gfid].cpuInvisibleBase == 0)
+            {
+                if (!RMCFG_FEATURE_PLATFORM_GSP)
+                {
+                    if (pKernelBus->bar2[gfid].cpuVisibleLimit != 0)
+                    {
+                        pKernelBus->bar2[gfid].cpuInvisibleBase = pKernelBus->bar2[gfid].cpuVisibleLimit + 1;
+                    }
+                }
+                else
+                {
+                    pKernelBus->bar2[gfid].cpuInvisibleBase =
+                        kbusGetCpuInvisibleBar2BaseAdjust_HAL(pGpu, pKernelBus);
+                }
+            }
+            NV_PRINTF(LEVEL_INFO, "base: 0x%llx size: 0x%x\n",
+                      pKernelBus->bar2[gfid].cpuInvisibleBase, cpuInvisibleSize + 1);
+            pKernelBus->bar2[gfid].cpuInvisibleLimit = pKernelBus->bar2[gfid].cpuInvisibleBase + cpuInvisibleSize;
+        }
+    }
 }

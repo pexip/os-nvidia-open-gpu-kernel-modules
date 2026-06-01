@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2004-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2004-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -33,22 +33,13 @@
 
 #include "entry_points.h"
 #include "resserv/rs_access_map.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/gpu.h"
-#include "gpu/subdevice/subdevice.h"
+#include "rmapi/rmapi_specific.h"
 #include "rmapi/rmapi_utils.h"
 
-#include "ctrl/ctrl0000/ctrl0000client.h" // NV0000_CTRL_CMD_CLIENT_*
-#include "ctrl/ctrl0000/ctrl0000gpu.h" // NV0000_CTRL_CMD_GPU_*
-#include "ctrl/ctrl0000/ctrl0000system.h" // NV0000_CTRL_CMD_SYSTEM_*
-#include "ctrl/ctrl0000/ctrl0000syncgpuboost.h" // NV0000_CTRL_CMD_SYNC_GPU_BOOST_*
-#include "ctrl/ctrl0000/ctrl0000nvd.h" // NV0000_CTRL_CMD_NVD_*
-#include "ctrl/ctrl2080/ctrl2080rc.h" // NV2080_CTRL_CMD_RC_READ_VIRTUAL_MEM
-#include "ctrl/ctrl0002.h" // N09002_CTRL_CMD_*_CONTEXTDMA
-#include "ctrl/ctrl906f.h" // NV906F_CTRL_CMD_GET_MMU_FAULT_INFO
-#include "ctrl/ctrlc370/ctrlc370chnc.h" // NVC370_CTRL_CMD_*
-#include "ctrl/ctrl9010.h" //NV9010_CTRL_CMD_SET_VBLANK_NOTIFICATION
-#include "ctrl/ctrl2080/ctrl2080tmr.h" // NV2080_CTRL_CMD_TIMER_*
 #include "ctrl/ctrl0000/ctrl0000gpuacct.h" // NV0000_CTRL_CMD_GPUACCT_*
+#include "ctrl/ctrl2080/ctrl2080tmr.h" // NV2080_CTRL_CMD_TIMER_SCHEDULE
 
 static NV_STATUS
 releaseDeferRmCtrlBuffer(RmCtrlDeferredCmd* pRmCtrlDeferredCmd)
@@ -354,43 +345,6 @@ serverControlApiCopyOut
     return rmStatus;
 }
 
-static NvBool _rmapiRmControlCanBeRaisedIrql(NvU32 cmd)
-{
-    switch (cmd)
-    {
-        case NV2080_CTRL_CMD_TIMER_SCHEDULE:
-        case NV2080_CTRL_CMD_TIMER_GET_TIME:
-        // Below 2 control calls are used for flip canceling (HW Flip Queue)
-        // We use TRASH/ABORT mode to discard queued hw commands in the push buffer (bug 200644346)
-        case NVC370_CTRL_CMD_SET_ACCL:
-        case NVC370_CTRL_CMD_GET_CHANNEL_INFO:
-        case NV9010_CTRL_CMD_SET_VBLANK_NOTIFICATION:
-            return NV_TRUE;
-        default:
-            return NV_FALSE;
-    }
-}
-
-static NvBool _rmapiRmControlCanBeBypassLock(NvU32 cmd)
-{
-    switch (cmd)
-    {
-        case NV2080_CTRL_CMD_RC_READ_VIRTUAL_MEM:
-        case NV2080_CTRL_CMD_TIMER_GET_TIME:
-        case NV906F_CTRL_CMD_GET_MMU_FAULT_INFO:
-        // Below 2 control calls are used for flip canceling (HW Flip Queue)
-        // We use TRASH/ABORT mode to discard queued hw commands in the push buffer (bug 200644346)
-        case NVC370_CTRL_CMD_SET_ACCL:
-        case NVC370_CTRL_CMD_GET_CHANNEL_INFO:
-        case NV2080_CTRL_CMD_BUS_SYSMEM_ACCESS:
-        case NV9010_CTRL_CMD_SET_VBLANK_NOTIFICATION:
-        case NV2080_CTRL_CMD_NVD_SET_NOCAT_JOURNAL_DATA:
-            return NV_TRUE;
-        default:
-            return NV_FALSE;
-    }
-}
-
 static NV_STATUS
 _rmapiRmControl(NvHandle hClient, NvHandle hObject, NvU32 cmd, NvP64 pUserParams, NvU32 paramsSize, NvU32 flags, RM_API *pRmApi, API_SECURITY_INFO *pSecInfo)
 {
@@ -439,7 +393,7 @@ _rmapiRmControl(NvHandle hClient, NvHandle hObject, NvU32 cmd, NvP64 pUserParams
     if (bIsRaisedIrqlCmd)
     {
         // Check that we support this control call at raised IRQL
-        if (!_rmapiRmControlCanBeRaisedIrql(cmd))
+        if (!rmapiRmControlCanBeRaisedIrql(cmd))
         {
             NV_PRINTF(LEVEL_WARNING,
                       "rmControl:  cmd 0x%x cannot be called at raised irq level\n", cmd);
@@ -463,7 +417,7 @@ _rmapiRmControl(NvHandle hClient, NvHandle hObject, NvU32 cmd, NvP64 pUserParams
         if (!bInternalRequest)
         {
             // Check that we support bypassing locks with this control call
-            if (!_rmapiRmControlCanBeBypassLock(cmd))
+            if (!rmapiRmControlCanBeBypassLock(cmd))
             {
                 NV_PRINTF(LEVEL_WARNING,
                           "rmControl:  cmd 0x%x cannot bypass locks\n", cmd);
@@ -539,6 +493,8 @@ _rmapiRmControl(NvHandle hClient, NvHandle hObject, NvU32 cmd, NvP64 pUserParams
         if (ctrlFlags & RMCTRL_FLAGS_CACHEABLE)
             rmCtrlParams.pCookie->apiCopyFlags |= RMCTRL_API_COPY_FLAGS_SKIP_COPYIN_ZERO_BUFFER;
     }
+
+    rmCtrlParams.pCookie->ctrlFlags = ctrlFlags;
 
     //
     // Three separate rmctrl command modes:
@@ -641,10 +597,40 @@ _rmapiRmControl(NvHandle hClient, NvHandle hObject, NvU32 cmd, NvP64 pUserParams
         RM_API_CONTEXT rmApiContext = {0};
         rmStatus = rmapiPrologue(pRmApi, &rmApiContext);
         if (rmStatus != NV_OK)
-            goto done;
+            goto epilogue;
+
+        //
+        // If this is an internal request within the same RM instance, make
+        // sure we don't double lock clients and preserve previous lock state.
+        //
+        if (bInternalRequest && resservGetTlsCallContext() != NULL)
+        {
+            NvHandle hSecondClient = NV01_NULL_OBJECT;
+
+            if (pSecInfo->paramLocation == PARAM_LOCATION_KERNEL)
+            {
+                rmStatus = serverControlLookupSecondClient(cmd,
+                    NvP64_VALUE(pUserParams), rmCtrlParams.pCookie, &hSecondClient);
+
+                if (rmStatus != NV_OK)
+                    goto epilogue;
+            }
+
+            rmStatus = rmapiInitLockInfo(pRmApi, hClient, hSecondClient, &lockInfo);
+            if (rmStatus != NV_OK)
+                goto epilogue;
+
+            //
+            // rmapiInitLockInfo overwrites lockInfo.flags, re-add
+            // RM_LOCK_FLAGS_NO_API_LOCK if it was originally added.
+            //
+            if (pRmApi->bApiLockInternal)
+                lockInfo.flags |= RM_LOCK_FLAGS_NO_API_LOCK;
+        }
 
         lockInfo.flags |= RM_LOCK_FLAGS_RM_SEMA;
         rmStatus = serverControl(&g_resServ, &rmCtrlParams);
+epilogue:
         rmapiEpilogue(pRmApi, &rmApiContext);
     }
 done:
@@ -755,6 +741,18 @@ NV_STATUS serverControl_ValidateCookie
         }
     }
 
+    if (pRmCtrlParams->pGpu != NULL && IS_VIRTUAL(pRmCtrlParams->pGpu) &&
+        (pRmCtrlExecuteCookie->ctrlFlags & RMCTRL_FLAGS_ROUTE_TO_PHYSICAL) &&
+        !(pRmCtrlExecuteCookie->ctrlFlags & (RMCTRL_FLAGS_ROUTE_TO_VGPU_HOST | RMCTRL_FLAGS_PHYSICAL_IMPLEMENTED_ON_VGPU_GUEST)))
+    {
+        if (!rmapiutilSkipErrorMessageForUnsupportedVgpuGuestControl(pRmCtrlParams->cmd))
+        {
+            NV_PRINTF(LEVEL_ERROR, "Unsupported ROUTE_TO_PHYSICAL control 0x%x was called on vGPU guest\n", pRmCtrlParams->cmd);
+        }
+
+        return NV_ERR_NOT_SUPPORTED;
+    }
+
     if ((pRmCtrlExecuteCookie->ctrlFlags & RMCTRL_FLAGS_INTERNAL))
     {
         NvBool bInternalCall = pRmCtrlParams->bInternal;
@@ -858,12 +856,10 @@ serverControlLookupLockFlags
 {
     //
     // Calls with LOCK_TOP doesn't fill in the cookie param correctly.
-    // This is just a WAR for this. Since the optimisation that depends on this
-    // flag only works in full GSP offload mode, it's gated to that.
+    // This is just a WAR for this.
     //
-    NvBool areAllGpusInOffloadMode = gpumgrAreAllGpusInOffloadMode();
     NvU32 controlFlags = pRmCtrlExecuteCookie->ctrlFlags;
-    if (controlFlags == 0 && !RMCFG_FEATURE_PLATFORM_GSP && areAllGpusInOffloadMode)
+    if (controlFlags == 0 && !RMCFG_FEATURE_PLATFORM_GSP)
     {
         NV_STATUS status = rmapiutilGetControlInfo(pRmCtrlParams->cmd, &controlFlags, NULL, NULL);
         if (status != NV_OK)
@@ -872,7 +868,11 @@ serverControlLookupLockFlags
                       "rmapiutilGetControlInfo(cmd=0x%x, out flags=0x%x, NULL) = status=0x%x\n",
                       pRmCtrlParams->cmd, controlFlags, status);
         }
+
+        pRmCtrlExecuteCookie->ctrlFlags = controlFlags;
     }
+
+    NvBool areAllGpusInOffloadMode = gpumgrAreAllGpusInOffloadMode();
 
     //
     // If the control is ROUTE_TO_PHYSICAL, and we're in GSP offload mode,

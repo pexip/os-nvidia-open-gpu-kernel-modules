@@ -21,6 +21,7 @@
 
 *******************************************************************************/
 #include "uvm_hal.h"
+#include "uvm_global.h"
 #include "uvm_gpu.h"
 #include "uvm_kvmalloc.h"
 #include "uvm_mem.h"
@@ -368,7 +369,7 @@ static NV_STATUS test_all(uvm_va_space_t *va_space)
 
     // TODO: Bug 3839176: the test is waived on Confidential Computing because
     // it assumes that GPU can access system memory without using encryption.
-    if (uvm_conf_computing_mode_enabled(uvm_va_space_find_first_gpu(va_space)))
+    if (g_uvm_global.conf_computing_enabled)
         return NV_OK;
 
     gpu_count = uvm_processor_mask_get_gpu_count(&va_space->registered_gpus);
@@ -519,7 +520,7 @@ static NV_STATUS test_basic_vidmem_unprotected(uvm_gpu_t *gpu)
     // If CC is disabled, the behavior should be identical to that of a
     // protected allocation.
     params.is_unprotected = true;
-    if (uvm_conf_computing_mode_enabled(gpu))
+    if (g_uvm_global.conf_computing_enabled)
         TEST_CHECK_RET(uvm_mem_alloc(&params, &mem) == NV_ERR_NO_MEMORY);
     else
         TEST_NV_CHECK_RET(uvm_mem_alloc(&params, &mem));
@@ -575,7 +576,7 @@ static NV_STATUS test_basic_dma_pool(uvm_gpu_t *gpu)
 
     // If the Confidential Computing feature is disabled, the DMA buffers
     // pool is not initialized.
-    if (!uvm_conf_computing_mode_enabled(gpu))
+    if (!g_uvm_global.conf_computing_enabled)
         return NV_OK;
 
     // We're going to reclaim one more chunks that the pool have. Triggerring

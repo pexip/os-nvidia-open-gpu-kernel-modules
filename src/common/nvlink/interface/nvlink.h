@@ -234,6 +234,8 @@ struct nvlink_link
     // Has INITNEGOTIATE received CONFIG_GOOD (NVL3.0+)
     NvBool bInitnegotiateConfigGood;
 
+    NvBool bCciManaged;
+
     // Power state transition status
     enum
     {
@@ -280,6 +282,7 @@ struct nvlink_link_handlers
     NV_API_CALL NvlStatus (*read_discovery_token)       (struct nvlink_link *link, NvU64 *token);
     NV_API_CALL void      (*training_complete)          (struct nvlink_link *link);
     NV_API_CALL void      (*get_uphy_load)              (struct nvlink_link *link, NvBool* bUnlocked);
+    NV_API_CALL NvlStatus (*get_cci_link_mode)          (struct nvlink_link *link, NvU64 *mode);
     NV_API_CALL NvlStatus (*ali_training)               (struct nvlink_link *link);
 };
 
@@ -353,6 +356,7 @@ typedef struct nvlink_inband_data      nvlink_inband_data;
 #define NVLINK_LINKSTATE_INITPHASE5                     0x1B   // INITPHASE5
 #define NVLINK_LINKSTATE_ALI                            0x1C   // ALI 
 #define NVLINK_LINKSTATE_ACTIVE_PENDING                 0x1D   // Intermediate state for a link going to active
+#define NVLINK_LINKSTATE_TRAINING_CCI                   0x1E   // Intermediate state for a link that is still training
 #define NVLINK_LINKSTATE_INVALID                        0xFF   // Invalid state
 
 // NVLINK TX SUBLINK states
@@ -444,6 +448,18 @@ NvlStatus nvlink_lib_unregister_link(nvlink_link *link);
 * Gets number of devices with type deviceType
 */
 NvlStatus nvlink_lib_return_device_count_by_type(NvU32 deviceType, NvU32 *numDevices);
+
+
+/************************************************************************************************/
+/***************************** NVLink device management functions ******************************/
+/************************************************************************************************/
+
+/*
+ * Update UUID and deviceName in core library
+ */
+NvlStatus nvlink_lib_update_uuid_and_device_name(nvlink_device_info *devInfo, 
+                                                 NvU8 *uuid, 
+                                                 char *deviceName);
 
 
 /************************************************************************************************/

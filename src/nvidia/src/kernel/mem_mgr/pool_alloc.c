@@ -488,7 +488,7 @@ rmMemPoolSetup
     // of reserving memory for page tables required for mapping GR context buffers
     // in the channel vaspace. See bug 200590870 and 200614517.
     //
-    if (RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM)
+    if (RMCFG_FEATURE_PLATFORM_WINDOWS)
     {
         flags = FLD_SET_DRF(_RMPOOL, _FLAGS, _AUTO_POPULATE, _ENABLE, flags);
     }

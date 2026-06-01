@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2015-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -524,10 +524,26 @@ extern NV_STATUS serverAllocApiCopyOut(RsServer *pServer, NV_STATUS status, API_
 
 /**
  * Obtain a second client handle to lock if required for the allocation.
- * @param[in]   pParams  Resource allocation parameters
- * @param[in]   phClient Client to lock, if any
+ * @param[in]   externalClassId External class ID of resource
+ * @param[in]   pAllocParams    Class-specific allocation parameters
+ * @param[out]  phSecondClient  Second client handle to lock on success
+ *
+ * @return NV_OK on success
+           NV_ERR_INVALID_STATE if allocation is incorrectly configured with RS_FLAGS_DUAL_CLIENT_LOCK without having updated this function.
  */
-extern NV_STATUS serverLookupSecondClient(RS_RES_ALLOC_PARAMS_INTERNAL *pParams, NvHandle *phClient);
+extern NV_STATUS serverAllocLookupSecondClient(NvU32 externalClassId, void *pAllocParams, NvHandle *phSecondClient);
+
+/**
+ * Obtain a second client handle to lock if required for the control (DISCOURAGED).
+ * @param[in]    cmd            Control call ID
+ * @param[in]    pControlParams Control-specific parameters
+ * @param[in]    pCookie        Control call cookie to check flags for
+ * @param[out]   phSecondClient Second client handle to lock on success
+ *
+ * @return NV_OK on success
+           NV_ERR_INVALID_STATE if allocation is incorrectly configured with RMCTRL_FLAGS_DUAL_CLIENT_LOCK without having updated this function.
+ */
+extern NV_STATUS serverControlLookupSecondClient(NvU32 cmd, void *pControlParams, RS_CONTROL_COOKIE *pCookie, NvHandle *phSecondClient);
 
 /**
  * Acquires a top-level lock. User-implemented.

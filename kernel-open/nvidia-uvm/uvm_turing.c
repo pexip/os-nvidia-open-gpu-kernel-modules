@@ -76,6 +76,8 @@ void uvm_hal_turing_arch_init_properties(uvm_parent_gpu_t *parent_gpu)
 
     parent_gpu->access_counters_supported = true;
 
+    parent_gpu->access_counters_can_use_physical_addresses = false;
+
     parent_gpu->fault_cancel_va_supported = true;
 
     parent_gpu->scoped_atomics_supported = true;

@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2015-2022 NVIDIA Corporation
+    Copyright (c) 2015-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -24,6 +24,7 @@
 #include "uvm_global.h"
 #include "uvm_channel.h"
 #include "uvm_hal.h"
+#include "uvm_mem.h"
 #include "uvm_push.h"
 #include "uvm_test.h"
 #include "uvm_test_rng.h"
@@ -57,13 +58,13 @@ static NV_STATUS test_ordering(uvm_va_space_t *va_space)
     const NvU32 values_count = iters_per_channel_type_per_gpu;
     const size_t buffer_size = sizeof(NvU32) * values_count;
 
-    gpu = uvm_va_space_find_first_gpu(va_space);
-    TEST_CHECK_RET(gpu != NULL);
-
     // TODO: Bug 3839176: the test is waived on Confidential Computing because
     // it assumes that GPU can access system memory without using encryption.
-    if (uvm_conf_computing_mode_enabled(gpu))
+    if (g_uvm_global.conf_computing_enabled)
         return NV_OK;
+
+    gpu = uvm_va_space_find_first_gpu(va_space);
+    TEST_CHECK_RET(gpu != NULL);
 
     status = uvm_rm_mem_alloc_and_map_all(gpu, UVM_RM_MEM_TYPE_SYS, buffer_size, 0, &mem);
     TEST_CHECK_GOTO(status == NV_OK, done);
@@ -84,7 +85,7 @@ static NV_STATUS test_ordering(uvm_va_space_t *va_space)
 
     TEST_NV_CHECK_GOTO(uvm_tracker_add_push(&tracker, &push), done);
 
-    exclude_proxy_channel_type = uvm_gpu_uses_proxy_channel_pool(gpu);
+    exclude_proxy_channel_type = uvm_parent_gpu_needs_proxy_channel_pool(gpu->parent);
 
     for (i = 0; i < iters_per_channel_type_per_gpu; ++i) {
         for (j = 0; j < UVM_CHANNEL_TYPE_CE_COUNT; ++j) {
@@ -222,7 +223,7 @@ static NV_STATUS uvm_test_rc_for_gpu(uvm_gpu_t *gpu)
     // Check RC on a proxy channel (SR-IOV heavy) or internal channel (any other
     // mode). It is not allowed to use a virtual address in a memset pushed to
     // a proxy channel, so we use a physical address instead.
-    if (uvm_gpu_uses_proxy_channel_pool(gpu)) {
+    if (uvm_parent_gpu_needs_proxy_channel_pool(gpu->parent)) {
         uvm_gpu_address_t dst_address;
 
         // Save the line number the push that's supposed to fail was started on
@@ -302,6 +303,110 @@ static NV_STATUS test_rc(uvm_va_space_t *va_space)
 
         g_uvm_global.disable_fatal_error_assert = true;
         test_status = uvm_test_rc_for_gpu(gpu);
+        g_uvm_global.disable_fatal_error_assert = false;
+
+        uvm_channel_manager_destroy(gpu->channel_manager);
+        create_status = uvm_channel_manager_create(gpu, &gpu->channel_manager);
+
+        TEST_NV_CHECK_RET(test_status);
+        TEST_NV_CHECK_RET(create_status);
+    }
+
+    return NV_OK;
+}
+
+static NV_STATUS uvm_test_iommu_rc_for_gpu(uvm_gpu_t *gpu)
+{
+    NV_STATUS status = NV_OK;
+
+#if defined(NV_IOMMU_IS_DMA_DOMAIN_PRESENT) && defined(CONFIG_IOMMU_DEFAULT_DMA_STRICT)
+    // This test needs the DMA API to immediately invalidate IOMMU mappings on
+    // DMA unmap (as apposed to lazy invalidation). The policy can be changed
+    // on boot (e.g. iommu.strict=1), but there isn't a good way to check for
+    // the runtime setting. CONFIG_IOMMU_DEFAULT_DMA_STRICT checks for the
+    // default value.
+
+    uvm_push_t push;
+    uvm_mem_t *sysmem;
+    uvm_gpu_address_t sysmem_dma_addr;
+    char *cpu_ptr = NULL;
+    const size_t data_size = PAGE_SIZE;
+    size_t i;
+
+    struct device *dev = &gpu->parent->pci_dev->dev;
+    struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
+
+    // Check that the iommu domain is controlled by linux DMA API
+    if (!domain || !iommu_is_dma_domain(domain))
+        return NV_OK;
+
+    // Only run if ATS is enabled with 64kB base page.
+    // Otherwise the CE doesn't get response on writing to unmapped location.
+    if (!g_uvm_global.ats.enabled || PAGE_SIZE != UVM_PAGE_SIZE_64K)
+        return NV_OK;
+
+    status = uvm_mem_alloc_sysmem_and_map_cpu_kernel(data_size, NULL, &sysmem);
+    TEST_NV_CHECK_RET(status);
+
+    status = uvm_mem_map_gpu_phys(sysmem, gpu);
+    TEST_NV_CHECK_GOTO(status, done);
+
+    cpu_ptr = uvm_mem_get_cpu_addr_kernel(sysmem);
+    sysmem_dma_addr = uvm_mem_gpu_address_physical(sysmem, gpu, 0, data_size);
+
+    status = uvm_push_begin(gpu->channel_manager, UVM_CHANNEL_TYPE_GPU_TO_CPU, &push, "Test memset to IOMMU mapped sysmem");
+    TEST_NV_CHECK_GOTO(status, done);
+
+    gpu->parent->ce_hal->memset_8(&push, sysmem_dma_addr, 0, data_size);
+
+    status = uvm_push_end_and_wait(&push);
+    TEST_NV_CHECK_GOTO(status, done);
+
+    // Check that we have zeroed the memory
+    for (i = 0; i < data_size; ++i)
+        TEST_CHECK_GOTO(cpu_ptr[i] == 0, done);
+
+    // Unmap the buffer and try write again to the same address
+    uvm_mem_unmap_gpu_phys(sysmem, gpu);
+
+    status = uvm_push_begin(gpu->channel_manager, UVM_CHANNEL_TYPE_GPU_TO_CPU, &push, "Test memset after IOMMU unmap");
+    TEST_NV_CHECK_GOTO(status, done);
+
+    gpu->parent->ce_hal->memset_4(&push, sysmem_dma_addr, 0xffffffff, data_size);
+
+    status = uvm_push_end_and_wait(&push);
+
+    TEST_CHECK_GOTO(status == NV_ERR_RC_ERROR, done);
+    TEST_CHECK_GOTO(uvm_channel_get_status(push.channel) == NV_ERR_RC_ERROR, done);
+    TEST_CHECK_GOTO(uvm_global_reset_fatal_error() == NV_ERR_RC_ERROR, done);
+
+    // Check that writes after unmap did not succeed
+    for (i = 0; i < data_size; ++i)
+        TEST_CHECK_GOTO(cpu_ptr[i] == 0, done);
+
+    status = NV_OK;
+
+done:
+    uvm_mem_free(sysmem);
+#endif
+    return status;
+}
+
+static NV_STATUS test_iommu(uvm_va_space_t *va_space)
+{
+    uvm_gpu_t *gpu;
+
+    uvm_assert_mutex_locked(&g_uvm_global.global_lock);
+
+    for_each_va_space_gpu(gpu, va_space) {
+        NV_STATUS test_status, create_status;
+
+        // The GPU channel manager is destroyed and then re-created after
+        // testing ATS RC fault, so this test requires exclusive access to the GPU.
+        TEST_CHECK_RET(uvm_gpu_retained_count(gpu) == 1);
+
+        g_uvm_global.disable_fatal_error_assert = true;
+        test_status = uvm_test_iommu_rc_for_gpu(gpu);
         g_uvm_global.disable_fatal_error_assert = false;
 
         uvm_channel_manager_destroy(gpu->channel_manager);
@@ -403,7 +508,7 @@ static uvm_channel_type_t random_ce_channel_type_except(uvm_test_rng_t *rng, uvm
 
 static uvm_channel_type_t gpu_random_internal_ce_channel_type(uvm_gpu_t *gpu, uvm_test_rng_t *rng)
 {
-    if (uvm_gpu_uses_proxy_channel_pool(gpu))
+    if (uvm_parent_gpu_needs_proxy_channel_pool(gpu->parent))
         return random_ce_channel_type_except(rng, uvm_channel_proxy_channel_type());
 
     return random_ce_channel_type(rng);
@@ -586,12 +691,16 @@ static NV_STATUS stress_test_all_gpus_in_va(uvm_va_space_t *va_space,
             if (uvm_test_rng_range_32(&rng, 0, 1) == 0) {
                 NvU32 random_stream_index = uvm_test_rng_range_32(&rng, 0, num_streams - 1);
                 uvm_test_stream_t *random_stream = &streams[random_stream_index];
-                uvm_push_acquire_tracker(&stream->push, &random_stream->tracker);
-                snapshot_counter(&stream->push,
-                                 random_stream->counter_mem,
-                                 stream->other_stream_counter_snapshots_mem,
-                                 i,
-                                 random_stream->queued_counter_repeat);
+
+                if ((random_stream->push.gpu == gpu) || uvm_push_allow_dependencies_across_gpus()) {
+                    uvm_push_acquire_tracker(&stream->push, &random_stream->tracker);
+
+                    snapshot_counter(&stream->push,
+                                     random_stream->counter_mem,
+                                     stream->other_stream_counter_snapshots_mem,
+                                     i,
+                                     random_stream->queued_counter_repeat);
+                }
             }
 
             uvm_push_end(&stream->push);
@@ -687,15 +796,10 @@ done:
 NV_STATUS test_conf_computing_channel_selection(uvm_va_space_t *va_space)
 {
     NV_STATUS status = NV_OK;
-    uvm_channel_pool_t *pool;
-    uvm_push_t *pushes;
-    uvm_gpu_t *gpu;
-    NvU32 i;
-    NvU32 num_pushes;
+    uvm_push_t *pushes = NULL;
+    uvm_gpu_t *gpu = NULL;
 
-    gpu = uvm_va_space_find_first_gpu(va_space);
-
-    if (!uvm_conf_computing_mode_enabled(gpu))
+    if (!g_uvm_global.conf_computing_enabled)
         return NV_OK;
 
     uvm_thread_context_lock_disable_tracking();
@@ -703,9 +807,19 @@ NV_STATUS test_conf_computing_channel_selection(uvm_va_space_t *va_space)
     for_each_va_space_gpu(gpu, va_space) {
         uvm_channel_type_t channel_type;
 
+        // Key rotation is disabled because this test relies on nested pushes,
+        // which is illegal. If any push other than the first one triggers key
+        // rotation, the test won't complete. This is because key rotation
+        // depends on waiting for ongoing pushes to end, which doesn't happen
+        // if those pushes are ended after the current one begins.
+        uvm_conf_computing_disable_key_rotation(gpu);
+
         for (channel_type = 0; channel_type < UVM_CHANNEL_TYPE_COUNT; channel_type++) {
-            pool = gpu->channel_manager->pool_to_use.default_for_type[channel_type];
-            TEST_CHECK_RET(pool != NULL);
+            NvU32 i;
+            NvU32 num_pushes;
+            uvm_channel_pool_t *pool = gpu->channel_manager->pool_to_use.default_for_type[channel_type];
+
+            TEST_CHECK_GOTO(pool != NULL, error);
 
             // Skip LCIC channels as those can't accept any pushes
             if (uvm_channel_pool_is_lcic(pool))
@@ -717,7 +831,7 @@ NV_STATUS test_conf_computing_channel_selection(uvm_va_space_t *va_space)
             num_pushes = min(pool->num_channels, (NvU32)UVM_PUSH_MAX_CONCURRENT_PUSHES);
 
             pushes = uvm_kvmalloc_zero(sizeof(*pushes) * num_pushes);
-            TEST_CHECK_RET(pushes != NULL);
+            TEST_CHECK_GOTO(pushes != NULL, error);
 
             for (i = 0; i < num_pushes; i++) {
                 uvm_push_t *push = &pushes[i];
@@ -734,16 +848,429 @@ NV_STATUS test_conf_computing_channel_selection(uvm_va_space_t *va_space)
 
             uvm_kvfree(pushes);
         }
+
+        uvm_conf_computing_enable_key_rotation(gpu);
     }
 
     uvm_thread_context_lock_enable_tracking();
 
     return status;
+
 error:
+    if (gpu != NULL)
+        uvm_conf_computing_enable_key_rotation(gpu);
+
     uvm_thread_context_lock_enable_tracking();
     uvm_kvfree(pushes);
 
     return status;
+}
+
+NV_STATUS test_channel_iv_rotation(uvm_va_space_t *va_space)
+{
+    uvm_gpu_t *gpu;
+
+    if (!g_uvm_global.conf_computing_enabled)
+        return NV_OK;
+
+    for_each_va_space_gpu(gpu, va_space) {
+        uvm_channel_pool_t *pool;
+
+        uvm_for_each_pool(pool, gpu->channel_manager) {
+            NvU64 before_rotation_enc, before_rotation_dec, after_rotation_enc, after_rotation_dec;
+            NV_STATUS status = NV_OK;
+
+            // Check one (the first) channel per pool
+            uvm_channel_t *channel = pool->channels;
+
+            // Create a dummy encrypt/decrypt push to use few IVs.
+            // SEC2 used encrypt during initialization, no need to use a dummy
+            // push.
+            if (!uvm_channel_is_sec2(channel)) {
+                uvm_push_t push;
+                size_t data_size;
+                uvm_conf_computing_dma_buffer_t *cipher_text;
+                void *cipher_cpu_va, *plain_cpu_va, *tag_cpu_va;
+                uvm_gpu_address_t cipher_gpu_address, plain_gpu_address, tag_gpu_address;
+                uvm_channel_t *work_channel = uvm_channel_is_lcic(channel) ? uvm_channel_lcic_get_paired_wlc(channel) : channel;
+
+                plain_cpu_va = &status;
+                data_size = sizeof(status);
+
+                TEST_NV_CHECK_RET(uvm_conf_computing_dma_buffer_alloc(&gpu->conf_computing.dma_buffer_pool,
+                                                                      &cipher_text,
+                                                                      NULL));
+                cipher_cpu_va = uvm_mem_get_cpu_addr_kernel(cipher_text->alloc);
+                tag_cpu_va = uvm_mem_get_cpu_addr_kernel(cipher_text->auth_tag);
+
+                cipher_gpu_address = uvm_mem_gpu_address_virtual_kernel(cipher_text->alloc, gpu);
+                tag_gpu_address = uvm_mem_gpu_address_virtual_kernel(cipher_text->auth_tag, gpu);
+
+                TEST_NV_CHECK_GOTO(uvm_push_begin_on_channel(work_channel, &push, "Dummy push for IV rotation"), free);
+
+                (void)uvm_push_get_single_inline_buffer(&push,
+                                                        data_size,
+                                                        UVM_CONF_COMPUTING_BUF_ALIGNMENT,
+                                                        &plain_gpu_address);
+
+                uvm_conf_computing_cpu_encrypt(work_channel, cipher_cpu_va, plain_cpu_va, NULL, data_size, tag_cpu_va);
+                gpu->parent->ce_hal->decrypt(&push, plain_gpu_address, cipher_gpu_address, data_size, tag_gpu_address);
+
+                TEST_NV_CHECK_GOTO(uvm_push_end_and_wait(&push), free);
+
+free:
+                uvm_conf_computing_dma_buffer_free(&gpu->conf_computing.dma_buffer_pool, cipher_text, NULL);
+
+                if (status != NV_OK)
+                    return status;
+            }
+
+            // Reserve a channel to hold the push lock during rotation
+            if (!uvm_channel_is_lcic(channel))
+                TEST_NV_CHECK_RET(uvm_channel_reserve(channel, 1));
+
+            uvm_conf_computing_query_message_pools(channel, &before_rotation_enc, &before_rotation_dec);
+            TEST_NV_CHECK_GOTO(uvm_conf_computing_rotate_channel_ivs_below_limit(channel, -1, true), release);
+            uvm_conf_computing_query_message_pools(channel, &after_rotation_enc, &after_rotation_dec);
+
+release:
+            if (!uvm_channel_is_lcic(channel))
+                uvm_channel_release(channel, 1);
+
+            if (status != NV_OK)
+                return status;
+
+            // All channels except SEC2 used at least a single IV to release tracking.
+            // SEC2 doesn't support decrypt direction.
+            if (uvm_channel_is_sec2(channel))
+                TEST_CHECK_RET(before_rotation_dec == after_rotation_dec);
+            else
+                TEST_CHECK_RET(before_rotation_dec < after_rotation_dec);
+
+            // All channels used one CPU encrypt/GPU decrypt, either during
+            // initialization or in the push above, with the exception of LCIC.
+            // LCIC is used in tandem with WLC, but it never uses CPU encrypt/
+            // GPU decrypt ops.
+            if (uvm_channel_is_lcic(channel))
+                TEST_CHECK_RET(before_rotation_enc == after_rotation_enc);
+            else
+                TEST_CHECK_RET(before_rotation_enc < after_rotation_enc);
+        }
+    }
+
+    return NV_OK;
+}
+
+static NV_STATUS force_key_rotations(uvm_channel_pool_t *pool, unsigned num_rotations)
+{
+    unsigned num_tries;
+    unsigned max_num_tries = 20;
+    unsigned num_rotations_completed = 0;
+
+    if (num_rotations == 0)
+        return NV_OK;
+
+    // The number of accepted rotations is kept low, so failed rotation
+    // invocations due to RM not acquiring the necessary locks (which imply a
+    // sleep in the test) do not balloon the test execution time.
+    UVM_ASSERT(num_rotations <= 10);
+
+    for (num_tries = 0; (num_tries < max_num_tries) && (num_rotations_completed < num_rotations); num_tries++) {
+        // Force key rotation, irrespective of encryption usage.
+        NV_STATUS status = uvm_channel_pool_rotate_key(pool);
+
+        // Key rotation may not be able to complete due to RM failing to acquire
+        // the necessary locks. Detect the situation, sleep for a bit, and then
+        // try again
+        //
+        // The maximum time spent sleeping in a single rotation call is
+        // (max_num_tries * max_sleep_us)
+        if (status == NV_ERR_STATE_IN_USE) {
+            NvU32 min_sleep_us = 1000;
+            NvU32 max_sleep_us = 10000;
+
+            usleep_range(min_sleep_us, max_sleep_us);
+            continue;
+        }
+
+        TEST_NV_CHECK_RET(status);
+
+        num_rotations_completed++;
+    }
+
+    // If not a single key rotation occurred, the dependent tests still pass,
+    // but there is no much value to them. Instead, return an error so the
+    // maximum number of tries, or the maximum sleep time, are adjusted to
+    // ensure that at least one rotation completes.
+    if (num_rotations_completed > 0)
+        return NV_OK;
+    else
+        return NV_ERR_STATE_IN_USE;
+}
+
+static NV_STATUS force_key_rotation(uvm_channel_pool_t *pool)
+{
+    return force_key_rotations(pool, 1);
+}
+
+// Test key rotation in all pools. This is useful because key rotation may not
+// happen otherwise on certain engines during UVM test execution. For example,
+// if the MEMOPS channel type is mapped to a CE not shared with any other
+// channel type, then the only encryption taking place in the engine is due to
+// semaphore releases (4 bytes each). This small encryption size makes it
+// unlikely to exceed even small rotation thresholds.
+static NV_STATUS test_channel_key_rotation_basic(uvm_gpu_t *gpu)
+{
+    uvm_channel_pool_t *pool;
+
+    uvm_for_each_pool(pool, gpu->channel_manager) {
+        if (!uvm_conf_computing_is_key_rotation_enabled_in_pool(pool))
+            continue;
+
+        TEST_NV_CHECK_RET(force_key_rotation(pool));
+    }
+
+    return NV_OK;
+}
+
+// Interleave GPU encryptions and decryptions, and their CPU counterparts, with
+// key rotations.
+static NV_STATUS test_channel_key_rotation_interleave(uvm_gpu_t *gpu)
+{
+    int i;
+    uvm_channel_pool_t *gpu_to_cpu_pool;
+    uvm_channel_pool_t *cpu_to_gpu_pool;
+    NV_STATUS status = NV_OK;
+    size_t size = UVM_CONF_COMPUTING_DMA_BUFFER_SIZE;
+    void *initial_plain_cpu = NULL;
+    void *final_plain_cpu = NULL;
+    uvm_mem_t *plain_gpu = NULL;
+    uvm_gpu_address_t plain_gpu_address;
+
+    cpu_to_gpu_pool = gpu->channel_manager->pool_to_use.default_for_type[UVM_CHANNEL_TYPE_CPU_TO_GPU];
+    TEST_CHECK_RET(uvm_conf_computing_is_key_rotation_enabled_in_pool(cpu_to_gpu_pool));
+
+    gpu_to_cpu_pool = gpu->channel_manager->pool_to_use.default_for_type[UVM_CHANNEL_TYPE_GPU_TO_CPU];
+    TEST_CHECK_RET(uvm_conf_computing_is_key_rotation_enabled_in_pool(gpu_to_cpu_pool));
+
+    initial_plain_cpu = uvm_kvmalloc_zero(size);
+    if (initial_plain_cpu == NULL) {
+        status = NV_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    final_plain_cpu = uvm_kvmalloc_zero(size);
+    if (final_plain_cpu == NULL) {
+        status = NV_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    TEST_NV_CHECK_GOTO(uvm_mem_alloc_vidmem(size, gpu, &plain_gpu), out);
+    TEST_NV_CHECK_GOTO(uvm_mem_map_gpu_kernel(plain_gpu, gpu), out);
+    plain_gpu_address = uvm_mem_gpu_address_virtual_kernel(plain_gpu, gpu);
+
+    memset(initial_plain_cpu, 1, size);
+
+    for (i = 0; i < 5; i++) {
+        TEST_NV_CHECK_GOTO(force_key_rotation(gpu_to_cpu_pool), out);
+        TEST_NV_CHECK_GOTO(force_key_rotation(cpu_to_gpu_pool), out);
+
+        TEST_NV_CHECK_GOTO(uvm_conf_computing_util_memcopy_cpu_to_gpu(gpu,
+                                                                      plain_gpu_address,
+                                                                      initial_plain_cpu,
+                                                                      size,
+                                                                      NULL,
+                                                                      "CPU > GPU"),
+                           out);
+
+        TEST_NV_CHECK_GOTO(force_key_rotation(gpu_to_cpu_pool), out);
+        TEST_NV_CHECK_GOTO(force_key_rotation(cpu_to_gpu_pool), out);
+
+        TEST_NV_CHECK_GOTO(uvm_conf_computing_util_memcopy_gpu_to_cpu(gpu,
+                                                                      final_plain_cpu,
+                                                                      plain_gpu_address,
+                                                                      size,
+                                                                      NULL,
+                                                                      "GPU > CPU"),
+                           out);
+
+        TEST_CHECK_GOTO(!memcmp(initial_plain_cpu, final_plain_cpu, size), out);
+
+        memset(final_plain_cpu, 0, size);
+    }
+
+out:
+    uvm_mem_free(plain_gpu);
+    uvm_kvfree(final_plain_cpu);
+    uvm_kvfree(initial_plain_cpu);
+
+    return status;
+}
+
+static NV_STATUS memset_vidmem(uvm_mem_t *mem, NvU8 val)
+{
+    uvm_push_t push;
+    uvm_gpu_address_t gpu_address;
+    uvm_gpu_t *gpu = mem->backing_gpu;
+
+    UVM_ASSERT(uvm_mem_is_vidmem(mem));
+
+    TEST_NV_CHECK_RET(uvm_push_begin(gpu->channel_manager, UVM_CHANNEL_TYPE_GPU_INTERNAL, &push, "zero vidmem"));
+
+    gpu_address = uvm_mem_gpu_address_virtual_kernel(mem, gpu);
+    gpu->parent->ce_hal->memset_1(&push, gpu_address, val, mem->size);
+
+    TEST_NV_CHECK_RET(uvm_push_end_and_wait(&push));
+
+    return NV_OK;
+}
+
+// Custom version of uvm_conf_computing_util_memcopy_gpu_to_cpu that allows
+// testing to insert key rotations in between the push end, and the CPU
+// decryption
+static NV_STATUS encrypted_memcopy_gpu_to_cpu(uvm_gpu_t *gpu,
+                                              void *dst_plain,
+                                              uvm_gpu_address_t src_gpu_address,
+                                              size_t size,
+                                              unsigned num_rotations_to_insert)
+{
+    NV_STATUS status;
+    uvm_push_t push;
+    uvm_conf_computing_dma_buffer_t *dma_buffer;
+    uvm_gpu_address_t dst_gpu_address, auth_tag_gpu_address;
+    void *src_cipher, *auth_tag;
+    uvm_channel_t *channel;
+
+    UVM_ASSERT(g_uvm_global.conf_computing_enabled);
+    UVM_ASSERT(size <= UVM_CONF_COMPUTING_DMA_BUFFER_SIZE);
+
+    status = uvm_conf_computing_dma_buffer_alloc(&gpu->conf_computing.dma_buffer_pool, &dma_buffer, NULL);
+    if (status != NV_OK)
+        return status;
+
+    status = uvm_push_begin(gpu->channel_manager, UVM_CHANNEL_TYPE_GPU_TO_CPU, &push, "Small GPU > CPU encryption");
+    if (status != NV_OK)
+        goto out;
+
+    channel = push.channel;
+    uvm_conf_computing_log_gpu_encryption(channel, size, dma_buffer->decrypt_iv);
+    dma_buffer->key_version[0] = uvm_channel_pool_key_version(channel->pool);
+
+    dst_gpu_address = uvm_mem_gpu_address_virtual_kernel(dma_buffer->alloc, gpu);
+    auth_tag_gpu_address = uvm_mem_gpu_address_virtual_kernel(dma_buffer->auth_tag, gpu);
+    gpu->parent->ce_hal->encrypt(&push, dst_gpu_address, src_gpu_address, size, auth_tag_gpu_address);
+
+    status = uvm_push_end_and_wait(&push);
+    if (status != NV_OK)
+        goto out;
+
+    TEST_NV_CHECK_GOTO(force_key_rotations(channel->pool, num_rotations_to_insert), out);
+
+    // If num_rotations_to_insert is not zero, the current encryption key will
+    // be different from the one used during CE encryption.
+
+    src_cipher = uvm_mem_get_cpu_addr_kernel(dma_buffer->alloc);
+    auth_tag = uvm_mem_get_cpu_addr_kernel(dma_buffer->auth_tag);
+    status = uvm_conf_computing_cpu_decrypt(channel,
+                                            dst_plain,
+                                            src_cipher,
+                                            dma_buffer->decrypt_iv,
+                                            dma_buffer->key_version[0],
+                                            size,
+                                            auth_tag);
+
+ out:
+    uvm_conf_computing_dma_buffer_free(&gpu->conf_computing.dma_buffer_pool, dma_buffer, NULL);
+    return status;
+}
+
+static NV_STATUS test_channel_key_rotation_cpu_decryption(uvm_gpu_t *gpu,
+                                                          unsigned num_repetitions,
+                                                          unsigned num_rotations_to_insert)
+{
+    unsigned i;
+    uvm_channel_pool_t *gpu_to_cpu_pool;
+    NV_STATUS status = NV_OK;
+    size_t size = UVM_CONF_COMPUTING_DMA_BUFFER_SIZE;
+    NvU8 *plain_cpu = NULL;
+    uvm_mem_t *plain_gpu = NULL;
+    uvm_gpu_address_t plain_gpu_address;
+
+    if (!uvm_conf_computing_is_key_rotation_enabled(gpu))
+        return NV_OK;
+
+    gpu_to_cpu_pool = gpu->channel_manager->pool_to_use.default_for_type[UVM_CHANNEL_TYPE_GPU_TO_CPU];
+    TEST_CHECK_RET(uvm_conf_computing_is_key_rotation_enabled_in_pool(gpu_to_cpu_pool));
+
+    plain_cpu = (NvU8 *) uvm_kvmalloc_zero(size);
+    if (plain_cpu == NULL) {
+        status = NV_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    TEST_NV_CHECK_GOTO(uvm_mem_alloc_vidmem(size, gpu, &plain_gpu), out);
+    TEST_NV_CHECK_GOTO(uvm_mem_map_gpu_kernel(plain_gpu, gpu), out);
+    TEST_NV_CHECK_GOTO(memset_vidmem(plain_gpu, 1), out);
+
+    plain_gpu_address = uvm_mem_gpu_address_virtual_kernel(plain_gpu, gpu);
+
+    for (i = 0; i < num_repetitions; i++) {
+        unsigned j;
+
+        TEST_NV_CHECK_GOTO(encrypted_memcopy_gpu_to_cpu(gpu,
+                                                        plain_cpu,
+                                                        plain_gpu_address,
+                                                        size,
+                                                        num_rotations_to_insert),
+                          out);
+
+        for (j = 0; j < size; j++)
+            TEST_CHECK_GOTO(plain_cpu[j] == 1, out);
+
+        memset(plain_cpu, 0, size);
+
+    }
+out:
+    uvm_mem_free(plain_gpu);
+    uvm_kvfree(plain_cpu);
+
+    return status;
+}
+
+// Test that CPU decryptions can use old keys i.e. previous versions of the keys
+// that are no longer the current key, due to key rotation. Given that SEC2
+// does not expose encryption capabilities, the "decrypt-after-rotation" problem
+// is exclusive of CE encryptions.
+static NV_STATUS test_channel_key_rotation_decrypt_after_key_rotation(uvm_gpu_t *gpu)
+{
+    // Instruct encrypted_memcopy_gpu_to_cpu to insert several key rotations
+    // between the GPU encryption, and the associated CPU decryption.
+    unsigned num_rotations_to_insert = 8;
+
+    TEST_NV_CHECK_RET(test_channel_key_rotation_cpu_decryption(gpu, 1, num_rotations_to_insert));
+
+    return NV_OK;
+}
+
+static NV_STATUS test_channel_key_rotation(uvm_va_space_t *va_space)
+{
+    uvm_gpu_t *gpu;
+
+    if (!g_uvm_global.conf_computing_enabled)
+        return NV_OK;
+
+    for_each_va_space_gpu(gpu, va_space) {
+        if (!uvm_conf_computing_is_key_rotation_enabled(gpu))
+            break;
+
+        TEST_NV_CHECK_RET(test_channel_key_rotation_basic(gpu));
+
+        TEST_NV_CHECK_RET(test_channel_key_rotation_interleave(gpu));
+
+        TEST_NV_CHECK_RET(test_channel_key_rotation_decrypt_after_key_rotation(gpu));
+    }
+
+    return NV_OK;
 }
 
 NV_STATUS test_write_ctrl_gpfifo_noop(uvm_va_space_t *va_space)
@@ -845,11 +1372,9 @@ NV_STATUS test_write_ctrl_gpfifo_tight(uvm_va_space_t *va_space)
     NvU64 entry;
     uvm_push_t push;
 
-    gpu = uvm_va_space_find_first_gpu(va_space);
-
     // TODO: Bug 3839176: the test is waived on Confidential Computing because
     // it assumes that GPU can access system memory without using encryption.
-    if (uvm_conf_computing_mode_enabled(gpu))
+    if (g_uvm_global.conf_computing_enabled)
         return NV_OK;
 
     for_each_va_space_gpu(gpu, va_space) {
@@ -924,7 +1449,7 @@ static NV_STATUS test_channel_pushbuffer_extension_base(uvm_va_space_t *va_space
         uvm_channel_manager_t *manager;
         uvm_channel_pool_t *pool;
 
-        if (!uvm_gpu_has_pushbuffer_segments(gpu))
+        if (!uvm_parent_gpu_needs_pushbuffer_segments(gpu->parent))
             continue;
 
         // The GPU channel manager pushbuffer is destroyed and then re-created
@@ -999,6 +1524,14 @@ NV_STATUS uvm_test_channel_sanity(UVM_TEST_CHANNEL_SANITY_PARAMS *params, struct
     if (status != NV_OK)
         goto done;
 
+    status = test_channel_iv_rotation(va_space);
+    if (status != NV_OK)
+        goto done;
+
+    status = test_channel_key_rotation(va_space);
+    if (status != NV_OK)
+        goto done;
+
     // The following tests have side effects, they reset the GPU's
     // channel_manager.
     status = test_channel_pushbuffer_extension_base(va_space);
@@ -1019,6 +1552,10 @@ NV_STATUS uvm_test_channel_sanity(UVM_TEST_CHANNEL_SANITY_PARAMS *params, struct
             goto done;
     }
 
+    status = test_iommu(va_space);
+    if (status != NV_OK)
+        goto done;
+
 done:
     uvm_va_space_up_read_rm(va_space);
     uvm_mutex_unlock(&g_uvm_global.global_lock);
@@ -1034,15 +1571,15 @@ static NV_STATUS uvm_test_channel_stress_stream(uvm_va_space_t *va_space,
     if (params->iterations == 0 || params->num_streams == 0)
         return NV_ERR_INVALID_PARAMETER;
 
+    // TODO: Bug 3839176: the test is waived on Confidential Computing because
+    // it assumes that GPU can access system memory without using encryption.
+    if (g_uvm_global.conf_computing_enabled)
+        return NV_OK;
+
     // TODO: Bug 1764963: Rework the test to not rely on the global lock as that
     // serializes all the threads calling this at the same time.
     uvm_mutex_lock(&g_uvm_global.global_lock);
     uvm_va_space_down_read_rm(va_space);
-
-    // TODO: Bug 3839176: the test is waived on Confidential Computing because
-    // it assumes that GPU can access system memory without using encryption.
-    if (uvm_conf_computing_mode_enabled(uvm_va_space_find_first_gpu(va_space)))
-        goto done;
 
     status = stress_test_all_gpus_in_va(va_space,
                                         params->num_streams,
@@ -1050,7 +1587,6 @@ static NV_STATUS uvm_test_channel_stress_stream(uvm_va_space_t *va_space,
                                         params->seed,
                                         params->verbose);
 
-done:
     uvm_va_space_up_read_rm(va_space);
     uvm_mutex_unlock(&g_uvm_global.global_lock);
 
@@ -1131,6 +1667,126 @@ done:
     return status;
 }
 
+static NV_STATUS channel_stress_key_rotation_cpu_encryption(uvm_gpu_t *gpu, UVM_TEST_CHANNEL_STRESS_PARAMS *params)
+{
+    int i;
+    uvm_channel_pool_t *cpu_to_gpu_pool;
+    NV_STATUS status = NV_OK;
+    size_t size = UVM_CONF_COMPUTING_DMA_BUFFER_SIZE;
+    void *initial_plain_cpu = NULL;
+    uvm_mem_t *plain_gpu = NULL;
+    uvm_gpu_address_t plain_gpu_address;
+
+    UVM_ASSERT(params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_CPU_TO_GPU);
+
+    cpu_to_gpu_pool = gpu->channel_manager->pool_to_use.default_for_type[UVM_CHANNEL_TYPE_CPU_TO_GPU];
+    TEST_CHECK_RET(uvm_conf_computing_is_key_rotation_enabled_in_pool(cpu_to_gpu_pool));
+
+    initial_plain_cpu = uvm_kvmalloc_zero(size);
+    if (initial_plain_cpu == NULL) {
+        status = NV_ERR_NO_MEMORY;
+        goto out;
+    }
+
+    TEST_NV_CHECK_GOTO(uvm_mem_alloc_vidmem(size, gpu, &plain_gpu), out);
+    TEST_NV_CHECK_GOTO(uvm_mem_map_gpu_kernel(plain_gpu, gpu), out);
+    plain_gpu_address = uvm_mem_gpu_address_virtual_kernel(plain_gpu, gpu);
+
+    memset(initial_plain_cpu, 1, size);
+
+    for (i = 0; i < params->iterations; i++) {
+        TEST_NV_CHECK_GOTO(uvm_conf_computing_util_memcopy_cpu_to_gpu(gpu,
+                                                                      plain_gpu_address,
+                                                                      initial_plain_cpu,
+                                                                      size,
+                                                                      NULL,
+                                                                      "CPU > GPU"),
+                           out);
+    }
+
+out:
+    uvm_mem_free(plain_gpu);
+    uvm_kvfree(initial_plain_cpu);
+
+    return status;
+}
+
+static NV_STATUS channel_stress_key_rotation_cpu_decryption(uvm_gpu_t *gpu, UVM_TEST_CHANNEL_STRESS_PARAMS *params)
+{
+    unsigned num_rotations_to_insert = 0;
+
+    UVM_ASSERT(params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_GPU_TO_CPU);
+
+    return test_channel_key_rotation_cpu_decryption(gpu, params->iterations, num_rotations_to_insert);
+}
+
+static NV_STATUS channel_stress_key_rotation_rotate(uvm_gpu_t *gpu, UVM_TEST_CHANNEL_STRESS_PARAMS *params)
+{
+    NvU32 i;
+
+    UVM_ASSERT(params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_ROTATE);
+
+    for (i = 0; i < params->iterations; ++i) {
+        NV_STATUS status;
+        uvm_channel_pool_t *pool;
+        uvm_channel_type_t type;
+
+        if ((i % 3) == 0)
+            type = UVM_CHANNEL_TYPE_CPU_TO_GPU;
+        else if ((i % 3) == 1)
+            type = UVM_CHANNEL_TYPE_GPU_TO_CPU;
+        else
+            type = UVM_CHANNEL_TYPE_WLC;
+
+        pool = gpu->channel_manager->pool_to_use.default_for_type[type];
+
+        if (!uvm_conf_computing_is_key_rotation_enabled_in_pool(pool))
+            return NV_ERR_INVALID_STATE;
+
+        status = force_key_rotation(pool);
+        if (status != NV_OK)
+            return status;
+    }
+
+    return NV_OK;
+}
+
+// The objective of this test is documented in the user-level function
+static NV_STATUS uvm_test_channel_stress_key_rotation(uvm_va_space_t *va_space, UVM_TEST_CHANNEL_STRESS_PARAMS *params)
+{
+    uvm_test_rng_t rng;
+    uvm_gpu_t *gpu;
+    NV_STATUS status = NV_OK;
+
+    if (!g_uvm_global.conf_computing_enabled)
+        return NV_OK;
+
+    uvm_test_rng_init(&rng, params->seed);
+
+    uvm_va_space_down_read(va_space);
+
+    // Key rotation should be enabled, or disabled, in all GPUs. Pick a random
+    // one.
+    gpu = random_va_space_gpu(&rng, va_space);
+
+    if (!uvm_conf_computing_is_key_rotation_enabled(gpu))
+        goto out;
+
+    if (params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_CPU_TO_GPU)
+        status = channel_stress_key_rotation_cpu_encryption(gpu, params);
+    else if (params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_GPU_TO_CPU)
+        status = channel_stress_key_rotation_cpu_decryption(gpu, params);
+    else if (params->key_rotation_operation == UVM_TEST_CHANNEL_STRESS_KEY_ROTATION_OPERATION_ROTATE)
+        status = channel_stress_key_rotation_rotate(gpu, params);
+    else
+        status = NV_ERR_INVALID_PARAMETER;
+
+out:
+    uvm_va_space_up_read(va_space);
+
+    return status;
+}
+
 NV_STATUS uvm_test_channel_stress(UVM_TEST_CHANNEL_STRESS_PARAMS *params, struct file *filp)
 {
     uvm_va_space_t *va_space = uvm_va_space_get(filp);
@@ -1142,6 +1798,8 @@ NV_STATUS uvm_test_channel_stress(UVM_TEST_CHANNEL_STRESS_PARAMS *params, struct
             return uvm_test_channel_stress_update_channels(va_space, params);
         case UVM_TEST_CHANNEL_STRESS_MODE_NOOP_PUSH:
             return uvm_test_channel_noop_push(va_space, params);
+        case UVM_TEST_CHANNEL_STRESS_MODE_KEY_ROTATION:
+            return uvm_test_channel_stress_key_rotation(va_space, params);
         default:
             return NV_ERR_INVALID_PARAMETER;
     }

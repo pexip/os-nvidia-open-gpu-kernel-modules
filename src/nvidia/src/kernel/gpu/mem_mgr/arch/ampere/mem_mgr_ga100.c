@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -25,14 +25,13 @@
 #include "gpu/gpu.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/mem_sys/kern_mem_sys.h"
-#include "gpu/mem_mgr/heap.h"
 #include "gpu/mem_mgr/mem_desc.h"
+#include "platform/sli/sli.h"
 
 #include "nvRmReg.h"
 
 #include "kernel/gpu/intr/intr.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
-#include "gpu/subdevice/subdevice.h"
 #include "vgpu/vgpu_events.h"
 #include "nvdevid.h"
 
@@ -82,6 +81,15 @@ memmgrAllocDetermineAlignment_GA100
     NvU64          hwAlignment
 )
 {
+    const MEMORY_SYSTEM_STATIC_CONFIG    *pMemorySystemConfig =
+        kmemsysGetStaticConfig(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
+
+    // set the alignment to 256K if property is enabled and its a compressed surface
+    if (pMemorySystemConfig->bUseOneToFourComptagLineAllocation &&
+        !FLD_TEST_DRF(OS32, _ATTR, _COMPR, _NONE, retAttr))
+    {
+        hwAlignment = pMemorySystemConfig->comprPageSize - 1;
+    }
 
     return memmgrAllocDetermineAlignment_GM107(pGpu, pMemoryManager, pMemSize, pAlign, alignPad,
                                                allocFlags, retAttr, retAttr2, hwAlignment);
@@ -116,7 +124,7 @@ memmgrScrubRegistryOverrides_GA100
          pGpu->getProperty(pGpu, PDB_PROP_GPU_IS_VIRTUALIZATION_MODE_HOST_VGPU) ||
          IS_VIRTUAL_WITHOUT_SRIOV(pGpu) ||
          RMCFG_FEATURE_PLATFORM_GSP ||
-         (pGpu->getProperty(pGpu, PDB_PROP_GPU_BROKEN_FB) && !gpuIsCacheOnlyModeEnabled(pGpu)) ||
+         pGpu->getProperty(pGpu, PDB_PROP_GPU_BROKEN_FB) ||
          IsSLIEnabled(pGpu))
     {
         pMemoryManager->bScrubOnFreeEnabled = NV_FALSE;
@@ -275,7 +283,7 @@ memmgrGetMaxContextSize_GA100
     // of GR buffers. Since GR buffers are not allocated inside guest RM
     // we are skipping reservation there
     //
-    if (RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM &&
+    if (RMCFG_FEATURE_PLATFORM_WINDOWS &&
         pGpu->getProperty(pGpu, PDB_PROP_GPU_IN_TCC_MODE))
     {
         size += 32 * 1024 * 1024;
@@ -368,8 +376,8 @@ memmgrGetBlackListPages_GA100
 
     while (baseIndex < NV2080_CTRL_FB_DYNAMIC_BLACKLIST_MAX_PAGES)
     {
-        RM_API *pRmApi = IS_GSP_CLIENT(pGpu) ? GPU_GET_PHYSICAL_RMAPI(pGpu)
-                                             : rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
+        RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+
         portMemSet(pBlParams, 0, sizeof(*pBlParams));
 
         pBlParams->baseIndex = baseIndex;
@@ -493,14 +501,16 @@ memmgrInsertUnprotectedRegionAtBottomOfFb_GA100
 }
 
 NvBool
-memmgrIsApertureSupportedByFla_GA100
+memmgrIsMemDescSupportedByFla_GA100
 (
     OBJGPU *pGpu,
     MemoryManager *pMemoryManager,
-    NV_ADDRESS_SPACE aperture
+    MEMORY_DESCRIPTOR *pMemDesc
 )
 {
-    if (aperture == ADDR_FBMEM)
+    if ((memdescGetAddressSpace(pMemDesc) == ADDR_FBMEM)
+         || memdescIsEgm(pMemDesc)
+       )
     {
         return NV_TRUE;
     }

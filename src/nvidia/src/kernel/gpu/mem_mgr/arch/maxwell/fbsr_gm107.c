@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2009-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -23,12 +23,14 @@
 
 #include "core/core.h"
 #include "os/os.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "gpu/mem_mgr/fbsr.h"
 #include "gpu/bus/kern_bus.h"
 #include "gpu/mem_mgr/mem_desc.h"
 #include "published/maxwell/gm107/dev_ram.h"
 #include "core/thread_state.h"
+#include "nvrm_registry.h"
 
 //
 // Implementation notes:
@@ -253,7 +255,8 @@ fbsrInit_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr)
             goto fail;
         }
 
-        status = memdescAlloc(pFbsr->pSysMemDesc);
+        memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_126, 
+                        pFbsr->pSysMemDesc);
         if (status != NV_OK)
         {
             NV_ASSERT(status == NV_OK);
@@ -340,14 +343,38 @@ NV_STATUS
 fbsrBegin_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, FBSR_OP_TYPE op)
 {
     NV_STATUS status = NV_OK;
+    MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
 
     pFbsr->op = op;
     pFbsr->bOperationFailed = NV_FALSE;
     if (op != FBSR_OP_SIZE_BUF && op != FBSR_OP_DESTROY)
     {
-        if (IS_GSP_CLIENT(pGpu))
+        if (IS_GSP_CLIENT(pGpu) || IS_VIRTUAL(pGpu))
         {
             pFbsr->pCe = NULL;
+        }
+
+        //
+        // On guest, force re-initialize CeUtils with inst-in-sys.
+        // See bug 4414361 for details.
+        //
+        if (IS_VIRTUAL(pGpu))
+        {
+            NvU32 instLocOverrides = pGpu->instLocOverrides;
+            NvU32 instLocOverrides4 = pGpu->instLocOverrides4;
+
+            if (pMemoryManager->pCeUtils != NULL)
+            {
+                memmgrDestroyCeUtils(pMemoryManager, NV_FALSE);
+            }
+
+            pGpu->instLocOverrides = FLD_SET_DRF(_REG_STR, _RM_INST_LOC, _USERD, _NCOH, pGpu->instLocOverrides);
+            pGpu->instLocOverrides4 = FLD_SET_DRF(_REG_STR_RM, _INST_LOC_4, _CHANNEL_PUSHBUFFER, _NCOH, pGpu->instLocOverrides4);
+
+            NV_ASSERT_OK_OR_RETURN(memmgrInitCeUtils(pMemoryManager, NV_FALSE));
+
+            pGpu->instLocOverrides = instLocOverrides;
+            pGpu->instLocOverrides4 = instLocOverrides4;
         }
 
         NV_PRINTF(LEVEL_INFO, "%s %lld bytes of data\n",
@@ -417,7 +444,8 @@ fbsrBegin_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, FBSR_OP_TYPE op)
                         break;
                     }
 
-                    status = memdescAlloc(pFbsr->pSysMemDesc);
+                    memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_127, 
+                                    pFbsr->pSysMemDesc);
                     if (status != NV_OK)
                     {
                         NV_ASSERT(status == NV_OK);
@@ -452,7 +480,7 @@ fbsrBegin_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, FBSR_OP_TYPE op)
                         break;
                     }
 
-                    if(bIommuEnabled)
+                    if (bIommuEnabled)
                     {
                         status = osSrPinSysmem(pGpu->pOsGpuInfo,
                                                     pFbsr->length,
@@ -543,7 +571,7 @@ fbsrBegin_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, FBSR_OP_TYPE op)
         }
 
         // Initialize FBSR on GSP
-        if (IS_GSP_CLIENT(pGpu) && (pFbsr->pSysMemDesc != NULL))
+        if ((status == NV_OK) && IS_GSP_CLIENT(pGpu) && (pFbsr->pSysMemDesc != NULL))
         {
             NV_ASSERT_OK_OR_RETURN(_fbsrInitGsp(pGpu, pFbsr));
         }
@@ -657,9 +685,15 @@ fbsrEnd_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr)
 {
     NvBool bIommuEnabled = pGpu->getProperty(pGpu, PDB_PROP_GPU_ENABLE_IOMMU_SUPPORT);
     NV_STATUS status = NV_OK;
+    MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
 
     if (pFbsr->op != FBSR_OP_SIZE_BUF && pFbsr->op != FBSR_OP_DESTROY)
     {
+
+        if (IS_VIRTUAL(pGpu) && pMemoryManager->pCeUtils != NULL)
+        {
+            memmgrDestroyCeUtils(pMemoryManager, NV_FALSE);
+        }
     }
 
     if (pFbsr->op == FBSR_OP_RESTORE || pFbsr->bOperationFailed || pFbsr->op == FBSR_OP_DESTROY)
@@ -796,6 +830,7 @@ fbsrEnd_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr)
 void
 fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVidMemDesc)
 {
+    MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
     NV_STATUS  status = NV_OK;
 
     NV_ASSERT(!gpumgrGetBcEnabledStatus(pGpu));
@@ -867,7 +902,8 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
                                                MEMDESC_FLAGS_NONE);
                         if (status == NV_OK)
                         {
-                            status = memdescAlloc(pStandbyBuffer);
+                            memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_128, 
+                                            pStandbyBuffer);
                             if (status != NV_OK )
                             {
                                 memdescDestroy(pStandbyBuffer);
@@ -901,8 +937,17 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
             case FBSR_TYPE_PAGED_DMA:
             case FBSR_TYPE_DMA:
                 {
+                    TRANSFER_SURFACE   vidSurface = {0};
+                    TRANSFER_SURFACE   sysSurface = {0};
+
+                    vidSurface.pMemDesc = pVidMemDesc;
+                    sysSurface.pMemDesc = pFbsr->pSysMemDesc;
+                    sysSurface.offset   = pFbsr->sysOffset;
+
                     if (pFbsr->op == FBSR_OP_RESTORE)
                     {
+                        NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &vidSurface, &sysSurface, pVidMemDesc->Size,
+                                                   TRANSFER_FLAGS_PREFER_CE | TRANSFER_FLAGS_CE_PRI_DEFER_FLUSH));
                     }
                     else
                     {
@@ -912,16 +957,31 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
                                 pFbsr->sysOffset, pVidMemDesc, 0,
                                 pVidMemDesc->Size);
                         }
+                        else
+                        {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &sysSurface, &vidSurface, pVidMemDesc->Size,
+                                                   TRANSFER_FLAGS_PREFER_CE | TRANSFER_FLAGS_CE_PRI_DEFER_FLUSH));
+                        }
                     }
                     break;
                 }
             case FBSR_TYPE_PERSISTENT:
                 {
+                    TRANSFER_SURFACE   vidSurface = {0};
+                    TRANSFER_SURFACE   sysSurface = {0};
+
+                    vidSurface.pMemDesc = pVidMemDesc;
+                    sysSurface.pMemDesc = memdescGetStandbyBuffer(pVidMemDesc);
+
                     if (pFbsr->op == FBSR_OP_RESTORE)
                     {
+                        NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &vidSurface, &sysSurface, pVidMemDesc->Size,
+                                                   TRANSFER_FLAGS_PREFER_CE | TRANSFER_FLAGS_CE_PRI_DEFER_FLUSH));
                     }
                     else
                     {
+                        NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &sysSurface, &vidSurface, pVidMemDesc->Size,
+                                                   TRANSFER_FLAGS_PREFER_CE | TRANSFER_FLAGS_CE_PRI_DEFER_FLUSH));
                     }
                     break;
                 }
@@ -976,11 +1036,20 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
                             }
                         }
 
+                        TRANSFER_SURFACE vidSurface = {0};
+                        vidSurface.pMemDesc = pVidMemDesc;
+                        vidSurface.offset   = vidOffset;
+
+                        TRANSFER_SURFACE sysSurface = {0};
+                        sysSurface.pMemDesc = pFbsr->pSysMemDesc;
+
                         if (pFbsr->op == FBSR_OP_RESTORE)
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &vidSurface, &sysSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
                         else
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &sysSurface, &vidSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
 
                         if (pFbsr->op == FBSR_OP_SAVE)
@@ -1071,11 +1140,20 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
                             }
                         }
 
+                        TRANSFER_SURFACE vidSurface = {0};
+                        vidSurface.pMemDesc = pVidMemDesc;
+                        vidSurface.offset   = vidOffset;
+
+                        TRANSFER_SURFACE sysSurface = {0};
+                        sysSurface.pMemDesc = pFbsr->pSysMemDesc;
+
                         if (pFbsr->op == FBSR_OP_RESTORE)
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &vidSurface, &sysSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
                         else
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &sysSurface, &vidSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
 
                         if (pFbsr->op == FBSR_OP_SAVE)
@@ -1123,11 +1201,20 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
                             }
                         }
 
+                        TRANSFER_SURFACE vidSurface = {0};
+                        vidSurface.pMemDesc = pVidMemDesc;
+                        vidSurface.offset   = vidOffset;
+
+                        TRANSFER_SURFACE sysSurface = {0};
+                        sysSurface.pMemDesc = pFbsr->pSysMemDesc;
+
                         if (pFbsr->op == FBSR_OP_RESTORE)
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &vidSurface, &sysSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
                         else
                         {
+                            NV_ASSERT_OK(memmgrMemCopy(pMemoryManager, &sysSurface, &vidSurface, copySize, TRANSFER_FLAGS_PREFER_CE));
                         }
 
                         if (pFbsr->op == FBSR_OP_SAVE)
@@ -1154,4 +1241,3 @@ fbsrCopyMemoryMemDesc_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, MEMORY_DESCRIPTOR *pVi
 
 #ifdef DEBUG
 #endif
-

@@ -1,4 +1,4 @@
-From 575dab59a98c0c6938124763f1d08052c922e159 Mon Sep 17 00:00:00 2001
+From eed9cbc88cb805a2fbd18a09cce733a1951f6d59 Mon Sep 17 00:00:00 2001
 From: Andreas Beckmann <anbe@debian.org>
 Date: Mon, 31 Oct 2022 14:40:42 +0100
 Subject: [PATCH] conftest.sh: remove empty lines from uts_release output
@@ -8,10 +8,10 @@ Subject: [PATCH] conftest.sh: remove empty lines from uts_release output
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/conftest.sh b/conftest.sh
-index 60277da8..70a3d5af 100755
+index 889cf654..90af3bb4 100755
 --- a/conftest.sh
 +++ b/conftest.sh
-@@ -5985,7 +5985,7 @@ compile_test() {
+@@ -6132,7 +6132,7 @@ compile_test() {
              echo "#include <generated/utsrelease.h>
              UTS_RELEASE" > conftest$$.c
  

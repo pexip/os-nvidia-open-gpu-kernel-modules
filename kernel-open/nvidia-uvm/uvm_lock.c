@@ -27,7 +27,7 @@
 
 const char *uvm_lock_order_to_string(uvm_lock_order_t lock_order)
 {
-    BUILD_BUG_ON(UVM_LOCK_ORDER_COUNT != 33);
+    BUILD_BUG_ON(UVM_LOCK_ORDER_COUNT != 36);
 
     switch (lock_order) {
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_INVALID);
@@ -48,7 +48,9 @@ const char *uvm_lock_order_to_string(uvm_lock_order_t lock_order)
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CONF_COMPUTING_DMA_BUFFER_POOL);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CHUNK_MAPPING);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_PAGE_TREE);
+        UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_KEY_ROTATION);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CSL_PUSH);
+        UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_KEY_ROTATION_WLC);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CSL_WLC_PUSH);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CSL_SEC2_PUSH);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_PUSH);
@@ -62,6 +64,7 @@ const char *uvm_lock_order_to_string(uvm_lock_order_t lock_order)
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_VA_SPACE_TOOLS);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_SEMA_POOL_TRACKER);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_SECURE_SEMAPHORE);
+        UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_CSL_CTX);
         UVM_ENUM_STRING_CASE(UVM_LOCK_ORDER_LEAF);
         UVM_ENUM_STRING_DEFAULT();
     }
@@ -362,10 +365,7 @@ NV_STATUS uvm_bit_locks_init(uvm_bit_locks_t *bit_locks, size_t count, uvm_lock_
     if (!bit_locks->bits)
         return NV_ERR_NO_MEMORY;
 
-#if UVM_IS_DEBUG()
-    uvm_locking_assert_initialized();
-    bit_locks->lock_order = lock_order;
-#endif
+    uvm_lock_debug_init(bit_locks, lock_order);
 
     return NV_OK;
 }

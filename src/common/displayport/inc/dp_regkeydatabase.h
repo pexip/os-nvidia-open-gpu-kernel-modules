@@ -59,9 +59,6 @@
 
 #define NV_DP_REGKEY_FORCE_EDP_ILR                    "DP_BYPASS_EDP_ILR_REV_CHECK"
 
-// Regkey to make sure enable FEC only when RM notified sink successfully
-#define NV_DP_CHECK_FEC_FOR_DDS_DSC_PANEL             "DP_DDS_CHECK_FEC_TO_ENABLE"
-
 // Message to power down video stream before power down link (set D3)
 #define NV_DP_REGKEY_POWER_DOWN_PHY                   "DP_POWER_DOWN_PHY"
 
@@ -77,11 +74,16 @@
 //
 #define NV_DP_DSC_MST_CAP_BUG_3143315                  "DP_DSC_MST_CAP_BUG_3143315"
 
+
 // Bug 4388987 : This regkey will disable reading PCON caps for MST.
 #define NV_DP_REGKEY_MST_PCON_CAPS_READ_DISABLED       "DP_BUG_4388987_WAR"
 
 // Bug 4426624: Flush timeslot change to HW when dirty bit is set.
 #define NV_DP_REGKEY_FLUSH_TIMESLOT_INFO_WHEN_DIRTY    "DP_BUG_4426624_WAR"
+
+// Bug 4459839 : This regkey will enable DSC irrespective of LT status.
+#define NV_DP_REGKEY_FORCE_DSC_ON_SINK                 "DP_FORCE_DSC_ON_SINK"
+#define NV_DP_REGKEY_ENABLE_SKIP_DPCD_READS_WAR        "DP_BUG_4478047_WAR"
 
 //
 // Data Base used to store all the regkey values.
@@ -115,9 +117,10 @@ struct DP_REGKEY_DATABASE
     bool  bBypassEDPRevCheck;
     bool  bDscMstCapBug3143315;
     bool  bPowerDownPhyBeforeD3;
-    bool  bCheckFECForDynamicMuxDSCPanel;
     bool  bReassessMaxLink;
     bool  bMSTPCONCapsReadDisabled;
+    bool  bForceDscOnSink;
+    bool  bSkipFakeDeviceDpcdAccess;
     bool  bFlushTimeslotWhenDirty;
 };
 

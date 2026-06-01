@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -34,9 +34,9 @@
 #include "core/prelude.h"
 #include "core/locks.h"
 #include "gpu/mem_mgr/ce_utils.h"
-#include "gpu/subdevice/subdevice.h"
 #include "kernel/gpu/mem_mgr/ce_utils_sizes.h"
 #include "vgpu/rpc_headers.h"
+#include "gpu/device/device.h"
 
 #include "class/clb0b5.h" // MAXWELL_DMA_COPY_A
 #include "class/clc0b5.h" // PASCAL_DMA_COPY_A
@@ -47,6 +47,50 @@
 #include "class/clc86f.h" // HOPPER_CHANNEL_GPFIFO_A
 
 #include "class/cl0080.h"
+
+static NV_STATUS _memUtilsGetCe
+(
+    OBJGPU *pGpu,
+    NvHandle hClient,
+    NvHandle hDevice,
+    NvU32 *pCeInstance
+)
+{
+    if (IS_MIG_IN_USE(pGpu))
+    {
+        RsClient *pClient;
+        Device *pDevice;
+
+        NV_ASSERT_OK_OR_RETURN(
+            serverGetClientUnderLock(&g_resServ, hClient, &pClient));
+
+        NV_ASSERT_OK_OR_RETURN(
+            deviceGetByHandle(pClient, hDevice, &pDevice));
+
+        NV_ASSERT_OK_OR_RETURN(kmigmgrGetGPUInstanceScrubberCe(pGpu, GPU_GET_KERNEL_MIG_MANAGER(pGpu), pDevice, pCeInstance));
+        return NV_OK;
+    }
+    else
+    {
+        KernelBus *pKernelBus = GPU_GET_KERNEL_BUS(pGpu);
+
+        NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, gpuUpdateEngineTable(pGpu));
+
+        KernelCE  *pKCe = NULL;
+
+        KCE_ITER_ALL_BEGIN(pGpu, pKCe, 0)
+            if (kbusCheckEngine_HAL(pGpu, pKernelBus, ENG_CE(pKCe->publicID)) &&
+               !ceIsCeGrce(pGpu, RM_ENGINE_TYPE_COPY(pKCe->publicID)) &&
+               gpuCheckEngineTable(pGpu, RM_ENGINE_TYPE_COPY(pKCe->publicID)))
+            {
+                *pCeInstance = pKCe->publicID;
+                return NV_OK;
+            }
+        KCE_ITER_END
+    }
+
+    return NV_ERR_INSUFFICIENT_RESOURCES;
+}
 
 NV_STATUS
 ceutilsConstruct_IMPL
@@ -59,10 +103,18 @@ ceutilsConstruct_IMPL
 {
     NV_STATUS status = NV_OK;
     NvU64 allocFlags = pAllocParams->flags;
+    NvBool bForceCeId = FLD_TEST_DRF(0050_CEUTILS, _FLAGS, _FORCE_CE_ID, _TRUE, allocFlags);
     NV_ASSERT_OR_RETURN(pGpu, NV_ERR_INVALID_STATE);
 
     NvBool bMIGInUse = IS_MIG_IN_USE(pGpu);
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+
+    pCeUtils->pGpu = pGpu;
+
+    if (FLD_TEST_DRF(0050_CEUTILS, _FLAGS, _FIFO_LITE, _TRUE, allocFlags))
+    {
+        return NV_ERR_NOT_SUPPORTED;
+    }
 
     // Allocate channel with RM internal client
     RM_API *pRmApi = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
@@ -110,15 +162,13 @@ ceutilsConstruct_IMPL
 
     pChannel->bClientAllocated = NV_TRUE;
     pChannel->pGpu = pGpu;
-
-    pChannel->deviceId = pCeUtils->hDevice;
-    pChannel->subdeviceId = pCeUtils->hSubdevice;
-
     pChannel->pKernelMIGGpuInstance = pKernelMIGGPUInstance;
 
     // We'll allocate new VAS for now. Sharing client VAS will be added later
     pChannel->hVASpaceId = NV01_NULL_OBJECT;
     pChannel->bUseVasForCeCopy = FLD_TEST_DRF(0050_CEUTILS, _FLAGS, _VIRTUAL_MODE, _TRUE, allocFlags);
+
+    pChannel->bSecure = FLD_TEST_DRF(0050_CEUTILS, _FLAGS, _CC_SECURE, _TRUE, allocFlags);
 
     // Detect if we can enable fast scrub on this channel
     status = memmgrMemUtilsGetCopyEngineClass_HAL(pGpu, pMemoryManager, &pCeUtils->hTdCopyClass);
@@ -135,11 +185,35 @@ ceutilsConstruct_IMPL
         pChannel->type = CE_SCRUBBER_CHANNEL;
     }
 
+    // For self-hosted Hopper, we can only use VA copy or faster scrubber
+    if (pMemoryManager->bCePhysicalVidmemAccessNotSupported)
+    {
+        if (!pChannel->bUseVasForCeCopy &&
+            (pChannel->type != FAST_SCRUBBER_CHANNEL))
+        {
+            status = NV_ERR_NOT_SUPPORTED;
+            goto free_channel;
+        }
+    }
+
     // Set up various channel resources
     status = channelSetupIDs(pChannel, pGpu, pChannel->bUseVasForCeCopy, bMIGInUse);
     NV_ASSERT_OR_GOTO(status == NV_OK, free_client);
 
     channelSetupChannelBufferSizes(pChannel);
+
+    NV_ASSERT_OK_OR_GOTO(status, channelAllocSubdevice(pGpu, pChannel), free_client);
+
+    if (bForceCeId)
+    {
+        pChannel->ceId = pAllocParams->forceCeId;
+    }
+    else
+    {
+        NV_ASSERT_OK_OR_GOTO(status,
+            _memUtilsGetCe(pGpu, pChannel->hClient, pChannel->deviceId, &pChannel->ceId),
+            free_client);
+    }
 
     status = memmgrMemUtilsChannelInitialize_HAL(pGpu, pMemoryManager, pChannel);
     NV_ASSERT_OR_GOTO(status == NV_OK, free_channel);
@@ -150,8 +224,6 @@ ceutilsConstruct_IMPL
     // Allocate CE states
     status = memmgrMemUtilsCopyEngineInitialize_HAL(pGpu, pMemoryManager, pChannel);
     NV_ASSERT_OR_GOTO(status == NV_OK, free_channel);
-
-    pCeUtils->pGpu = pGpu;
 
     return status;
 
@@ -184,18 +256,6 @@ ceutilsDestruct_IMPL
     OBJGPU *pGpu = pCeUtils->pGpu;
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
     RM_API *pRmApi = rmapiGetInterface(RMAPI_GPU_LOCK_INTERNAL);
-
-    // Sanity checks
-    if ((pGpu == NULL) || (pChannel == NULL))
-    {
-        NV_PRINTF(LEVEL_WARNING, "Possible double-free of CeUtils!\n");
-        return;
-    }
-    else if (pGpu != pChannel->pGpu)
-    {
-        NV_PRINTF(LEVEL_ERROR, "Bad state during ceUtils teardown!\n");
-        return;
-    }
 
     if ((pChannel->bClientUserd) && (pChannel->pControlGPFifo != NULL))
     {
@@ -257,11 +317,7 @@ ceutilsServiceInterrupts_IMPL(CeUtils *pCeUtils)
     // if the lock is held, service any interrupts on the owned CE to make progress.
     // Bug 2527660 is filed to remove this change.
     //
-    // pChannel is null when PMA scrub requests are handled in vGPU plugin.
-    // In this case vGpu plugin allocates scrubber channel in PF domain so
-    // above mention deadlock is not present here.
-    //
-    if ((pChannel != NULL) && (rmDeviceGpuLockIsOwner(pChannel->pGpu->gpuInstance)))
+    if (rmDeviceGpuLockIsOwner(pChannel->pGpu->gpuInstance))
     {
         channelServiceScrubberInterrupts(pChannel);
     }
@@ -275,7 +331,7 @@ ceutilsServiceInterrupts_IMPL(CeUtils *pCeUtils)
 static NvBool
 _ceUtilsFastScrubEnabled
 (
-    POBJCHANNEL      pChannel,
+    OBJCHANNEL      *pChannel,
     CHANNEL_PB_INFO *pChannelPbInfo
 )
 {
@@ -313,7 +369,7 @@ _ceUtilsFastScrubEnabled
 static NV_STATUS
 _ceutilsSubmitPushBuffer
 (
-    POBJCHANNEL       pChannel,
+    OBJCHANNEL       *pChannel,
     NvBool            bPipelined,
     NvBool            bInsertFinishPayload,
     CHANNEL_PB_INFO * pChannelPbInfo
@@ -332,7 +388,7 @@ _ceutilsSubmitPushBuffer
     // Use BAR1 if CPU access is allowed, otherwise allocate and init shadow
     // buffer for DMA access
     //
-    NvU32 transferFlags = (TRANSFER_FLAGS_USE_BAR1     | 
+    NvU32 transferFlags = (TRANSFER_FLAGS_USE_BAR1     |
                            TRANSFER_FLAGS_SHADOW_ALLOC | 
                            TRANSFER_FLAGS_SHADOW_INIT_MEM);
     NV_PRINTF(LEVEL_INFO, "Actual size of copying to be pushed: %x\n", pChannelPbInfo->size);
@@ -358,6 +414,12 @@ _ceutilsSubmitPushBuffer
     }
     else
     {
+        if (pMemoryManager->bCePhysicalVidmemAccessNotSupported)
+        {
+            // Self-hosted Hopper only supports VA copy or fast scrubber
+            NV_ASSERT_OR_RETURN(pChannel->bUseVasForCeCopy, NV_ERR_NOT_SUPPORTED);
+        }
+
         methodsLength = channelFillCePb(pChannel, putIndex, bPipelined, bInsertFinishPayload, pChannelPbInfo);
     }
 
@@ -415,8 +477,7 @@ ceutilsMemset_IMPL
         return NV_ERR_INVALID_ARGUMENT;
     }
 
-    if ((memdescGetAddressSpace(pMemDesc) != ADDR_FBMEM) ||
-        (pMemDesc->pGpu != pCeUtils->pChannel->pGpu))
+    if (pMemDesc->pGpu != pCeUtils->pChannel->pGpu)
     {
         NV_PRINTF(LEVEL_ERROR, "Invalid memory descriptor passed.\n");
         return NV_ERR_INVALID_ARGUMENT;
@@ -526,13 +587,6 @@ ceutilsMemcopy_IMPL
         return NV_ERR_INVALID_ARGUMENT;
     }
 
-    if ((memdescGetAddressSpace(pSrcMemDesc) != ADDR_FBMEM) &&
-        (memdescGetAddressSpace(pDstMemDesc) != ADDR_FBMEM))
-    {
-        NV_PRINTF(LEVEL_ERROR, "Either Dst or Src memory should be in vidmem.\n");
-        return NV_ERR_INVALID_ARGUMENT;
-    }
-
     if ((pSrcMemDesc->pGpu != pCeUtils->pChannel->pGpu) ||
         (pDstMemDesc->pGpu != pCeUtils->pChannel->pGpu))
     {
@@ -565,6 +619,11 @@ ceutilsMemcopy_IMPL
 
     channelPbInfo.srcCpuCacheAttrib = pSrcMemDesc->_cpuCacheAttrib;
     channelPbInfo.dstCpuCacheAttrib = pDstMemDesc->_cpuCacheAttrib;
+
+    channelPbInfo.bSecureCopy = pParams->bSecureCopy;
+    channelPbInfo.bEncrypt = pParams->bEncrypt;
+    channelPbInfo.authTagAddr = pParams->authTagAddr;
+    channelPbInfo.encryptIvAddr = pParams->encryptIvAddr;
 
     srcPageGranularity = pSrcMemDesc->pageArrayGranularity;
     dstPageGranularity = pDstMemDesc->pageArrayGranularity;
@@ -663,7 +722,6 @@ ceutilsUpdateProgress_IMPL
     return swLastCompletedPayload;
 }
 
-#if defined(DEBUG) || defined (DEVELOP)
 NV_STATUS
 ceutilsapiCtrlCmdCheckProgress_IMPL
 (
@@ -799,4 +857,3 @@ ceutilsapiCtrlCmdMemcopy_IMPL
 
     return status;
 }
-#endif // defined(DEBUG) || defined (DEVELOP)

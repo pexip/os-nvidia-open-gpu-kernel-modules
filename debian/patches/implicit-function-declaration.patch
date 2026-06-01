@@ -5,7 +5,7 @@ Description: move -Werror=implicit-function-declaration to CC_ONLY_CFLAGS
 
 --- a/src/nvidia-modeset/Makefile
 +++ b/src/nvidia-modeset/Makefile
-@@ -151,6 +151,7 @@ CFLAGS += $(CONDITIONAL_CFLAGS)
+@@ -158,6 +158,7 @@ CFLAGS += $(CONDITIONAL_CFLAGS)
  CC_ONLY_CFLAGS += -Wimplicit
  CC_ONLY_CFLAGS += -Wstrict-prototypes
  CC_ONLY_CFLAGS += -Wmissing-prototypes
@@ -15,7 +15,7 @@ Description: move -Werror=implicit-function-declaration to CC_ONLY_CFLAGS
  CXX_ONLY_CFLAGS += -std=gnu++11
 --- a/src/nvidia/Makefile
 +++ b/src/nvidia/Makefile
-@@ -182,6 +182,7 @@ endif
+@@ -188,6 +188,7 @@ endif
  
  CFLAGS += $(CONDITIONAL_CFLAGS)
  

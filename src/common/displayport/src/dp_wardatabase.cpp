@@ -78,17 +78,6 @@ void ConnectorImpl::applyOuiWARs()
                 //
                 LT2FecLatencyMs = 57;
 
-                //
-                // This is to reset the MSTM control bit on the branch device. On this
-                // device, if continuous LAM message are sent very close then IRQ vector
-                // will fail to see stale/pending message and will not reset the MSTM_CTRL
-                // register. Currently making this specific to linux so as to have minimum
-                // effect on windows. Later proper fix for this will be generic.
-                //
-#if defined(NV_UNIX)
-                bForceClearPendingMsg = true;
-#endif
-
                 if (bDscMstCapBug3143315)
                 {
                     //
@@ -566,7 +555,7 @@ void Edid::applyEdidWorkArounds(NvU32 warFlag, const DpMonitorDenylistData *pDen
 
         // NCP
         case 0x7038:
-            if ((ProductID == 0x005F))
+            if (ProductID == 0x005F)
             {
                 this->WARFlags.bIgnoreDscCap = true;
                 DP_LOG(("DP-WAR> NCP panels incorrectly exposing DSC capability. Ignoring it."));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -421,6 +421,45 @@ void tmrEventDestroy_IMPL
 }
 
 /*!
+ * Returns time until next callback for a given event
+ *
+ * @param[in]   pEvent   The event whose remaining time needs to be determined.
+ */
+NV_STATUS
+tmrEventTimeUntilNextCallback_IMPL
+(
+    OBJTMR     *pTmr,
+    TMR_EVENT  *pEventPublic,
+    NvU64      *pTimeUntilCallbackNs
+)
+{
+    NvU64 currentTime;
+    NvU64 nextAlarmTime;
+
+    TMR_EVENT_PVT *pEvent = (TMR_EVENT_PVT*)pEventPublic;
+
+    if (tmrIsOSTimer(pTmr, pEventPublic))
+    {
+        osGetCurrentTick(&currentTime);
+        // timens corresponds to relative time for OS timer
+        NV_CHECK_OR_RETURN(LEVEL_ERROR, portSafeAddU64(pEvent->timens, pEvent->startTimeNs, &nextAlarmTime),
+                           NV_ERR_INVALID_ARGUMENT);
+    }
+    else
+    {
+        NV_ASSERT_OK_OR_RETURN(tmrGetCurrentTime(pTmr, &currentTime));
+        // timens corresponds to abs time in case of ptimer
+        nextAlarmTime = pEvent->timens;
+    }
+    if (currentTime > nextAlarmTime)
+        return NV_ERR_INVALID_STATE;
+
+    *pTimeUntilCallbackNs = nextAlarmTime - currentTime;
+    return NV_OK;
+}
+
+
+/*!
  * TODO: document
  */
 static NV_STATUS
@@ -718,7 +757,7 @@ _tmrGetNextFreeCallback
  * Creates and inserts a node into the callback list.
  *
  *  @param[in]  pEvent     Callback memory structure, provided by user.
- *  @param[in]  Time       Absolute nanoseconds at which to call Proc.
+ *  @param[in]  Time       Absolute(for ptimer) or relative (for OS timer) nanoseconds at which to call Proc.
  *
  *  @returns               Status
  */
@@ -1205,34 +1244,27 @@ tmrCallExpiredCallbacks_IMPL
             // Pull from head of list.
             pEvent = _tmrPullCallbackFromHead(pTmr);
 
-            if (pEvent &&
-                ((pEvent->super.pTimeProc != NULL) ||
-                (pEvent->pTimeProc_OBSOLETE != NULL)) )
+            if (pEvent != NULL)
             {
                 // Call callback.  This could insert a new callback into the list.
-                if (pEvent->bLegacy)
+                if (pEvent->bLegacy && pEvent->pTimeProc_OBSOLETE != NULL)
                 {
                     pEvent->pTimeProc_OBSOLETE(pGpu, pTmr, pEvent->super.pUserData);
+                    bProccessedCallback = NV_TRUE;
+                }
+                else if (!pEvent->bLegacy && pEvent->super.pTimeProc != NULL)
+                {
+                    pEvent->super.pTimeProc(pGpu, pTmr, (PTMR_EVENT)pEvent);
+                    bProccessedCallback = NV_TRUE;
                 }
                 else
                 {
-                    pEvent->super.pTimeProc(pGpu, pTmr, (PTMR_EVENT)pEvent);
+                    NV_ASSERT_FAILED("Attempting to execute callback with NULL procedure.");
                 }
-
-                bProccessedCallback = NV_TRUE;
             }
             else
             {
-                //
-                // Bug 372159: Hopefully by checking that the callback procedure
-                // is not NULL in tmrEventScheduleAbs() we should never hit
-                // this point, but this is just to be certain.  If you hit this
-                // assert please update Bug 3721259 with pertinent details
-                // (Swak, !stacks, what you were developing/testing, etc.).
-                //
-                NV_ASSERT_FAILED(
-                    "Attempting to execute callback with NULL procedure.  "
-                    "Please update Bug 372159 with appropriate information.");
+                NV_ASSERT_FAILED("Attempting to execute callback with NULL timer event.");
             }
         }
 

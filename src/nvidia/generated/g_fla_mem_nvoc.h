@@ -39,11 +39,16 @@ extern "C" {
 /*!
  * This class is used by the FLA clients to allocate FLA memory handle
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_FLA_MEM_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct FlaMemory {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Memory __nvoc_base_Memory;
@@ -59,19 +64,20 @@ struct FlaMemory {
     NvBool (*__flamemShareCallback__)(struct FlaMemory *, struct RsClient *, struct RsResourceRef *, RS_SHARE_POLICY *);
     NV_STATUS (*__flamemMapTo__)(struct FlaMemory *, RS_RES_MAP_TO_PARAMS *);
     NV_STATUS (*__flamemGetMapAddrSpace__)(struct FlaMemory *, CALL_CONTEXT *, NvU32, NV_ADDRESS_SPACE *);
+    NvBool (*__flamemIsExportAllowed__)(struct FlaMemory *);
     NvU32 (*__flamemGetRefCount__)(struct FlaMemory *);
     void (*__flamemAddAdditionalDependants__)(struct RsClient *, struct FlaMemory *, RsResourceRef *);
     NV_STATUS (*__flamemControl_Prologue__)(struct FlaMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NvBool (*__flamemIsGpuMapAllowed__)(struct FlaMemory *, struct OBJGPU *);
     NV_STATUS (*__flamemUnmapFrom__)(struct FlaMemory *, RS_RES_UNMAP_FROM_PARAMS *);
     void (*__flamemControl_Epilogue__)(struct FlaMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
-    NV_STATUS (*__flamemControlLookup__)(struct FlaMemory *, struct RS_RES_CONTROL_PARAMS_INTERNAL *, const struct NVOC_EXPORTED_METHOD_DEF **);
     NV_STATUS (*__flamemControl__)(struct FlaMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__flamemUnmap__)(struct FlaMemory *, CALL_CONTEXT *, RsCpuMapping *);
     NV_STATUS (*__flamemGetMemInterMapParams__)(struct FlaMemory *, RMRES_MEM_INTER_MAP_PARAMS *);
     NV_STATUS (*__flamemGetMemoryMappingDescriptor__)(struct FlaMemory *, MEMORY_DESCRIPTOR **);
     NV_STATUS (*__flamemControlFilter__)(struct FlaMemory *, struct CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
     NV_STATUS (*__flamemControlSerialization_Prologue__)(struct FlaMemory *, CALL_CONTEXT *, struct RS_RES_CONTROL_PARAMS_INTERNAL *);
+    NvBool (*__flamemIsPartialUnmapSupported__)(struct FlaMemory *);
     NV_STATUS (*__flamemIsReady__)(struct FlaMemory *, NvBool);
     NV_STATUS (*__flamemCheckCopyPermissions__)(struct FlaMemory *, struct OBJGPU *, struct Device *);
     void (*__flamemPreDestruct__)(struct FlaMemory *);
@@ -118,19 +124,20 @@ NV_STATUS __nvoc_objCreate_FlaMemory(FlaMemory**, Dynamic*, NvU32, CALL_CONTEXT 
 #define flamemShareCallback(pResource, pInvokingClient, pParentRef, pSharePolicy) flamemShareCallback_DISPATCH(pResource, pInvokingClient, pParentRef, pSharePolicy)
 #define flamemMapTo(pResource, pParams) flamemMapTo_DISPATCH(pResource, pParams)
 #define flamemGetMapAddrSpace(pMemory, pCallContext, mapFlags, pAddrSpace) flamemGetMapAddrSpace_DISPATCH(pMemory, pCallContext, mapFlags, pAddrSpace)
+#define flamemIsExportAllowed(pMemory) flamemIsExportAllowed_DISPATCH(pMemory)
 #define flamemGetRefCount(pResource) flamemGetRefCount_DISPATCH(pResource)
 #define flamemAddAdditionalDependants(pClient, pResource, pReference) flamemAddAdditionalDependants_DISPATCH(pClient, pResource, pReference)
 #define flamemControl_Prologue(pResource, pCallContext, pParams) flamemControl_Prologue_DISPATCH(pResource, pCallContext, pParams)
 #define flamemIsGpuMapAllowed(pMemory, pGpu) flamemIsGpuMapAllowed_DISPATCH(pMemory, pGpu)
 #define flamemUnmapFrom(pResource, pParams) flamemUnmapFrom_DISPATCH(pResource, pParams)
 #define flamemControl_Epilogue(pResource, pCallContext, pParams) flamemControl_Epilogue_DISPATCH(pResource, pCallContext, pParams)
-#define flamemControlLookup(pResource, pParams, ppEntry) flamemControlLookup_DISPATCH(pResource, pParams, ppEntry)
 #define flamemControl(pMemory, pCallContext, pParams) flamemControl_DISPATCH(pMemory, pCallContext, pParams)
 #define flamemUnmap(pMemory, pCallContext, pCpuMapping) flamemUnmap_DISPATCH(pMemory, pCallContext, pCpuMapping)
 #define flamemGetMemInterMapParams(pMemory, pParams) flamemGetMemInterMapParams_DISPATCH(pMemory, pParams)
 #define flamemGetMemoryMappingDescriptor(pMemory, ppMemDesc) flamemGetMemoryMappingDescriptor_DISPATCH(pMemory, ppMemDesc)
 #define flamemControlFilter(pResource, pCallContext, pParams) flamemControlFilter_DISPATCH(pResource, pCallContext, pParams)
 #define flamemControlSerialization_Prologue(pResource, pCallContext, pParams) flamemControlSerialization_Prologue_DISPATCH(pResource, pCallContext, pParams)
+#define flamemIsPartialUnmapSupported(pResource) flamemIsPartialUnmapSupported_DISPATCH(pResource)
 #define flamemIsReady(pMemory, bCopyConstructorContext) flamemIsReady_DISPATCH(pMemory, bCopyConstructorContext)
 #define flamemCheckCopyPermissions(pMemory, pDstGpu, pDstDevice) flamemCheckCopyPermissions_DISPATCH(pMemory, pDstGpu, pDstDevice)
 #define flamemPreDestruct(pResource) flamemPreDestruct_DISPATCH(pResource)
@@ -166,6 +173,10 @@ static inline NV_STATUS flamemGetMapAddrSpace_DISPATCH(struct FlaMemory *pMemory
     return pMemory->__flamemGetMapAddrSpace__(pMemory, pCallContext, mapFlags, pAddrSpace);
 }
 
+static inline NvBool flamemIsExportAllowed_DISPATCH(struct FlaMemory *pMemory) {
+    return pMemory->__flamemIsExportAllowed__(pMemory);
+}
+
 static inline NvU32 flamemGetRefCount_DISPATCH(struct FlaMemory *pResource) {
     return pResource->__flamemGetRefCount__(pResource);
 }
@@ -190,10 +201,6 @@ static inline void flamemControl_Epilogue_DISPATCH(struct FlaMemory *pResource, 
     pResource->__flamemControl_Epilogue__(pResource, pCallContext, pParams);
 }
 
-static inline NV_STATUS flamemControlLookup_DISPATCH(struct FlaMemory *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return pResource->__flamemControlLookup__(pResource, pParams, ppEntry);
-}
-
 static inline NV_STATUS flamemControl_DISPATCH(struct FlaMemory *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pMemory->__flamemControl__(pMemory, pCallContext, pParams);
 }
@@ -216,6 +223,10 @@ static inline NV_STATUS flamemControlFilter_DISPATCH(struct FlaMemory *pResource
 
 static inline NV_STATUS flamemControlSerialization_Prologue_DISPATCH(struct FlaMemory *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return pResource->__flamemControlSerialization_Prologue__(pResource, pCallContext, pParams);
+}
+
+static inline NvBool flamemIsPartialUnmapSupported_DISPATCH(struct FlaMemory *pResource) {
+    return pResource->__flamemIsPartialUnmapSupported__(pResource);
 }
 
 static inline NV_STATUS flamemIsReady_DISPATCH(struct FlaMemory *pMemory, NvBool bCopyConstructorContext) {
@@ -260,4 +271,5 @@ void flamemDestruct_IMPL(struct FlaMemory *pFlaMemory);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_FLA_MEM_NVOC_H_

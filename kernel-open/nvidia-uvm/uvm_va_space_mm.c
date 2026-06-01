@@ -1,5 +1,5 @@
 /*******************************************************************************
-    Copyright (c) 2018-2022 NVIDIA Corporation
+    Copyright (c) 2018-2023 NVIDIA Corporation
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to
@@ -291,12 +291,8 @@ NV_STATUS uvm_va_space_mm_register(uvm_va_space_t *va_space)
             // allocates memory which is attached to the mm_struct and freed
             // when the mm_struct is freed.
             ret = __mmu_notifier_register(NULL, current->mm);
-            if (ret) {
-                // Inform uvm_va_space_mm_unregister() that it has nothing to do.
-                uvm_mmdrop(va_space_mm->mm);
-                va_space_mm->mm = NULL;
+            if (ret)
                 return errno_to_nv_status(ret);
-            }
         #else
             UVM_ASSERT(0);
         #endif
@@ -321,17 +317,6 @@ void uvm_va_space_mm_unregister(uvm_va_space_t *va_space)
     // Only happens if uvm_va_space_mm_register() fails
     if (!va_space_mm->mm)
         return;
-
-    // At this point the mm is still valid because uvm_mm_release()
-    // hasn't yet called mmput(). uvm_hmm_va_space_destroy() will kill
-    // all the va_blocks along with any associated gpu_chunks, so we
-    // need to make sure these chunks are free. However freeing them
-    // requires a valid mm so we can call migrate_vma_setup(), so we
-    // do that here.
-    // TODO: Bug 3902536: [UVM-HMM] add code to migrate GPU memory
-    // without having a va_block
-    if (uvm_hmm_is_enabled(va_space))
-        uvm_hmm_evict_va_blocks(va_space);
 
     if (uvm_va_space_mm_enabled(va_space)) {
         if (UVM_ATS_IBM_SUPPORTED_IN_DRIVER() && g_uvm_global.ats.enabled)
@@ -432,7 +417,8 @@ static void uvm_va_space_mm_shutdown(uvm_va_space_t *va_space)
     uvm_va_space_mm_t *va_space_mm = &va_space->va_space_mm;
     uvm_gpu_va_space_t *gpu_va_space;
     uvm_gpu_t *gpu;
-    uvm_global_processor_mask_t gpus_to_flush;
+    uvm_processor_mask_t *retained_gpus = &va_space_mm->scratch_processor_mask;
+    uvm_parent_processor_mask_t flushed_parent_gpus;
     LIST_HEAD(deferred_free_list);
 
     uvm_va_space_down_write(va_space);
@@ -455,29 +441,34 @@ static void uvm_va_space_mm_shutdown(uvm_va_space_t *va_space)
 
     // Detach all channels to prevent pending untranslated faults from getting
     // to this VA space. This also removes those channels from the VA space and
-    // puts them on the deferred free list, so only one thread will do this.
+    // puts them on the deferred free list.
     uvm_va_space_down_write(va_space);
     uvm_va_space_detach_all_user_channels(va_space, &deferred_free_list);
-    uvm_va_space_global_gpus_in_mask(va_space, &gpus_to_flush, &va_space->faultable_processors);
-    uvm_global_mask_retain(&gpus_to_flush);
+    uvm_processor_mask_and(retained_gpus, &va_space->registered_gpus, &va_space->faultable_processors);
+    uvm_global_gpu_retain(retained_gpus);
     uvm_va_space_up_write(va_space);
 
-    // Flush the fault buffer on all GPUs. This will avoid spurious
-    // cancels of stale pending translated faults after we set
-    // UVM_VA_SPACE_MM_STATE_RELEASED later.
-    for_each_global_gpu_in_mask(gpu, &gpus_to_flush)
-        uvm_gpu_fault_buffer_flush(gpu);
+    // It's ok to use retained_gpus outside the lock since there can only be one
+    // thread executing in uvm_va_space_mm_shutdown at a time.
 
-    uvm_global_mask_release(&gpus_to_flush);
+    // Flush the fault buffer on all registered faultable GPUs.
+    // This will avoid spurious cancels of stale pending translated
+    // faults after we set UVM_VA_SPACE_MM_STATE_RELEASED later.
+    uvm_parent_processor_mask_zero(&flushed_parent_gpus);
+    for_each_gpu_in_mask(gpu, retained_gpus) {
+        if (!uvm_parent_processor_mask_test_and_set(&flushed_parent_gpus, gpu->parent->id))
+            uvm_gpu_fault_buffer_flush(gpu);
+    }
+
+    uvm_global_gpu_release(retained_gpus);
 
     // Call nvUvmInterfaceUnsetPageDirectory. This has no effect on non-MPS.
     // Under MPS this guarantees that no new GPU accesses will be made using
     // this mm.
     //
-    // We need only one thread to make this call, but two threads in here could
-    // race for it, or we could have one thread in here and one in
-    // destroy_gpu_va_space. Serialize these by starting in write mode then
-    // downgrading to read.
+    // We need only one thread to make this call, but we could have one thread
+    // in here and one in destroy_gpu_va_space. Serialize these by starting in
+    // write mode then downgrading to read.
     uvm_va_space_down_write(va_space);
     uvm_va_space_downgrade_write_rm(va_space);
     for_each_gpu_va_space(gpu_va_space, va_space)
@@ -530,7 +521,7 @@ static NV_STATUS mm_read64(struct mm_struct *mm, NvU64 addr, NvU64 *val)
     UVM_ASSERT(IS_ALIGNED(addr, sizeof(*val)));
 
     uvm_down_read_mmap_lock(mm);
-    ret = NV_PIN_USER_PAGES_REMOTE(mm, (unsigned long)addr, 1, 0, &page, NULL, NULL);
+    ret = NV_PIN_USER_PAGES_REMOTE(mm, (unsigned long)addr, 1, 0, &page, NULL);
     uvm_up_read_mmap_lock(mm);
 
     if (ret < 0)
@@ -597,7 +588,7 @@ NV_STATUS uvm_test_va_space_mm_or_current_retain(UVM_TEST_VA_SPACE_MM_OR_CURRENT
     if (params->retain_done_ptr) {
         NvU64 flag = true;
 
-        if (nv_copy_to_user((void __user *)params->retain_done_ptr, &flag, sizeof(flag)))
+        if (copy_to_user((void __user *)params->retain_done_ptr, &flag, sizeof(flag)))
             status = NV_ERR_INVALID_ARGUMENT;
     }
 

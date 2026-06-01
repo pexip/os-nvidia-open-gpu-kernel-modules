@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2004-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2004-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -32,15 +32,15 @@
 #include "core/core.h"
 #include "os/os.h"
 #include "gpu/mem_sys/kern_mem_sys.h"
-#include "gpu/mem_mgr/mem_mgr.h"
-#include "gpu/mem_mgr/heap.h"
 #include "platform/platform.h"
+#include "gpu/mem_mgr/mem_mgr.h"
+#include "platform/sli/sli.h"
+
 #include "gpu/mem_mgr/mem_desc.h"
 #include "rmapi/client_resource.h"
 #include "rmapi/control.h"
 #include "gpu_mgr/gpu_mgr.h"
 #include "rmapi/rs_utils.h"
-#include "gpu/device/device.h"
 #include "gpu/subdevice/subdevice.h"
 #include "vgpu/rpc.h"
 
@@ -58,16 +58,7 @@ memCtrlCmdGetSurfaceCompressionCoverageLvm_IMPL
     NvU32               _gpuCacheAttr, _gpuP2PCacheAttr;
     NV_STATUS           status = NV_OK;
     CALL_CONTEXT       *pCallContext = resservGetTlsCallContext();
-    RmCtrlParams       *pRmCtrlParams = pCallContext->pControlParams->pLegacyParams;
     OBJGPU             *pGpu = pMemory->pGpu;
-
-    if (IS_VIRTUAL(pGpu))
-    {
-        NV_RM_RPC_CONTROL(pRmCtrlParams->pGpu, pRmCtrlParams->hClient,
-                          pRmCtrlParams->hObject, pRmCtrlParams->cmd,
-                          pRmCtrlParams->pParams, pRmCtrlParams->paramsSize, status);
-        return status;
-    }
 
     if (pParams->hSubDevice)
     {
@@ -171,7 +162,7 @@ memCtrlCmdGetSurfaceInfoLvm_IMPL
             case NV0041_CTRL_SURFACE_INFO_INDEX_PHYS_ATTR:
             {
                 if (pMemory->pHwResource != NULL)
-                    data = pMemory->pHwResource->attr & (DRF_SHIFTMASK(NV0041_CTRL_SURFACE_INFO_PHYS_ATTR_PAGE_SIZE) | DRF_SHIFTMASK(NV0041_CTRL_SURFACE_INFO_PHYS_ATTR_CPU_COHERENCY));
+                    data = pMemory->pHwResource->attr & (DRF_SHIFTMASK(NV0041_CTRL_SURFACE_INFO_PHYS_ATTR_PAGE_SIZE) | DRF_SHIFTMASK(NV0041_CTRL_SURFACE_INFO_PHYS_ATTR_CPU_COHERENCY) | DRF_SHIFTMASK(NV0041_CTRL_SURFACE_INFO_PHYS_ATTR_FORMAT));
                 break;
             }
             case NV0041_CTRL_SURFACE_INFO_INDEX_ADDR_SPACE_TYPE:
@@ -229,6 +220,29 @@ memCtrlCmdGetSurfaceInfoLvm_IMPL
 
         pSurfaceInfos[i].data = data;
     }
+
+    return status;
+}
+
+
+NV_STATUS
+memCtrlCmdGetSurfacePhysAttrLvm_IMPL
+(
+    Memory *pMemory,
+    NV0041_CTRL_GET_SURFACE_PHYS_ATTR_PARAMS *pGPAP
+)
+{
+    OBJGPU             *pGpu = pMemory->pGpu;
+    MemoryManager      *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
+    NvU32               _zcullId, _lineMin, _lineMax;
+    NV_STATUS           status = NV_OK;
+
+    // get desired new attributes
+    status = memmgrGetSurfacePhysAttr_HAL(pGpu, pMemoryManager, pMemory, &pGPAP->memOffset, &pGPAP->memAperture,
+                                          &pGPAP->memFormat, &pGPAP->comprOffset, &pGPAP->comprFormat,
+                                          &_lineMin, &_lineMax, &_zcullId,
+                                          &pGPAP->gpuCacheAttr, &pGPAP->gpuP2PCacheAttr,
+                                          &pGPAP->contigSegmentSize);
 
     return status;
 }

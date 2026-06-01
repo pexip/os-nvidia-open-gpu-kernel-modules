@@ -37,6 +37,9 @@
 #endif
 
 #include <linux/io.h>
+#if defined(NV_BSD)
+#include <vm/vm_pageout.h>
+#endif
 
 #include "nv-mm.h"
 
@@ -93,7 +96,17 @@ static vm_fault_t __nv_drm_gem_nvkms_handle_vma_fault(
     if (nv_nvkms_memory->pages_count == 0) {
         pfn = (unsigned long)(uintptr_t)nv_nvkms_memory->pPhysicalAddress;
         pfn >>= PAGE_SHIFT;
+#if defined(NV_LINUX)
+        /*
+         * FreeBSD doesn't set pgoff. We instead have pfn be the base physical
+         * address, and we will calculate the index pidx from the virtual address.
+         *
+         * This only works because linux_cdev_pager_populate passes the pidx as
+         * vmf->virtual_address. Then we turn the virtual address
+         * into a physical page number.
+         */
         pfn += page_offset;
+#endif
     } else {
         BUG_ON(page_offset >= nv_nvkms_memory->pages_count);
         pfn = page_to_pfn(nv_nvkms_memory->pages[page_offset]);
@@ -323,7 +336,7 @@ int nv_drm_dumb_create(
         ret = -ENOMEM;
         NV_DRM_DEV_LOG_ERR(
             nv_dev,
-            "Failed to allocate NvKmsKapiMemory for dumb object of size %llu",
+            "Failed to allocate NvKmsKapiMemory for dumb object of size %" NvU64_fmtu,
             args->size);
         goto nvkms_alloc_memory_failed;
     }
@@ -367,7 +380,7 @@ int nv_drm_gem_import_nvkms_memory_ioctl(struct drm_device *dev,
     int ret;
 
     if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
-        ret = -EINVAL;
+        ret = -EOPNOTSUPP;
         goto failed;
     }
 
@@ -417,7 +430,7 @@ int nv_drm_gem_export_nvkms_memory_ioctl(struct drm_device *dev,
     int ret = 0;
 
     if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
-        ret = -EINVAL;
+        ret = -EOPNOTSUPP;
         goto done;
     }
 
@@ -470,11 +483,11 @@ int nv_drm_gem_alloc_nvkms_memory_ioctl(struct drm_device *dev,
     int ret = 0;
 
     if (!drm_core_check_feature(dev, DRIVER_MODESET)) {
-        ret = -EINVAL;
+        ret = -EOPNOTSUPP;
         goto failed;
     }
 
-    if (p->__pad != 0) {
+    if ((p->__pad0 != 0) || (p->__pad1 != 0)) {
         ret = -EINVAL;
         NV_DRM_DEV_LOG_ERR(nv_dev, "non-zero value in padding field");
         goto failed;

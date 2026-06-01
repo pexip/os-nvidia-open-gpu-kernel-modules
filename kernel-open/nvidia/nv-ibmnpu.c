@@ -376,7 +376,7 @@ void NV_API_CALL nv_ibmnpu_cache_flush_range(nv_state_t *nv, NvU64 cpu_virtual, 
 
     cbsize = nvl->npu->numa_info.l1d_cache_block_size;
 
-    CACHE_FLUSH();
+    asm volatile("sync; isync" ::: "memory");
 
     /* Force eviction of any cache lines from the NUMA-onlined region. */
     for (offset = 0; offset < size; offset += cbsize)
@@ -387,7 +387,7 @@ void NV_API_CALL nv_ibmnpu_cache_flush_range(nv_state_t *nv, NvU64 cpu_virtual, 
         cond_resched();
     }
 
-    CACHE_FLUSH();
+    asm volatile("sync; isync" ::: "memory");
 }
 
 #else

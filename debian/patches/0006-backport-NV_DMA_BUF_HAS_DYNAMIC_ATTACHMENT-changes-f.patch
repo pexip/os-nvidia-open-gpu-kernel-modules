@@ -1,0 +1,30 @@
+From a8905a9a6f4df6d294fff534232dd6ec8ea84be6 Mon Sep 17 00:00:00 2001
+From: Andreas Beckmann <anbe@debian.org>
+Date: Sun, 27 Jul 2025 10:05:50 +0200
+Subject: [PATCH] backport NV_DMA_BUF_HAS_DYNAMIC_ATTACHMENT changes from
+ 535.261.03
+
+---
+ kernel-open/nvidia/nv-dmabuf.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/kernel-open/nvidia/nv-dmabuf.c b/kernel-open/nvidia/nv-dmabuf.c
+index f0608396..0086d7c6 100644
+--- a/kernel-open/nvidia/nv-dmabuf.c
++++ b/kernel-open/nvidia/nv-dmabuf.c
+@@ -783,10 +783,9 @@ nv_dma_buf_map(
+     // On non-coherent platforms, importers must be able to handle peer
+     // MMIO resources not backed by struct page.
+     //
+-#if defined(NV_DMA_BUF_HAS_DYNAMIC_ATTACHMENT) && \
+-    defined(NV_DMA_BUF_ATTACHMENT_HAS_PEER2PEER)
++#if defined(NV_DMA_BUF_ATTACHMENT_HAS_PEER2PEER)
+     if (!priv->nv->coherent &&
+-        dma_buf_attachment_is_dynamic(attachment) &&
++        (attachment->importer_ops != NULL) &&
+         !attachment->peer2peer)
+     {
+         nv_printf(NV_DBG_ERRORS,
+-- 
+2.39.5
+

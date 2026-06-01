@@ -28,6 +28,11 @@
 #include <stdarg.h>
 #include "libos_printf_arg.h"
 
+#if defined(NVRM)
+#include "nvctassert.h"
+#include "utils/nvprintf_level.h"
+#endif
+
 /**
  *  @brief The log metadata structures and format strings are stripped
  *         These structures are emitted into the .logging section
@@ -41,6 +46,7 @@ typedef struct
     NV_DECLARE_ALIGNED(NvU32 lineNumber, 8);
     NvU8 argumentCount; //! Count of arguments not including format string.
     NvU8 printLevel;
+    NvU8 specialType;
 } libosLogMetadata;
 
 /**
@@ -188,18 +194,48 @@ static inline LibosPrintfArgument LibosPrintfArgumentS64(NvS64 i) {
     LIBOS_LOG_BUILD_APPLY(                                                                                   \
         LIBOS_MACRO_PASTE_EVAL(LIBOS_LOG_BUILD_, LIBOS_MACRO_GET_COUNT(__VA_ARGS__)), __VA_ARGS__)
 
-#define LOG_LEVEL_INFO    0
-#define LOG_LEVEL_WARNING 1
-#define LOG_LEVEL_ERROR   2
+// Defines for clients that cannot include nvprintf.h
+#define LOG_LEVEL_INFO    1
+#define LOG_LEVEL_WARNING 3
+#define LOG_LEVEL_ERROR   4
+
+#if defined(NVRM) && !defined(NVOC)
+// Verify log levels are in sync with RM
+ct_assert(LOG_LEVEL_INFO == LEVEL_INFO);
+ct_assert(LOG_LEVEL_WARNING == LEVEL_WARNING);
+ct_assert(LOG_LEVEL_ERROR == LEVEL_ERROR);
+#endif
+
+//
+// Store string literal in LIBOS_SECTION_LOGGING so that it can be passed as %s format argument.
+// This uses GNU statement expression extension.
+//
+#if defined(__GNUC__)
+#define MAKE_LIBOS_LOGGING_STR(str) \
+({                                                                  \
+    static LIBOS_SECTION_LOGGING const char libos_pvt_str[] = str;  \
+    libos_pvt_str;                                                     \
+})
+#else
+#define MAKE_LIBOS_LOGGING_STR(str) str
+#endif
 
 #define LIBOS_SECTION_LOGGING __attribute__((section(".logging")))
 
 // The compiler used for Windows doesn't have access to the format attribute
+#if defined(__GNUC__)
 __attribute__((format(printf, 1, 2)))
+#endif
 static inline void gccFakePrintf(const char *pFmt, ...)
 {
     (void)pFmt;
 }
+
+#if defined(DEBUG)
+#define LIBOS_CHECK_PRINTF_FMT(...) gccFakePrintf(__VA_ARGS__)
+#else
+#define LIBOS_CHECK_PRINTF_FMT(...)
+#endif // defined(DEBUG)
 
 void LibosLogTokens(const libosLogMetadata * metadata, const LibosPrintfArgument * tokens, NvU64 count);
 
@@ -210,7 +246,8 @@ void LibosLogTokens(const libosLogMetadata * metadata, const LibosPrintfArgument
 #define LibosLog(level, ...)                                                                                   \
     do                                                                                                         \
     {                                                                                                          \
-        gccFakePrintf(__VA_ARGS__);                                                                            \
+        if (0)                                                                                                 \
+            LIBOS_CHECK_PRINTF_FMT(__VA_ARGS__);                                                               \
         static const LIBOS_SECTION_LOGGING char libos_pvt_format[]         = {LIBOS_MACRO_FIRST(__VA_ARGS__)}; \
         static const LIBOS_SECTION_LOGGING char libos_pvt_file[]           = {__FILE__};                       \
         static const LIBOS_SECTION_LOGGING libosLogMetadata libos_pvt_meta = {                                 \
@@ -255,7 +292,7 @@ void LibosLogTokens(const libosLogMetadata * metadata, const LibosPrintfArgument
 /*!
  *  Cast remaining log arguments to integers for storage
  */
-#define LIBOS_LOG_INTERNAL(dispatcher, level, ...)                                                             \
+#define LIBOS_LOG_INTERNAL_SPECIAL(dispatcher, level, special, ...)                                            \
     do                                                                                                         \
     {                                                                                                          \
         static const LIBOS_SECTION_LOGGING_CONST char libos_pvt_format[]   = {LIBOS_MACRO_FIRST(__VA_ARGS__)}; \
@@ -266,9 +303,18 @@ void LibosLogTokens(const libosLogMetadata * metadata, const LibosPrintfArgument
             .format        = &libos_pvt_format[0],                                                             \
             .lineNumber    = __LINE__,                                                                         \
             .argumentCount = LIBOS_MACRO_GET_COUNT(__VA_ARGS__) - 1,                                           \
-            .printLevel    = level};                                                                           \
+            .printLevel    = level,                                                                            \
+            .specialType   = special};                                                                         \
         const NvU64 tokens[] = {APPLY_REMAINDER(__VA_ARGS__)(NvU64) & libos_pvt_meta};                         \
         dispatcher(sizeof(tokens) / sizeof(*tokens), &tokens[0]);                                              \
+    } while (0)
+
+#define LIBOS_LOG_INTERNAL(dispatcher, level, ...)                                                             \
+    do                                                                                                         \
+    {                                                                                                          \
+        if (0)                                                                                                 \
+            LIBOS_CHECK_PRINTF_FMT(__VA_ARGS__);                                                               \
+        LIBOS_LOG_INTERNAL_SPECIAL(dispatcher, level, 0 /* specialType */, __VA_ARGS__);                       \
     } while (0)
 
 /*!

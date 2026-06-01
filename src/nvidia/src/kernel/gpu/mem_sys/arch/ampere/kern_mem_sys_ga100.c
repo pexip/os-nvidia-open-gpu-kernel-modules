@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,8 +26,8 @@
 #include "os/os.h"
 #include "kernel/gpu/mem_sys/kern_mem_sys.h"
 #include "kernel/gpu/mem_mgr/mem_mgr.h"
-#include "kernel/gpu/subdevice/subdevice.h"
 #include "gpu/mem_mgr/mem_desc.h"
+#include "ctrl/ctrl2080/ctrl2080fb.h"
 
 #include "published/ampere/ga100/dev_fb.h"
 #include "published/ampere/ga100/hwproject.h"
@@ -111,7 +111,8 @@ kmemsysInitFlushSysmemBuffer_GA100
         if (status != NV_OK)
             return status;
 
-        status = memdescAlloc(pKernelMemorySystem->pSysmemFlushBufferMemDesc);
+        memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_139, 
+                        pKernelMemorySystem->pSysmemFlushBufferMemDesc);
 
         if (status != NV_OK)
         {
@@ -186,9 +187,8 @@ kmemsysInitMIGMemoryPartitionTable_GA100
 )
 {
     RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
-    const MEMORY_SYSTEM_STATIC_CONFIG *pMemorySystemConfig = kmemsysGetStaticConfig(pGpu, pKernelMemorySystem);
 
-    if (!pMemorySystemConfig->bDisablePlcForCertainOffsetsBug3046774)
+    if (!pKernelMemorySystem->bDisablePlcForCertainOffsetsBug3046774)
         return NV_OK;
 
     NV_ASSERT_OK_OR_RETURN(
@@ -440,6 +440,16 @@ kmemsysIsPagePLCable_GA100
     default:
         return NV_TRUE;
     }
+}
+
+NvU16
+kmemsysGetMaximumBlacklistPages_GA100
+(
+    OBJGPU *pGpu,
+    KernelMemorySystem *pKernelMemorySystem
+)
+{
+    return NV2080_CTRL_FB_DYNAMIC_BLACKLIST_MAX_PAGES;
 }
 
 NvU32

@@ -76,6 +76,13 @@ namespace DisplayPort
         DP_TRANSPORT_MODE_MULTI_STREAM  = 2,
     } DP_TRANSPORT_MODE;
 
+    // Information required during compound query attach for MST
+    typedef struct _CompoundQueryAttachMSTInfo
+    {
+        ModesetInfo         localModesetInfo;
+        LinkConfiguration   lc;
+    } CompoundQueryAttachMSTInfo;
+
     struct ConnectorImpl : public Connector, DiscoveryManager::DiscoveryManagerEventSink, Timer::TimerCallback, MessageManager::MessageReceiver::MessageReceiverEventSink
     {
         // DPCD HAL Layer - We should use this in place of direct register accesses
@@ -93,12 +100,14 @@ namespace DisplayPort
         unsigned cachedSourceOUI;
         char     cachedSourceModelName[NV_DPCD_SOURCE_DEV_ID_STRING__SIZE + 1];
         NvU8     cachedSourceChipRevision;
+        bool     bOuiCached;
 
         unsigned ouiId;                                              // Sink ouiId
         unsigned char modelName[NV_DPCD_SOURCE_DEV_ID_STRING__SIZE + 1];  // Device Model-name
         bool    bIgnoreSrcOuiHandshake;                              // Skip writing source OUI
 
-        LinkPolicy  linkPolicy;
+        LinkPolicy    linkPolicy;
+
         bool    linkGuessed;                    // True when link was "guessed" during HPD in TMDS mode
         bool    isLinkQuiesced;                 // True when link was set to quiet mode by TMDS modeset
 
@@ -176,13 +185,18 @@ namespace DisplayPort
         LinkedList<GroupImpl> addStreamMSTIntransitionGroups;
         List inactiveGroups;
 
+        LinkedList<Device> dscEnabledDevices;
+
         // Compound query
         bool compoundQueryActive;
         bool compoundQueryResult;
         unsigned compoundQueryCount;
         unsigned compoundQueryLocalLinkPBN;
+        bool compoundQueryForceEnableFEC;
 
-        unsigned freeSlots, maximumSlots;
+        unsigned freeSlots;
+        unsigned maximumSlots;
+        int firstFreeSlot;
 
         // Multistream messaging
         MessageManager *    messageManager;
@@ -335,17 +349,26 @@ namespace DisplayPort
         //
         bool        bPowerDownPhyBeforeD3;
 
+        // Force DSC on sink irrespective of LT status
+        bool        bForceDscOnSink;
+
         //
-        // Reset the MSTM_CTRL registers on Synaptics branch device irrespective of
-        // IRQ VECTOR register having stale message. Synaptics device needs to reset
-        // the topology before issue of new LAM message if previous LAM was not finished
-        // bug 3928070
+        // Reset the MSTM_CTRL registers on branch device irrespective of
+        // IRQ VECTOR register having stale message. Certain branch devices
+        // need to reset the topology before issuing new discovery commands
+        // as there can be case where previous is still in process and a
+        // possibility that clearPendingMessage() might not be able to catch
+        // the stale messages from previous discovery.
         //
-        bool bForceClearPendingMsg;
+        bool        bForceClearPendingMsg;
+        bool        bSkipFakeDeviceDpcdAccess;
+
+
+        Group *perHeadAttachedGroup[NV_MAX_HEADS];
+        NvU32 inTransitionHeadMask;
 
         void sharedInit();
         ConnectorImpl(MainLink * main, AuxBus * auxBus, Timer * timer, Connector::EventSink * sink);
-
         void setPolicyModesetOrderMitigation(bool enabled);
         void setPolicyForceLTAtNAB(bool enabled);
         void setPolicyAssessLinkSafely(bool enabled);
@@ -387,6 +410,7 @@ namespace DisplayPort
         }
 
         void populateAllDpConfigs();
+        virtual LinkRates* importDpLinkRates();
 
         //
         //  Suspend resume API
@@ -404,7 +428,7 @@ namespace DisplayPort
         virtual Device * enumDevices(Device * previousDevice) ;
 
 
-        virtual void beginCompoundQuery() ;
+        virtual void beginCompoundQuery(const bool bForceEnableFEC = false) ;
         virtual bool compoundQueryAttach(Group * target,
             unsigned twoChannelAudioHz,         // if you need 192khz stereo specify 192000 here
             unsigned eightChannelAudioHz,       // Same setting for multi channel audio.
@@ -414,13 +438,55 @@ namespace DisplayPort
             unsigned rasterHeight,
             unsigned rasterBlankStartX,
             unsigned rasterBlankEndX,
-            unsigned depth);
+            unsigned depth,
+            DP_IMP_ERROR *errorStatus = NULL);
 
         virtual bool compoundQueryAttach(Group * target,
                                          const DpModesetParams &modesetParams,      // Modeset info
-                                         DscParams *pDscParams = NULL);             // DSC parameters
+                                         DscParams *pDscParams = NULL,              // DSC parameters
+                                         DP_IMP_ERROR *pErrorCode = NULL);          // Error Status code
 
         virtual bool endCompoundQuery();
+
+        virtual bool dpLinkIsModePossible(const DpLinkIsModePossibleParams &params);
+
+        virtual bool compoundQueryAttachMST(Group * target,
+                                            const DpModesetParams &modesetParams,      // Modeset info
+                                            DscParams *pDscParams = NULL,              // DSC parameters
+                                            DP_IMP_ERROR *pErrorCode = NULL);          // Error Status code
+
+        virtual bool compoundQueryAttachMSTIsDscPossible
+        (
+            Group * target,
+            const DpModesetParams &modesetParams,      // Modeset info
+            DscParams *pDscParams = NULL               // DSC parameters
+        );
+
+        // Calculate and Configure SW state based on DSC
+        virtual bool compoundQueryAttachMSTDsc
+        (
+            Group * target,
+            const DpModesetParams &modesetParams,      // Modeset info
+            CompoundQueryAttachMSTInfo * info,         // local info to update for later use
+            DscParams *pDscParams = NULL,              // DSC parameters
+            DP_IMP_ERROR *pErrorCode = NULL            // Error Status code
+        );
+
+        // General part of CQA MST for DSC/non-DSC
+        virtual bool compoundQueryAttachMSTGeneric
+        (
+            Group * target,
+            const DpModesetParams &modesetParams,       // Modeset info
+            CompoundQueryAttachMSTInfo * info,          // local info with updates for DSC
+            DscParams *pDscParams = NULL,               // DSC parameters
+            DP_IMP_ERROR *pErrorCode = NULL             // Error Status code
+        );
+
+        virtual bool compoundQueryAttachSST(Group * target,
+                                            const DpModesetParams &modesetParams,      // Modeset info
+                                            DscParams *pDscParams = NULL,              // DSC parameters
+                                            DP_IMP_ERROR *pErrorCode = NULL);          // Error Status code
+
 
         //
         //  Timer callback tags.
@@ -458,6 +524,11 @@ namespace DisplayPort
 
         virtual bool notifyAttachBegin(Group * target,      // Group of panels we're attaching to this head
             const DpModesetParams &modesetParams);
+
+        bool needToEnableFEC(const DpPreModesetParams &params);
+
+        virtual void dpPreModeset(const DpPreModesetParams &modesetParams);
+        virtual void dpPostModeset(void);
 
         virtual bool isHeadShutDownNeeded(Group * target,   // Group of panels we're attaching to this head
             unsigned headIndex,
@@ -545,6 +616,8 @@ namespace DisplayPort
 
         bool beforeAddStreamMST(GroupImpl * group, bool force = false, bool forFlushMode = false);
 
+        virtual bool checkIsModePossibleMST(GroupImpl * group);
+
         bool deleteAllVirtualChannels();
         void clearTimeslices();
         bool allocateTimeslice(GroupImpl * targetGroup);
@@ -560,6 +633,7 @@ namespace DisplayPort
         void handleHdmiLinkStatusChanged();
         void sortActiveGroups(bool ascending);
         void configInit();
+        void handlePanelReplayError();
 
         virtual DeviceImpl* findDeviceInList(const Address & address);
         virtual void disconnectDeviceList();
@@ -585,6 +659,7 @@ namespace DisplayPort
         virtual void setDp11ProtocolForced();
         virtual void resetDp11ProtocolForced();
         virtual bool isDp11ProtocolForced();
+
         bool isAcpiInitDone();
         virtual void notifyAcpiInitDone();
         Group * createFirmwareGroup();
@@ -608,7 +683,9 @@ namespace DisplayPort
         virtual bool writePsrEvtIndicator(vesaPsrEventIndicator psrErr);
         virtual bool readPsrEvtIndicator(vesaPsrEventIndicator *psrErr);
         virtual bool readPsrState(vesaPsrState *psrState);
-        virtual bool updatePsrLinkState(bool bTrainLink);
+        virtual bool updatePsrLinkState(bool bTurnOnLink);
+
+        virtual bool readPrSinkDebugInfo(panelReplaySinkDebugInfo *prDbgInfo);
 
         // for dp test utility. pBuffer is the request buffer of type DP_STATUS_REQUEST_xxxx
         DP_TESTMESSAGE_STATUS sendDPTestMessage(void *pBuffer,

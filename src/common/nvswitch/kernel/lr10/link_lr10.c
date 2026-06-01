@@ -566,6 +566,11 @@ nvswitch_init_lpwr_regs_lr10
     NvU8  softwareDesired, hardwareDisable;
     NvBool bLpEnable;
 
+    if (IS_RTLSIM(device) || IS_EMULATION(device) || IS_FMODEL(device))
+    {
+        return;
+    }
+
     if (nvswitch_is_link_in_reset(device, link))
     {
         return;
@@ -1025,6 +1030,7 @@ nvswitch_corelib_set_dl_link_mode_lr10
                 NVSWITCH_PRINT(device, ERROR, "%s: Failed to notify PORT_DOWN event\n",
                              __FUNCTION__);
             }
+            nvswitch_record_port_event(device, &(device->log_PORT_EVENTS), link->linkNumber, NVSWITCH_PORT_EVENT_TYPE_DOWN);
 
             break;
         }
@@ -1322,6 +1328,13 @@ nvswitch_corelib_set_tl_link_mode_lr10
 {
     nvswitch_device *device = link->dev->pDevInfo;
     NvlStatus       status = NVL_SUCCESS;
+
+    if (nvswitch_is_tnvl_mode_locked(device))
+    {
+        NVSWITCH_PRINT(device, ERROR,
+            "%s(%d): Security locked\n", __FUNCTION__, __LINE__);
+        return NVL_ERR_INSUFFICIENT_PERMISSIONS;
+    }
 
     if (!NVSWITCH_IS_LINK_ENG_VALID_LR10(device, NVLDL, link->linkNumber))
     {
@@ -1722,6 +1735,13 @@ nvswitch_corelib_set_rx_mode_lr10
     NvlStatus status = NVL_SUCCESS;
     NvU32 delay_ns;
 
+    if (nvswitch_is_tnvl_mode_locked(device))
+    {
+        NVSWITCH_PRINT(device, ERROR,
+            "%s(%d): Security locked\n", __FUNCTION__, __LINE__);
+        return NVL_ERR_INSUFFICIENT_PERMISSIONS;
+    }
+
     if (!NVSWITCH_IS_LINK_ENG_VALID_LR10(device, NVLDL, link->linkNumber))
     {
         NVSWITCH_PRINT(device, ERROR,
@@ -1949,6 +1969,13 @@ nvswitch_corelib_set_rx_detect_lr10
     NvlStatus status;
     nvswitch_device *device = link->dev->pDevInfo;
 
+    if (nvswitch_is_tnvl_mode_locked(device))
+    {
+        NVSWITCH_PRINT(device, ERROR,
+            "%s(%d): Security locked\n", __FUNCTION__, __LINE__);
+        return NVL_ERR_INSUFFICIENT_PERMISSIONS;
+    }
+
     if (nvswitch_does_link_need_termination_enabled(device, link))
     {
         NVSWITCH_PRINT(device, INFO,
@@ -2011,6 +2038,7 @@ nvswitch_corelib_training_complete_lr10
         NVSWITCH_PRINT(device, ERROR, "%s: Failed to notify PORT_UP event\n",
                      __FUNCTION__);
     }
+    nvswitch_record_port_event(device, &(device->log_PORT_EVENTS), link->linkNumber, NVSWITCH_PORT_EVENT_TYPE_UP);
 
 }
 
@@ -2086,6 +2114,13 @@ nvswitch_request_tl_link_state_lr10
     nvswitch_device *device = link->dev->pDevInfo;
     NvlStatus status = NVL_SUCCESS;
     NvU32 linkStatus;
+
+    if (nvswitch_is_tnvl_mode_locked(device))
+    {
+        NVSWITCH_PRINT(device, ERROR,
+            "%s(%d): Security locked\n", __FUNCTION__, __LINE__);
+        return NVL_ERR_INSUFFICIENT_PERMISSIONS;
+    }
 
     if (!NVSWITCH_IS_LINK_ENG_VALID_LR10(device, NVLIPT_LNK, link->linkNumber))
     {
@@ -2642,3 +2677,36 @@ nvswitch_link_termination_setup_lr10
 
     return NVL_SUCCESS;
 }
+
+NvlStatus
+nvswitch_ctrl_get_link_l1_capability_lr10
+(
+    nvswitch_device *device,
+    NvU32 linkNum,
+    NvBool *isL1Capable
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_ctrl_get_link_l1_threshold_lr10
+(
+    nvswitch_device *device,
+    NvU32 linkNum,
+    NvU32 *lpThreshold
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+
+NvlStatus
+nvswitch_ctrl_set_link_l1_threshold_lr10
+(
+    nvlink_link *link,
+    NvU32 lpEntryThreshold
+)
+{
+    return -NVL_ERR_NOT_SUPPORTED;
+}
+

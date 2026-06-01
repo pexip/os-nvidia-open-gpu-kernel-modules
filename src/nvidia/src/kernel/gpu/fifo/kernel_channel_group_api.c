@@ -29,6 +29,7 @@
 #include "kernel/gpu/gr/kernel_graphics.h"
 #include "kernel/gpu/falcon/kernel_falcon.h"
 #include "kernel/gpu/rc/kernel_rc.h"
+#include "platform/sli/sli.h"
 
 #include "kernel/gpu/conf_compute/conf_compute.h"
 
@@ -37,6 +38,7 @@
 
 #include "libraries/utils/nvprintf.h"
 #include "gpu/gpu.h"
+#include "gpu/device/device.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
 #include "gpu/mem_mgr/vaspace_api.h"
 #include "vgpu/rpc.h"

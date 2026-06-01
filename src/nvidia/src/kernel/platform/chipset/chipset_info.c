@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2004-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -758,15 +758,6 @@ Intel_8C4B_setupFunc
     OBJCL *pCl
 )
 {
-    switch (pCl->FHBBusInfo.deviceID)
-    {
-        case DEVICE_ID_INTEL_0C00_HASWELL_HOST_BRIDGE:
-        case DEVICE_ID_INTEL_0C04_HASWELL_HOST_BRIDGE:
-            pCl->setProperty(pCl, PDB_PROP_CL_ON_HASWELL_HOST_BRIDGE, NV_TRUE);
-            break;
-        default:
-            break;
-    }
 
     // Set ASPM L0S\L1 properties
     _Set_ASPM_L0S_L1(pCl, NV_TRUE, NV_FALSE);
@@ -904,6 +895,17 @@ Intel_7A04_setupFunc
 }
 
 static NV_STATUS
+Intel_5795_setupFunc
+(
+    OBJCL *pCl
+)
+{
+    pCl->setProperty(pCl, PDB_PROP_CL_RELAXED_ORDERING_NOT_CAPABLE, NV_TRUE);
+
+    return NV_OK;
+}
+
+static NV_STATUS
 Intel_1B81_setupFunc
 (
     OBJCL *pCl
@@ -913,6 +915,7 @@ Intel_1B81_setupFunc
 
     return NV_OK;
 }
+
 
 static NV_STATUS
 Nvidia_T210_setupFunc
@@ -1312,6 +1315,28 @@ Arm_NeoverseN1_setupFunc
     return NV_OK;
 }
 
+static NV_STATUS
+Riscv_generic_setupFunc
+(
+    OBJCL *pCl
+)
+{
+    pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
+    return NV_OK;
+}
+
+static NV_STATUS
+PLDA_XpressRichAXI_setupFunc
+(
+    OBJCL *pCl
+)
+{
+#if NVCPU_IS_RISCV64
+    pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
+#endif
+    return NV_OK;
+}
+
 // Ampere AmpereOne Setup Function
 static NV_STATUS
 Ampere_AmpereOne_setupFunc
@@ -1337,7 +1362,7 @@ csGetInfoStrings
 {
     NvU32 i;
     const char* pszUnknown = "Unknown";
-    NvU32 szUnknownLen = portStringLength(pszUnknown);
+    NvU32 szUnknownLen = portStringLength(pszUnknown) + 1;
 
     if (!pCl->chipsetIDBusAddr.valid)
     {

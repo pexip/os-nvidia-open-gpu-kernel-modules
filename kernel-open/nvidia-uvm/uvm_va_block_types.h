@@ -30,6 +30,7 @@
 #include "uvm_forward_decl.h"
 
 #include <linux/migrate.h>
+#include <linux/nodemask.h>
 
 // UVM_VA_BLOCK_BITS is 21, meaning the maximum block size is 2MB. Rationale:
 // - 2MB matches the largest Pascal GPU page size so it's a natural fit
@@ -145,6 +146,18 @@ typedef struct
     unsigned count;
 } uvm_prot_page_mask_array_t[UVM_PROT_MAX - 1];
 
+typedef struct
+{
+    // A per-NUMA-node array of page masks (size num_possible_nodes()) that hold
+    // the set of CPU pages used by the migration operation.
+    uvm_page_mask_t **node_masks;
+
+    // Node mask used to iterate over the page masks above.
+    // If a node's bit is set, it means that the page mask given by
+    // node_to_index() in node_masks has set pages.
+    nodemask_t nodes;
+} uvm_make_resident_page_tracking_t;
+
 // In the worst case some VA block operations require more state than we should
 // reasonably store on the stack. Instead, we dynamically allocate VA block
 // contexts. These are used for almost all operations on VA blocks.
@@ -154,10 +167,31 @@ typedef struct
     // block APIs.
     uvm_page_mask_t caller_page_mask;
 
+    // Available as scratch space for the caller. Not used by any of the VA
+    // block APIs.
+    uvm_processor_mask_t caller_processor_mask;
+
     // Available as scratch space for the internal APIs. This is like a caller-
     // save register: it shouldn't be used across function calls which also take
     // this block_context.
     uvm_page_mask_t scratch_page_mask;
+
+    // Scratch node mask. This follows the same rules as scratch_page_mask;
+    nodemask_t scratch_node_mask;
+
+    // Available as scratch space for the internal APIs. This is like a caller-
+    // save register: it shouldn't be used across function calls which also take
+    // this va_block_context.
+    uvm_processor_mask_t scratch_processor_mask;
+
+    // Temporary mask used in block_add_eviction_mappings().
+    uvm_processor_mask_t map_processors_eviction;
+
+    // Temporary mask used in uvm_perf_thrashing_unmap_remote_pinned_pages_all.
+    uvm_processor_mask_t unmap_processors_mask;
+
+    // Temporary mask used in thrashing_processors_have_fast_access().
+    uvm_processor_mask_t fast_access_mask;
 
     // State used by uvm_va_block_make_resident
     struct uvm_make_resident_context_struct
@@ -181,9 +215,23 @@ typedef struct
         // Used to perform ECC checks after the migration is done.
         uvm_processor_mask_t all_involved_processors;
 
+        // Page mask used to compute the set of CPU pages for each CPU node.
+        uvm_page_mask_t node_pages_mask;
+
         // Final residency for the data. This is useful for callees to know if
         // a migration is part of a staging copy
         uvm_processor_id_t dest_id;
+
+        // Final residency NUMA node if the migration destination is the CPU.
+        int dest_nid;
+
+        // This structure is used to track CPU pages used for migrations on
+        // a per-NUMA node basis.
+        //
+        // The pages could be used for either migrations to the CPU (used to
+        // track the destination CPU pages) or staging copies (used to track
+        // the CPU pages used for the staging).
+        uvm_make_resident_page_tracking_t cpu_pages_used;
 
         // Event that triggered the call
         uvm_make_resident_cause_t cause;
@@ -202,6 +250,16 @@ typedef struct
         // with map_running_page_mask since revoke calls unmap and map. Bits
         // are removed as the operation progresses.
         uvm_page_mask_t revoke_running_page_mask;
+
+        // Mask used by block_gpu_split_2m and block_gpu_split_big to track
+        // splitting of big PTEs but they are never called concurrently. This
+        // mask can be used concurrently with other page masks.
+        uvm_page_mask_t big_split_page_mask;
+
+        // Mask used by block_unmap_gpu to track non_uvm_lite_gpus which have
+        // this block mapped. This mask can be used concurrently with other page
+        // masks.
+        uvm_processor_mask_t non_uvm_lite_gpus;
 
         uvm_page_mask_t page_mask;
         uvm_page_mask_t filtered_page_mask;
@@ -242,17 +300,14 @@ typedef struct
             struct page *pages[PAGES_PER_UVM_VA_BLOCK];
         };
 
-        // This flag indicates that at least one page in range being migrated
-        // or process for a GPU fault (i.e, faulted or prefetched), then
-        // the whole range will be migrated or remote mapped to system memory.
-        // TODO: Bug 4050579: Remove this when swap cached pages can be
-        // migrated.
-        bool swap_cached;
-
         // Cached VMA pointer. This is only valid while holding the mmap_lock.
         struct vm_area_struct *vma;
 
 #if UVM_IS_CONFIG_HMM()
+
+        // Temporary mask used in uvm_hmm_block_add_eviction_mappings().
+        uvm_processor_mask_t map_processors_eviction;
+
         // Used for migrate_vma_*() to migrate pages to/from GPU/CPU.
         struct migrate_vma migrate_vma_args;
 #endif

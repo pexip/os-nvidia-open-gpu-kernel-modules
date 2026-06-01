@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -82,11 +82,16 @@ typedef struct
     struct DispChannel *pDispChannel;
 } SW_HASH_TABLE_ENTRY;
 
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_DISP_INST_MEM_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct DisplayInstanceMemory {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -340,28 +345,6 @@ static inline void instmemUnbindDispChannelContextDmas(OBJGPU *pGpu, struct Disp
 #define instmemUnbindDispChannelContextDmas(pGpu, pInstMem, pDispChannel) instmemUnbindDispChannelContextDmas_IMPL(pGpu, pInstMem, pDispChannel)
 #endif //__nvoc_disp_inst_mem_h_disabled
 
-NV_STATUS instmemReserveContextDma_IMPL(OBJGPU *pGpu, struct DisplayInstanceMemory *pInstMem, NvU32 *offset);
-
-#ifdef __nvoc_disp_inst_mem_h_disabled
-static inline NV_STATUS instmemReserveContextDma(OBJGPU *pGpu, struct DisplayInstanceMemory *pInstMem, NvU32 *offset) {
-    NV_ASSERT_FAILED_PRECOMP("DisplayInstanceMemory was disabled!");
-    return NV_ERR_NOT_SUPPORTED;
-}
-#else //__nvoc_disp_inst_mem_h_disabled
-#define instmemReserveContextDma(pGpu, pInstMem, offset) instmemReserveContextDma_IMPL(pGpu, pInstMem, offset)
-#endif //__nvoc_disp_inst_mem_h_disabled
-
-NV_STATUS instmemFreeContextDma_IMPL(OBJGPU *pGpu, struct DisplayInstanceMemory *pInstMem, NvU32 offset);
-
-#ifdef __nvoc_disp_inst_mem_h_disabled
-static inline NV_STATUS instmemFreeContextDma(OBJGPU *pGpu, struct DisplayInstanceMemory *pInstMem, NvU32 offset) {
-    NV_ASSERT_FAILED_PRECOMP("DisplayInstanceMemory was disabled!");
-    return NV_ERR_NOT_SUPPORTED;
-}
-#else //__nvoc_disp_inst_mem_h_disabled
-#define instmemFreeContextDma(pGpu, pInstMem, offset) instmemFreeContextDma_IMPL(pGpu, pInstMem, offset)
-#endif //__nvoc_disp_inst_mem_h_disabled
-
 #undef PRIVATE_FIELD
 
 
@@ -370,4 +353,5 @@ static inline NV_STATUS instmemFreeContextDma(OBJGPU *pGpu, struct DisplayInstan
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_DISP_INST_MEM_NVOC_H_

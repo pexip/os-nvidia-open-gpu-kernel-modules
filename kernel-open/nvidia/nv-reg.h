@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2006-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2006-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -771,16 +771,11 @@
 /*
  * Option: OpenRmEnableUnsupportedGpus
  *
- * Open nvidia.ko support for features beyond what is used on Data Center GPUs
- * is still fairly immature, so for now require users to opt into use of open
- * nvidia.ko with a special registry key, if not on a Data Center GPU.
+ * This option to require opt in for use of Open RM on non-Data Center
+ * GPUs is deprecated and no longer required. The kernel module parameter
+ * is left here, though ignored, for backwards compatibility.
  */
-
 #define __NV_OPENRM_ENABLE_UNSUPPORTED_GPUS OpenRmEnableUnsupportedGpus
-#define NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS NV_REG_STRING(__NV_OPENRM_ENABLE_UNSUPPORTED_GPUS)
-#define NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS_DISABLE 0x00000000
-#define NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS_ENABLE  0x00000001
-#define NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS_DEFAULT NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS_DISABLE
 
 /*
  * Option: NVreg_DmaRemapPeerMmio
@@ -827,6 +822,62 @@
 #define __NV_RM_NVLINK_BW RmNvlinkBandwidth
 #define NV_RM_NVLINK_BW NV_REG_STRING(__NV_RM_NVLINK_BW)
 
+/*
+ * Option: NVreg_EnableNonblockingOpen
+ *
+ * Description:
+ *
+ * When this option is enabled, the NVIDIA driver will try to perform any
+ * required device initialization in the background when /dev/nvidiaN devices
+ * are opened with the flag O_NONBLOCK.
+ *
+ * Possible Values:
+ *  0 = O_NONBLOCK flag when opening devices is ignored
+ *  1 = O_NONBLOCK flag when opening devices results in background device
+ *      initialization (default)
+ */
+#define __NV_ENABLE_NONBLOCKING_OPEN EnableNonblockingOpen
+#define NV_ENABLE_NONBLOCKING_OPEN NV_REG_STRING(__NV_ENABLE_NONBLOCKING_OPEN)
+
+/*
+ * Option: NVreg_ImexChannelCount
+ *
+ * Description:
+ *
+ * This option allows users to specify the number of IMEX (import/export)
+ * channels. Within an IMEX domain, the channels allow sharing memory
+ * securely in a multi-user environment using the CUDA driver's fabric handle
+ * based APIs.
+ *
+ * An IMEX domain is either an OS instance or a group of securely
+ * connected OS instances using the NVIDIA IMEX daemon. The option must
+ * be set to the same value on each OS instance within the IMEX domain.
+ *
+ * An IMEX channel is a logical entity that is represented by a /dev node.
+ * The IMEX channels are global resources within the IMEX domain. When
+ * exporter and importer CUDA processes have been granted access to the
+ * same IMEX channel, they can securely share memory.
+ *
+ * Note that the NVIDIA driver will not attempt to create the /dev nodes. Thus,
+ * the related CUDA APIs will fail with an insufficient permission error until
+ * the /dev nodes are set up. The creation of these /dev nodes,
+ * /dev/nvidia-caps-imex-channels/channelN, must be handled by the
+ * administrator, where N is the minor number. The major number can be
+ * queried from /proc/devices.
+ *
+ * nvidia-modprobe CLI support is available to set up the /dev nodes.
+ * NVreg_ModifyDeviceFiles, NVreg_DeviceFileGID, NVreg_DeviceFileUID
+ * and NVreg_DeviceFileMode will be honored by nvidia-modprobe.
+ *
+ * Possible values:
+ *  0 - Disable IMEX using CUDA driver's fabric handles.
+ *  N - N IMEX channels will be enabled in the driver to facilitate N
+ *      concurrent users. Default value is 2048 channels, and the current
+ *      maximum value is 20-bit, same as Linux dev_t's minor number limit.
+ */
+#define __NV_IMEX_CHANNEL_COUNT ImexChannelCount
+#define NV_REG_IMEX_CHANNEL_COUNT NV_REG_STRING(__NV_IMEX_CHANNEL_COUNT)
+
 #if defined(NV_DEFINE_REGISTRY_KEY_TABLE)
 
 /*
@@ -853,7 +904,7 @@ NV_DEFINE_REG_ENTRY(__NV_DYNAMIC_POWER_MANAGEMENT, 3);
 NV_DEFINE_REG_ENTRY(__NV_DYNAMIC_POWER_MANAGEMENT_VIDEO_MEMORY_THRESHOLD, 200);
 NV_DEFINE_REG_ENTRY(__NV_ENABLE_GPU_FIRMWARE, NV_REG_ENABLE_GPU_FIRMWARE_DEFAULT_VALUE);
 NV_DEFINE_REG_ENTRY(__NV_ENABLE_GPU_FIRMWARE_LOGS, NV_REG_ENABLE_GPU_FIRMWARE_LOGS_ENABLE_ON_DEBUG);
-NV_DEFINE_REG_ENTRY(__NV_OPENRM_ENABLE_UNSUPPORTED_GPUS, NV_REG_OPENRM_ENABLE_UNSUPPORTED_GPUS_DEFAULT);
+NV_DEFINE_REG_ENTRY(__NV_OPENRM_ENABLE_UNSUPPORTED_GPUS, 1);
 
 NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_USER_NUMA_MANAGEMENT, 1);
 NV_DEFINE_REG_ENTRY_GLOBAL(__NV_MEMORY_POOL_SIZE, 0);
@@ -865,6 +916,7 @@ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_PCIE_RELAXED_ORDERING_MODE, 0);
 NV_DEFINE_REG_ENTRY_GLOBAL(__NV_REGISTER_PCI_DRIVER, 1);
 NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_RESIZABLE_BAR, 0);
 NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_DBG_BREAKPOINT, 0);
+NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_NONBLOCKING_OPEN, 1);
 
 NV_DEFINE_REG_STRING_ENTRY(__NV_REGISTRY_DWORDS, NULL);
 NV_DEFINE_REG_STRING_ENTRY(__NV_REGISTRY_DWORDS_PER_DEVICE, NULL);
@@ -874,6 +926,7 @@ NV_DEFINE_REG_STRING_ENTRY(__NV_TEMPORARY_FILE_PATH, NULL);
 NV_DEFINE_REG_STRING_ENTRY(__NV_EXCLUDED_GPUS, NULL);
 NV_DEFINE_REG_ENTRY(__NV_DMA_REMAP_PEER_MMIO, NV_DMA_REMAP_PEER_MMIO_ENABLE);
 NV_DEFINE_REG_STRING_ENTRY(__NV_RM_NVLINK_BW, NULL);
+NV_DEFINE_REG_ENTRY_GLOBAL(__NV_IMEX_CHANNEL_COUNT, 2048);
 
 /*
  *----------------registry database definition----------------------
@@ -920,6 +973,7 @@ nv_parm_t nv_parms[] = {
     NV_DEFINE_PARAMS_TABLE_ENTRY(__NV_ENABLE_DBG_BREAKPOINT),
     NV_DEFINE_PARAMS_TABLE_ENTRY(__NV_OPENRM_ENABLE_UNSUPPORTED_GPUS),
     NV_DEFINE_PARAMS_TABLE_ENTRY(__NV_DMA_REMAP_PEER_MMIO),
+    NV_DEFINE_PARAMS_TABLE_ENTRY(__NV_IMEX_CHANNEL_COUNT),
     {NULL, NULL}
 };
 

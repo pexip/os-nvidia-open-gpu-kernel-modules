@@ -1,4 +1,4 @@
-From d70daaaafa22f244641c0b2010ed89de7da2102f Mon Sep 17 00:00:00 2001
+From 29543f9fa017e2db69181ea323d5abd3b56020b0 Mon Sep 17 00:00:00 2001
 From: Rahul Rameshbabu <rrameshbabu@nvidia.com>
 Date: Fri, 3 Jan 2025 13:13:31 -0800
 Subject: [PATCH] Support BTF generation for non-release builds
@@ -96,16 +96,14 @@ Example of limited kfuncs available from kernel module builds lacking BTF:
 
 Signed-off-by: Rahul Rameshbabu <rrameshbabu@nvidia.com>
 
-Ignore c++11 in addition to c++.
-
-Origin: other, https://github.com/NVIDIA/open-gpu-kernel-modules/issues/756
+Bug: https://github.com/NVIDIA/open-gpu-kernel-modules/issues/756
 Origin: other, https://github.com/Binary-Eater/open-gpu-kernel-modules/commit/854449a7b76cdb4ad17919a1c8a662a4ff5b943d
 ---
  Makefile | 28 +++++++++++++++++++++++++++-
  1 file changed, 27 insertions(+), 1 deletion(-)
 
 diff --git a/Makefile b/Makefile
-index 72672c2a..40a9792e 100644
+index 2dacb1cb..e0be65ba 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -71,6 +71,31 @@ else
@@ -125,14 +123,14 @@ index 72672c2a..40a9792e 100644
 +  #     pahole_cmd = "pahole"
 +  #     for (i = 1; i < ARGC; i++) {
 +  #         if (ARGV[i] ~ /--lang_exclude=/) {
-+  #             pahole_cmd = pahole_cmd sprintf(" %s,c++,c++11", ARGV[i])
++  #             pahole_cmd = pahole_cmd sprintf(" %s,c++", ARGV[i])
 +  #         } else {
 +  #             pahole_cmd = pahole_cmd sprintf(" %s", ARGV[i])
 +  #         }
 +  #     }
 +  #     system(pahole_cmd)
 +  # }
-+  PAHOLE_AWK_PROGRAM = BEGIN { pahole_cmd = \"pahole\"; for (i = 1; i < ARGC; i++) { if (ARGV[i] ~ /--lang_exclude=/) { pahole_cmd = pahole_cmd sprintf(\" %s,c++,c++11\", ARGV[i]); } else { pahole_cmd = pahole_cmd sprintf(\" %s\", ARGV[i]); } } system(pahole_cmd); }
++  PAHOLE_AWK_PROGRAM = BEGIN { pahole_cmd = \"pahole\"; for (i = 1; i < ARGC; i++) { if (ARGV[i] ~ /--lang_exclude=/) { pahole_cmd = pahole_cmd sprintf(\" %s,c++\", ARGV[i]); } else { pahole_cmd = pahole_cmd sprintf(\" %s\", ARGV[i]); } } system(pahole_cmd); }
 +  # If scripts/pahole-flags.sh is not present in the kernel tree, add PAHOLE and
 +  # PAHOLE_AWK_PROGRAM assignments to PAHOLE_VARIABLES; otherwise assign the
 +  # empty string to PAHOLE_VARIABLES.
@@ -140,7 +138,7 @@ index 72672c2a..40a9792e 100644
  
    ifndef ARCH
      ARCH := $(shell uname -m | sed -e 's/i.86/i386/' \
-@@ -109,7 +134,8 @@ else
+@@ -112,7 +137,8 @@ else
  
    .PHONY: modules module clean clean_conftest modules_install
    modules clean modules_install:

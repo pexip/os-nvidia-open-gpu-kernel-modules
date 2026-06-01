@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2010-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2010-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -36,7 +36,6 @@
 #include "ctrl/ctrl0073/ctrl0073specific.h" // NV0073_CTRL_HDCP_VPRIME_SIZE
 #include "displayport.h"
 
-
 namespace DisplayPort
 {
     typedef NvU64 LinkRate;
@@ -44,32 +43,59 @@ namespace DisplayPort
     class LinkRates : virtual public Object
     {
     public:
+        NvU8 entries;
+
+        virtual void clear() = 0;
+        virtual bool import(NvU8 linkBw)
+        {
+            DP_ASSERT(0);
+            return false;
+        }
+
+        virtual LinkRate getLowerRate(LinkRate rate) = 0;
+        virtual LinkRate getMaxRate() = 0;
+        virtual NvU8 getNumElements() = 0;
+
+        NvU8 getNumLinkRates()
+        {
+            return entries;
+        }
+
+    };
+
+    class LinkRates1x : virtual public LinkRates
+    {
+    public:
         // Store link rate in multipler of 270MBPS to save space
-        NvU8 element[NV_DPCD_SUPPORTED_LINK_RATES__SIZE];
-        NvU8  entries;
+        NvU8 element[NV_SUPPORTED_DP1X_LINK_RATES__SIZE];
 
-        LinkRates()
+        LinkRates1x()
         {
             entries = 0;
-
-            for (int i = 0; i < NV_DPCD_SUPPORTED_LINK_RATES__SIZE; i++)
+            for (int i = 0; i < NV_SUPPORTED_DP1X_LINK_RATES__SIZE; i++)
             {
                 element[i] = 0;
             }
         }
 
-        void clear()
+        virtual void clear()
         {
             entries = 0;
-            for (int i = 0; i < NV_DPCD_SUPPORTED_LINK_RATES__SIZE; i++)
+            for (int i = 0; i < NV_SUPPORTED_DP1X_LINK_RATES__SIZE; i++)
             {
                 element[i] = 0;
             }
         }
 
-        bool import(NvU8 linkBw)
+        virtual bool import(NvU8 linkBw)
         {
-            if (entries < NV_DPCD_SUPPORTED_LINK_RATES__SIZE)
+            if (!IS_VALID_LINKBW(linkBw))
+            {
+                DP_ASSERT(0 && "Unsupported Link Bandwidth");
+                return false;
+            }
+
+            if (entries < NV_SUPPORTED_DP1X_LINK_RATES__SIZE)
             {
                 element[entries] = linkBw;
                 entries++;
@@ -79,12 +105,7 @@ namespace DisplayPort
                 return false;
         }
 
-        NvU8 getNumLinkRates()
-        {
-            return entries;
-        }
-
-        LinkRate getLowerRate(LinkRate rate)
+        virtual LinkRate getLowerRate(LinkRate rate)
         {
             int i;
             NvU8 linkBw = (NvU8)(rate / DP_LINK_BW_FREQ_MULTI_MBPS);
@@ -102,24 +123,29 @@ namespace DisplayPort
             return rate;
         }
 
-        LinkRate getMaxRate()
+        virtual LinkRate getMaxRate()
         {
             LinkRate rate = 0;
             if ((entries > 0) &&
-                (entries <= NV_DPCD_SUPPORTED_LINK_RATES__SIZE))
+                (entries <= NV_SUPPORTED_DP1X_LINK_RATES__SIZE))
             {
                 rate = (LinkRate)element[entries - 1] * DP_LINK_BW_FREQ_MULTI_MBPS;
             }
 
             return rate;
         }
+        virtual NvU8 getNumElements()
+        {
+            return NV_SUPPORTED_DP1X_LINK_RATES__SIZE;
+        }
+
     };
 
     class LinkPolicy : virtual public Object
     {
-        bool        bNoFallback;                // No fallback when LT fails
-        LinkRates   linkRates;
-
+    protected:
+        bool            bNoFallback;                // No fallback when LT fails
+        LinkRates1x     linkRates;
     public:
         LinkPolicy() : bNoFallback(false)
         {
@@ -138,13 +164,25 @@ namespace DisplayPort
             return &linkRates;
         }
     };
+
     enum
     {
         totalTimeslots = 64,
         totalUsableTimeslots = totalTimeslots - 1
     };
 
-    // in 10bps
+    //
+    // Link Data Rate per DP Lane, in MBPS,
+    // For 8b/10b channel coding:
+    //     Link Data Rate = link rate * (8 / 10) / 8
+    //                    = link rate * 0.1
+    // For 128b/132b channel coding:
+    //     Link Data Rate = link rate * (128 / 132) / 8
+    //                    = link rate * 4 / 33
+    //                   ~= link rate * 0.12
+    //
+    // Link Bandwidth     = Lane Count * Link Data Rate
+    //
     enum
     {
         RBR             =  162000000,
@@ -204,7 +242,6 @@ namespace DisplayPort
         bool     disablePostLTRequest;
         bool     bEnableFEC;
         bool     bDisableLTTPR;
-
         //
         // The counter to record how many times link training happens.
         // Client can reset the counter by calling setLTCounter(0)
@@ -214,7 +251,8 @@ namespace DisplayPort
         LinkConfiguration() :
             lanes(0), peakRatePossible(0), peakRate(0), minRate(0),
             enhancedFraming(false), multistream(false), disablePostLTRequest(false),
-            bEnableFEC(false), bDisableLTTPR(false), linkTrainCounter(0) {};
+            bEnableFEC(false), bDisableLTTPR(false),
+            linkTrainCounter(0) {};
 
         LinkConfiguration(LinkPolicy * p, unsigned lanes, LinkRate peakRate,
             bool enhancedFraming, bool MST, bool disablePostLTRequest = false,
@@ -256,8 +294,8 @@ namespace DisplayPort
             else
             {
                 // if FEC is not enabled, link overhead comprises only of
-                // 0.05% downspread.
-                return rate - 5 * rate/ 1000;
+                // 0.6% downspread.
+                return rate - 6 * rate/ 1000;
 
             }
         }
@@ -278,42 +316,113 @@ namespace DisplayPort
               bDisableLTTPR(false),
               linkTrainCounter(0)
         {
+            //
             // Reverse engineer a link configuration from Total TotalLinkPBN
             // Note that HBR2 twice HBR. The table below treats HBR2x1 and HBRx2, etc.
-
             //
-            //    BW     Effective Lanes    Total TotalLinkPBN
-            //    165    1                  195.5555556
-            //    165    2                  391.1111111
-            //    165    4                  782.2222222
-            //    270    1                  320
-            //    270    2                  640
-            //    270    4                  1280
-            //    270    8                  2560
+            // PBN Calculation
+            // Definition of PBN is "54/64 MBps".
+            // Note this is the "data" actually transmitted in the main link.
+            // So we need to take channel coding into consideration.
+            // Formula: PBN = Lane Count * Link Rate (Gbps) * 1000 * (1/8) * ChannelCoding Efficiency * (64 / 54)
+            // Example:
+            // 1. 4 * HBR2:    4 * 5.4 * 1000 * (1/8) * (8/10) * (64/54) = 2560
+            // 2. 2 * UHBR10:  2 * 10 * 1000 * (1/8) * (128/132) * (64/54) = 2873
+            //
+            // Full list:
+            //
+            //   BW (Gbps)        Lanes              TotalLinkPBN
+            //     1.62             1                     192
+            //     1.62             2                     384
+            //     1.62             4                     768
+            //     2.70             1                     320
+            //     2.70             2                     640
+            //     2.70             4                    1280
+            //     5.40             1                     640
+            //     5.40             2                    1280
+            //     5.40             4                    2560
+            //     8.10             1                     960
+            //     8.10             2                    1920
+            //     8.10             4                    3840
+            //    10.00             1                    1436
+            //    10.00             2                    2873
+            //    10.00             4                    5746
+            //    13.50             1                    1939
+            //    13.50             2                    3878
+            //    13.50             4                    7757
+            //    20.00             1                    2873
+            //    20.00             2                    5746
+            //    20.00             4                   11492
             //
 
             if (TotalLinkPBN <= 90)
-                peakRatePossible = peakRate = RBR, minRate = linkOverhead(RBR), lanes=0; // FAIL
-            if (TotalLinkPBN <= 195)
-                peakRatePossible = peakRate = RBR, minRate = linkOverhead(RBR), lanes=1;
+            {
+                peakRatePossible = peakRate = RBR;
+                minRate = linkOverhead(RBR);
+                lanes = 0; // FAIL
+            }
+            if (TotalLinkPBN <= 192)
+            {
+                peakRatePossible = peakRate = RBR;
+                minRate = linkOverhead(RBR);
+                lanes = 1;
+            }
             else if (TotalLinkPBN <= 320)
-                peakRatePossible = peakRate = HBR, minRate=linkOverhead(HBR), lanes = 1;
-            else if (TotalLinkPBN <= 391)
-                peakRatePossible = peakRate = RBR, minRate=linkOverhead(RBR), lanes = 2;
+            {
+                peakRatePossible = peakRate = HBR;
+                minRate = linkOverhead(HBR);
+                lanes = 1;
+            }
+            else if (TotalLinkPBN <= 384)
+            {
+                peakRatePossible = peakRate = RBR;
+                minRate = linkOverhead(RBR);
+                lanes = 2;
+            }
             else if (TotalLinkPBN <= 640)
-                peakRatePossible = peakRate = HBR, minRate=linkOverhead(HBR), lanes = 2;   // could be HBR2x1, but TotalLinkPBN works out same
-            else if (TotalLinkPBN <= 782)
-                peakRatePossible = peakRate = RBR, minRate=linkOverhead(RBR), lanes = 4;
+            {
+                // could be HBR2 x 1, but TotalLinkPBN works out same
+                peakRatePossible = peakRate = HBR;
+                minRate = linkOverhead(HBR);
+                lanes = 2;
+            }
+            else if (TotalLinkPBN <= 768)
+            {
+                peakRatePossible = peakRate = RBR;
+                minRate = linkOverhead(RBR);
+                lanes = 4;
+            }
             else if (TotalLinkPBN <= 960)
-                peakRatePossible = peakRate = HBR3, minRate=linkOverhead(HBR3), lanes = 1;
+            {
+                peakRatePossible = peakRate = HBR3;
+                minRate = linkOverhead(HBR3);
+                lanes = 1;
+            }
             else if (TotalLinkPBN <= 1280)
-                peakRatePossible = peakRate = HBR, minRate=linkOverhead(HBR), lanes = 4;   // could be HBR2x2
+            {
+                // could be HBR2 x 2
+                peakRatePossible = peakRate = HBR;
+                minRate = linkOverhead(HBR);
+                lanes = 4;
+            }
             else if (TotalLinkPBN <= 1920)
-                peakRatePossible = peakRate = HBR3, minRate=linkOverhead(HBR3), lanes = 2;   // could be HBR2x
+            {
+                peakRatePossible = peakRate = HBR3;
+                minRate = linkOverhead(HBR3);
+                lanes = 2;
+            }
             else if (TotalLinkPBN <= 2560)
-                peakRatePossible = peakRate = HBR2, minRate=linkOverhead(HBR2), lanes = 4;
+            {
+                peakRatePossible = peakRate = HBR2;
+                minRate = linkOverhead(HBR2);
+                lanes = 4;
+            }
             else if (TotalLinkPBN <= 3840)
-                peakRatePossible = peakRate = HBR3, minRate=linkOverhead(HBR3), lanes = 4;
+            {
+                peakRatePossible = peakRate = HBR3;
+                minRate = linkOverhead(HBR3);
+                lanes = 4;
+            }
             else {
                 peakRatePossible = peakRate = RBR, minRate = linkOverhead(RBR), lanes = 0; // FAIL
                 DP_ASSERT(0 && "Unknown configuration");
@@ -374,7 +483,6 @@ namespace DisplayPort
             }
 
             minRate = linkOverhead(peakRate);
-
             return lanes != laneCount_0;
         }
 

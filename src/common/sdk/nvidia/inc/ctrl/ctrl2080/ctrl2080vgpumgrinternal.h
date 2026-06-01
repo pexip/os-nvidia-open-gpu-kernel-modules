@@ -52,6 +52,8 @@
  * guestFbLengthList           - list of guest FB memory length in bytes
  * pluginHeapMemoryPhysAddr    - plugin heap memory offset
  * pluginHeapMemoryLength      - plugin heap memory length in bytes
+ * migRmHeapMemoryPhysAddr     - Mig rm heap memory region's physical offset.
+ * migRmHeapMemoryLength       - Mig rm heap memory length in bytes
  * bDeviceProfilingEnabled     - If set to true, profiling is allowed
  */
 #define NV2080_CTRL_CMD_VGPU_MGR_INTERNAL_BOOTLOAD_GSP_VGPU_PLUGIN_TASK (0x20804001) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_VGPU_MGR_INTERNAL_INTERFACE_ID << 8) | NV2080_CTRL_VGPU_MGR_INTERNAL_BOOTLOAD_GSP_VGPU_PLUGIN_TASK_PARAMS_MESSAGE_ID" */
@@ -59,7 +61,7 @@
 #define NV2080_CTRL_MAX_VMMU_SEGMENTS                                   384
 
 /* Must match NV2080_ENGINE_TYPE_LAST from cl2080.h */
-#define NV2080_GPU_MAX_ENGINES                                          0x3e
+#define NV2080_GPU_MAX_ENGINES                                          0x40
 
 #define NV2080_CTRL_VGPU_MGR_INTERNAL_BOOTLOAD_GSP_VGPU_PLUGIN_TASK_PARAMS_MESSAGE_ID (0x1U)
 
@@ -83,6 +85,8 @@ typedef struct NV2080_CTRL_VGPU_MGR_INTERNAL_BOOTLOAD_GSP_VGPU_PLUGIN_TASK_PARAM
     NV_DECLARE_ALIGNED(NvU64 initTaskLogBuffSize, 8);
     NV_DECLARE_ALIGNED(NvU64 vgpuTaskLogBuffOffset, 8);
     NV_DECLARE_ALIGNED(NvU64 vgpuTaskLogBuffSize, 8);
+    NV_DECLARE_ALIGNED(NvU64 migRmHeapMemoryPhysAddr, 8);
+    NV_DECLARE_ALIGNED(NvU64 migRmHeapMemoryLength, 8);
     NvBool bDeviceProfilingEnabled;
 } NV2080_CTRL_VGPU_MGR_INTERNAL_BOOTLOAD_GSP_VGPU_PLUGIN_TASK_PARAMS;
 
@@ -407,5 +411,29 @@ typedef struct NV2080_CTRL_VGPU_MGR_INTERNAL_GET_PGPU_MIGRATION_SUPPORT_PARAMS {
 typedef struct NV2080_CTRL_VGPU_MGR_INTERNAL_SET_VGPU_MGR_CONFIG_PARAMS {
     NvBool bSupportHeterogeneousTimeSlicedVgpuTypes;
 } NV2080_CTRL_VGPU_MGR_INTERNAL_SET_VGPU_MGR_CONFIG_PARAMS;
+
+/*
+ * NV2080_CTRL_CMD_VGPU_MGR_INTERNAL_GET_PGPU_MIGRATION_SUPPORT
+ *
+ * Reroutes NVA084_CTRL_CMD_KERNEL_HOST_VGPU_DEVICE_FREE_STATES to GSP RM to enable
+ * kernel clients to utilize NVA082_CTRL_CMD_HOST_VGPU_DEVICE_FREE_STATES.
+ *
+ * gfid [IN]
+ *   This parameter specifies the gfid of vGPU assigned to VM.
+ * flags [IN]
+ *   Specifies what component of HostVgpuDevice to free.
+ *
+ * Possible status values returned are:
+ *   NV_OK
+ *   NV_ERR_INVALID_STATE
+ */
+#define NV2080_CTRL_CMD_VGPU_MGR_INTERNAL_FREE_STATES (0x2080400c) /* finn: Evaluated from "(FINN_NV20_SUBDEVICE_0_VGPU_MGR_INTERNAL_INTERFACE_ID << 8) | NV2080_CTRL_VGPU_MGR_INTERNAL_FREE_STATES_PARAMS_MESSAGE_ID" */
+
+#define NV2080_CTRL_VGPU_MGR_INTERNAL_FREE_STATES_PARAMS_MESSAGE_ID (0xCU)
+
+typedef struct NV2080_CTRL_VGPU_MGR_INTERNAL_FREE_STATES_PARAMS {
+    NvU32 gfid;
+    NvU32 flags;
+} NV2080_CTRL_VGPU_MGR_INTERNAL_FREE_STATES_PARAMS;
 
 /* _ctrl2080vgpumgrinternal_h_ */

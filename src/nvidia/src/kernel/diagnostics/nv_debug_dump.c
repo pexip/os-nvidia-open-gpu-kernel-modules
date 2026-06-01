@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -177,6 +177,7 @@ nvdEngineDumpCallbackHelper
 {
     NV_STATUS   nvStatus      = NV_OK;
     NvU8        startingDepth = prbEncNestingLevel(pPrbEnc);
+    OBJSYS     *pSys          = SYS_GET_INSTANCE();
 
     if (!IS_GSP_CLIENT(pGpu) ||
         !FLD_TEST_REF(NVD_ENGINE_FLAGS_SOURCE, _GSP, pEngineCallback->flags))
@@ -192,7 +193,8 @@ nvdEngineDumpCallbackHelper
     }
 
     if (IS_GSP_CLIENT(pGpu) &&
-        !FLD_TEST_REF(NVD_ENGINE_FLAGS_SOURCE, _CPU, pEngineCallback->flags))
+        !FLD_TEST_REF(NVD_ENGINE_FLAGS_SOURCE, _CPU, pEngineCallback->flags) &&
+        !pSys->getProperty(pSys, PDB_PROP_SYS_IN_OCA_DATA_COLLECTION))
     {
             NV_RM_RPC_DUMP_PROTOBUF_COMPONENT(pGpu, nvStatus, pPrbEnc,
                 pNvDumpState, pEngineCallback->engDesc);
@@ -679,7 +681,8 @@ nvdAllocDebugBuffer_IMPL
     }
 
     // Allocate backing memory
-    status = memdescAlloc(pMemDesc);
+    memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_53, 
+                    pMemDesc);
     if (status != NV_OK) {
 
         // Destroy the memory descriptor

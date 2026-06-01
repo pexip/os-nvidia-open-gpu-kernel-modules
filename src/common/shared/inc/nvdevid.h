@@ -86,6 +86,7 @@
 #define NV_PCI_SUBID_VENDOR_SONY          0x104D
 #define NV_PCI_SUBID_VENDOR_BITLAND       0x1642
 #define NV_PCI_SUBID_VENDOR_PC_PARTNER    0x174B
+#define NV_PCI_SUBID_VENDOR_CAVIUM        0x177D
 #define NV_PCI_SUBID_VENDOR_NZXT          0x1D96
 
 // XXX CKEANUP TO REMOVE IN FAVOR OF NV_PCI_SUBID_VENDOR_*
@@ -146,6 +147,8 @@
 #define PCI_VENDOR_ID_ARM           0x13B5
 #define PCI_VENDOR_ID_HYGON         0x1D94
 #define PCI_VENDOR_ID_ALIBABA       0x1DED
+#define PCI_VENDOR_ID_SIFIVE        0xF15E
+#define PCI_VENDOR_ID_PLDA          0x1556
 
 #define NV_PCI_DEVID_DEVICE                    31:16  /* RW--F */
 #define NV_PCI_SUBID_DEVICE                    31:16  /* RW--F */
@@ -287,10 +290,6 @@
 #define DEVICE_ID_INTEL_0E0B_ROOT_PORT      0x0e0b
 // Intel Ivy Bridge E definitions
 #define DEVICE_ID_INTEL_0E00_HOST_BRIDGE    0x0E00
-
-// Intel Haswell definitions
-#define DEVICE_ID_INTEL_0C00_HASWELL_HOST_BRIDGE        0x0C00
-#define DEVICE_ID_INTEL_0C04_HASWELL_HOST_BRIDGE        0x0C04
 
 // Intel PCH definitions
 #define DEVICE_ID_INTEL_9D10_PCH_BRIDGE     0x9d10
@@ -445,6 +444,9 @@
 // Foxconn Einstein 64 [8086:a1c1][105b:7270]
 #define FOXCONN_EINSTEIN_64_DEVID           0xA1C1
 #define FOXCONN_EINSTEIN_64_SSDEVID         0x7270
+
+// Cavium, Inc. CN99xx [ThunderX2]  [177d:af00]
+#define CAVIUM_X2_DEVID                     0xAF00
 
 // Lenovo Tomcat/Falcon/Hornet Workstations
 #define LENOVO_TOMCAT_DEVID                 0x1B81
@@ -631,6 +633,8 @@ enum {
 ,     CS_INTEL_18DC
 ,     CS_INTEL_7A04
 ,     CS_INTEL_5795
+,     CS_SIFIVE_FU740_C000
+,     CS_PLDA_XPRESSRICH_AXI_REF
 ,     CS_AMPERE_AMPEREONE
 ,     CS_MAX_PCIE
 };

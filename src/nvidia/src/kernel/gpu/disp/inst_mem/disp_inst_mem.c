@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -32,6 +32,7 @@
 #include "gpu/disp/kern_disp.h"
 #include "gpu/disp/disp_channel.h"
 #include "gpu/disp/inst_mem/disp_inst_mem.h"
+#include "gpu_mgr/gpu_mgr.h"
 #include "gpu/mem_mgr/context_dma.h"
 #include "gpu/mem_mgr/mem_mgr.h"
 #include "os/nv_memory_type.h"
@@ -308,8 +309,9 @@ instmemInitMemDesc
                                   MEMDESC_FLAGS_MEMORY_TYPE_DISPLAY_NISO),
                     exit);
 
-                NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
-                    memdescAlloc(pInstMem->pAllocedInstMemDesc),
+                memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_67, 
+                                pInstMem->pAllocedInstMemDesc);
+                NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR, status,
                     exit);
 
                 base = memdescGetPhysAddr(pInstMem->pAllocedInstMemDesc, AT_GPU, 0);

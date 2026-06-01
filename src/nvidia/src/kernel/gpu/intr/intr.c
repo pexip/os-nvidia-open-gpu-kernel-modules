@@ -31,6 +31,7 @@
 #include "kernel/gpu/gr/kernel_graphics.h"
 #include "kernel/gpu/intr/engine_idx.h"
 #include "kernel/gpu/intr/intr_service.h"
+#include "kernel/gpu/gsp/gsp_trace_rats_macro.h"
 #include "gpu/mmu/kern_gmmu.h"
 #include "kernel/gpu/mig_mgr/kernel_mig_manager.h"
 #include "os/os.h"
@@ -38,6 +39,7 @@
 #include "vgpu/rpc.h"
 #include "virtualization/hypervisor/hypervisor.h"
 #include "gpu/gsp/kernel_gsp.h"
+#include "platform/sli/sli.h"
 
 #include "nv_ref.h"
 #include "nvRmReg.h"
@@ -537,6 +539,43 @@ intrServiceStallListDevice_IMPL
     SLI_LOOP_END;
 }
 
+
+INTR_TABLE_ENTRY *
+intrGetInterruptTableEntryFromEngineId_IMPL
+(
+    OBJGPU *pGpu,
+    Intr   *pIntr,
+    NvU16   mcEngineId,
+    NvBool  bNonStall
+)
+{
+    InterruptTable    *pIntrTable;
+    InterruptTableIter iter;
+    NV_STATUS          status;
+
+    status = intrGetInterruptTable_HAL(pGpu, pIntr, &pIntrTable);
+    if (status != NV_OK)
+    {
+        NV_ASSERT_OK_FAILED("Failed to get interrupt table", status);
+        return NULL;
+    }
+
+    for (iter = vectIterAll(pIntrTable); vectIterNext(&iter);)
+    {
+        INTR_TABLE_ENTRY *pEntry = iter.pValue;
+        if (pEntry->mcEngine == mcEngineId)
+        {
+            return pEntry;
+        }
+    }
+
+    NV_PRINTF(LEVEL_ERROR,
+              "Could not find the specified engine Id %u\n",
+              mcEngineId);
+    DBG_BREAKPOINT();
+    return NULL;
+}
+
 /*!
  * @brief Get the interrupt vector for the given engine
  *
@@ -550,36 +589,21 @@ intrServiceStallListDevice_IMPL
 NvU32
 intrGetVectorFromEngineId_IMPL
 (
-    OBJGPU   *pGpu,
-    Intr     *pIntr,
-    NvU16     mcEngineId,
-    NvBool    bNonStall
+    OBJGPU *pGpu,
+    Intr   *pIntr,
+    NvU16   mcEngineId,
+    NvBool  bNonStall
 )
 {
-    InterruptTable    *pIntrTable;
-    InterruptTableIter iter;
-    NV_STATUS          status;
+    INTR_TABLE_ENTRY *pEntry = intrGetInterruptTableEntryFromEngineId(pGpu,
+        pIntr,
+        mcEngineId,
+        bNonStall);
 
-    status = intrGetInterruptTable_HAL(pGpu, pIntr, &pIntrTable);
-    if (status != NV_OK)
-    {
-        NV_ASSERT_OK_FAILED("Failed to get interrupt table", status);
-        return NV_INTR_VECTOR_INVALID;
-    }
-
-    for (iter = vectIterAll(pIntrTable); vectIterNext(&iter);)
-    {
-        INTR_TABLE_ENTRY *pEntry = iter.pValue;
-        if (pEntry->mcEngine == mcEngineId)
-        {
-            return bNonStall ? pEntry->intrVectorNonStall : pEntry->intrVector;
-        }
-    }
-
-    NV_PRINTF(LEVEL_ERROR, "Could not find the specified engine Id %u\n", mcEngineId);
-    DBG_BREAKPOINT();
-    return NV_INTR_VECTOR_INVALID;
+    NV_ASSERT_OR_RETURN(pEntry != NULL, NV_INTR_VECTOR_INVALID);
+    return bNonStall ? pEntry->intrVectorNonStall : pEntry->intrVector;
 }
+
 
 /*!
  * @brief Convert a general MC_ENGINE_BITVECTOR to its corresponding hardware
@@ -734,10 +758,14 @@ intrConstructEngine_IMPL
     pIntr->dpcQueue.pRear  = NULL;
     pIntr->bDpcStarted     = NV_FALSE;
 
-    if (!RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM)
+    if (!RMCFG_FEATURE_PLATFORM_WINDOWS)
     {
         pIntr->setProperty(pIntr, PDB_PROP_INTR_DISABLE_PER_INTR_DPC_QUEUEING, NV_TRUE);
     }
+
+    NV_ASSERT_OK_OR_RETURN(vectInit(&pIntr->intrTable,
+                                    portMemAllocatorGetGlobalNonPaged(),
+                                    0 /* capacity */));
 
     return NV_OK;
 }
@@ -758,6 +786,8 @@ intrDestruct_IMPL
         pNode = intrDequeueDpc(pGpu, pIntr, pDPCQueue);
         portMemFree(pNode);
     }
+
+    vectDestroy(&pIntr->intrTable);
 
 }
 
@@ -826,7 +856,7 @@ intrStateInitLocked_IMPL
     if (pIntr->getProperty(pIntr, PDB_PROP_INTR_USE_INTR_MASK_FOR_LOCKING))
     {
         intrGetIntrMask_HAL(pGpu, pIntr, &pIntr->intrMask.engMaskOrig, NULL /* threadstate */);
-        if (RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM)
+        if (RMCFG_FEATURE_PLATFORM_WINDOWS)
         {
             MC_ENGINE_BITVECTOR engines;
 
@@ -924,7 +954,7 @@ _intrInitRegistryOverrides
     }
 
     pIntr->setProperty(pIntr, PDB_PROP_INTR_USE_INTR_MASK_FOR_LOCKING, NV_FALSE);
-    if (RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM || hypervisorIsVgxHyper())
+    if (RMCFG_FEATURE_PLATFORM_WINDOWS || hypervisorIsVgxHyper())
     {
         // Enable IntrMask Locking by default if supported
         if (pIntr->getProperty(pIntr, PDB_PROP_INTR_MASK_SUPPORTED) &&
@@ -989,7 +1019,12 @@ intrInitInterruptTable_KERNEL
     NvU32     i;
     NV2080_CTRL_INTERNAL_INTR_GET_KERNEL_TABLE_PARAMS *pParams;
 
-    NV_ASSERT_OR_RETURN(vectIsEmpty(&pIntr->intrTable), NV_ERR_INVALID_STATE);
+    //
+    // Unconditionally clear it. For _KERNEL, this function can be called to
+    // re-fetch the KernelRM interrupt table every time PhysicalRM updates it
+    // like after MIG partition configuration changes.
+    //
+    vectClear(&pIntr->intrTable);
 
     pParams = portMemAllocNonPaged(sizeof(*pParams));
     NV_ASSERT_TRUE_OR_GOTO(status, pParams != NULL, NV_ERR_NO_MEMORY, exit);
@@ -1009,10 +1044,8 @@ intrInitInterruptTable_KERNEL
                            exit);
 
     NV_ASSERT_OK_OR_GOTO(status,
-        vectInit(&pIntr->intrTable,
-                 portMemAllocatorGetGlobalNonPaged(),
-                 pParams->tableLen),
-        exit);
+                         vectReserve(&pIntr->intrTable, pParams->tableLen),
+                         exit);
     for (i = 0; i < pParams->tableLen; ++i)
     {
         INTR_TABLE_ENTRY entry = {0};
@@ -1062,7 +1095,7 @@ _intrInitServiceTable
 NvU32 intrServiceInterruptRecords_IMPL
 (
     OBJGPU  *pGpu,
-    Intr *pIntr,
+    Intr    *pIntr,
     NvU16    engineIdx,
     NvBool  *pServiced
 )
@@ -1094,7 +1127,10 @@ NvU32 intrServiceInterruptRecords_IMPL
     {
         osGetPerformanceCounter(&intrTiming);
 
+        GSP_TRACE_RATS_ADD_RECORD(NV_RATS_GSP_TRACE_TYPE_INTR_INFO, pGpu, (NvU32) engineIdx);
+        GSP_TRACE_RATS_ADD_RECORD(NV_RATS_GSP_TRACE_TYPE_INTR_START, pGpu, 0);
         ret = intrservServiceInterrupt(pGpu, pIntrService, &serviceParams);
+        GSP_TRACE_RATS_ADD_RECORD(NV_RATS_GSP_TRACE_TYPE_INTR_END, pGpu, 0);
 
         osGetPerformanceCounter(&intrTiming2);
         intrTiming = intrTiming2 - intrTiming;
@@ -1165,14 +1201,16 @@ NV_STATUS intrCheckFecsEventbufferPending_IMPL
 )
 {
     NvU8 i;
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    NvS16 fecsCtxswLogConsumerCount= fecsGetCtxswLogConsumerCount(pGpu, pKernelGraphicsManager);
 
     NV_ASSERT_OR_RETURN(pbCtxswLog != NULL, NV_ERR_INVALID_ARGUMENT);
 
     *pbCtxswLog = NV_FALSE;
 
-    if (pGpu->fecsCtxswLogConsumerCount <= 0)
+    if (fecsCtxswLogConsumerCount <= 0)
     {
-        NV_ASSERT(pGpu->fecsCtxswLogConsumerCount == 0);
+        NV_ASSERT(fecsCtxswLogConsumerCount == 0);
         return NV_OK;
     }
 
@@ -1205,14 +1243,16 @@ intrCheckAndServiceFecsEventbuffer_IMPL
     THREAD_STATE_NODE *pThreadState
 )
 {
+    KernelGraphicsManager *pKernelGraphicsManager = GPU_GET_KERNEL_GRAPHICS_MANAGER(pGpu);
+    NvS16 fecsCtxswLogConsumerCount= fecsGetCtxswLogConsumerCount(pGpu, pKernelGraphicsManager);
     NvU8 i;
 
     if (bitVectorTestAllCleared(pIntrPending))
         return NV_OK;
 
-    if (pGpu->fecsCtxswLogConsumerCount <= 0)
+    if (fecsCtxswLogConsumerCount <= 0)
     {
-        NV_ASSERT(pGpu->fecsCtxswLogConsumerCount == 0);
+        NV_ASSERT(fecsCtxswLogConsumerCount == 0);
         return NV_OK;
     }
 
@@ -1253,7 +1293,15 @@ intrDestroyInterruptTable_IMPL
     Intr   *pIntr
 )
 {
-    vectDestroy(&pIntr->intrTable);
+    for (INTR_TREE tree = 0; tree < NV_ARRAY_ELEMENTS(pIntr->vectorToMcIdx);
+         ++tree)
+    {
+        portMemFree(pIntr->vectorToMcIdx[tree]);
+        pIntr->vectorToMcIdx[tree]       = NULL;
+        pIntr->vectorToMcIdxCounts[tree] = 0;
+    }
+
+    vectClear(&pIntr->intrTable);
     return NV_OK;
 }
 
@@ -1448,14 +1496,11 @@ _intrServiceStallExactList
 )
 {
     NV_STATUS status;
-
     NvU32  engineIdx;
     NvU32  intr;
     NvBool bHandled;
     NvBool bIntrStuck = NV_FALSE;
     NvBool bPending   = NV_FALSE;
-    NvBool bRequiresPossibleErrorNotifier;
-
     InterruptTable    *pIntrTable;
     InterruptTableIter iter;
 
@@ -1467,20 +1512,6 @@ _intrServiceStallExactList
     NV_ASSERT_OK_OR_ELSE(status,
                          intrGetInterruptTable_HAL(pGpu, pIntr, &pIntrTable),
                          return NV_FALSE);
-
-    bRequiresPossibleErrorNotifier = intrRequiresPossibleErrorNotifier_HAL(pGpu, pIntr, pEngines);
-
-    if (bRequiresPossibleErrorNotifier)
-    {
-        if (pGpu->getProperty(pGpu, PDB_PROP_GPU_FASTPATH_SEQ_ENABLED))
-        {
-        }
-        else
-        {
-            // info32 contains shadowed value of ERR_CONT
-            gpuNotifySubDeviceEvent(pGpu, NV2080_NOTIFIERS_POSSIBLE_ERROR, NULL, 0, intrReadErrCont_HAL(pGpu, pIntr), 0);
-        }
-    }
 
     for (iter = vectIterAll(pIntrTable); vectIterNext(&iter);)
     {
@@ -1530,14 +1561,6 @@ _intrServiceStallExactList
     if (IS_VIRTUAL(pGpu) && bitVectorTest(pEngines, MC_ENGINE_IDX_VGPU))
     {
         vgpuService(pGpu);
-    }
-
-    if (bRequiresPossibleErrorNotifier)
-    {
-        {
-            // info32 contains shadowed value of ERR_CONT
-            gpuNotifySubDeviceEvent(pGpu, NV2080_NOTIFIERS_POSSIBLE_ERROR, NULL, 0, intrReadErrCont_HAL(pGpu, pIntr), 0);
-        }
     }
 
     if (bIntrStuck)
@@ -1771,4 +1794,27 @@ intrGetIntrTopLockedMask_IMPL
     // Sanity check that Intr.subtreeMap is initialized
     NV_ASSERT(ret != 0);
     return ret;
+}
+
+
+NV_STATUS intrSetInterruptEntry_IMPL
+(
+    Intr                 *pIntr,
+    INTR_TREE             tree,
+    NvU32                 vector,
+    const InterruptEntry *pEntry
+)
+{
+    NV_ASSERT_OR_RETURN(pEntry != NULL, NV_ERR_INVALID_ARGUMENT);
+    NV_ASSERT_OR_RETURN(tree < NV_ARRAY_ELEMENTS(pIntr->vectorToMcIdx),
+                        NV_ERR_INVALID_ARGUMENT);
+    NV_ASSERT_OR_RETURN(pIntr->vectorToMcIdx[tree] != NULL,
+                        NV_ERR_INVALID_STATE);
+    NV_ASSERT_OR_RETURN(vector < pIntr->vectorToMcIdxCounts[tree],
+                        NV_ERR_INVALID_STATE);
+    NV_ASSERT_OR_RETURN(
+        pIntr->vectorToMcIdx[tree][vector].mcEngine == MC_ENGINE_IDX_NULL,
+        NV_ERR_INVALID_STATE);
+    pIntr->vectorToMcIdx[tree][vector] = *pEntry;
+    return NV_OK;
 }

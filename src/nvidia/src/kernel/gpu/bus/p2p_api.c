@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2009-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -23,6 +23,8 @@
 
 #include "core/core.h"
 #include "gpu/gpu.h"
+#include "gpu/device/device.h"
+#include "gpu/subdevice/subdevice.h"
 #include "gpu/bus/kern_bus.h"
 #include "gpu/bus/p2p_api.h"
 #include "gpu/bus/third_party_p2p.h"
@@ -410,8 +412,8 @@ p2papiConstruct_IMPL
         p2pConnectionType = P2P_CONNECTIVITY_NVLINK;
     else if (REF_VAL(NV0000_CTRL_SYSTEM_GET_P2P_CAPS_PCI_BAR1_SUPPORTED, p2pCaps))
         p2pConnectionType = P2P_CONNECTIVITY_PCIE_BAR1;
-    else if (REF_VAL(NV0000_CTRL_SYSTEM_GET_P2P_CAPS_PCI_SUPPORTED, p2pCaps))
-        p2pConnectionType = P2P_CONNECTIVITY_PCIE;
+    else if (REF_VAL(NV0000_CTRL_SYSTEM_GET_P2P_CAPS_PROP_SUPPORTED, p2pCaps))
+        p2pConnectionType = P2P_CONNECTIVITY_PCIE_PROPRIETARY;
     else
     {
         NV_PRINTF(LEVEL_ERROR, "Unknown connection type\n");
@@ -423,9 +425,8 @@ p2papiConstruct_IMPL
     // - P2P reads or/and writes are supported
     // - The P2P connection is PCIE Mailbox based
     //
-
     if ((bP2PWriteCapable || bP2PReadCapable) &&
-        p2pConnectionType == P2P_CONNECTIVITY_PCIE)
+        p2pConnectionType == P2P_CONNECTIVITY_PCIE_PROPRIETARY)
     {
         status = kbusSetP2PMailboxBar1Area_HAL(pLocalGpu, pLocalKernelBus,
                                                pNv503bAllocParams->mailboxBar1Addr,
@@ -545,9 +546,17 @@ p2papiConstruct_IMPL
     pP2PApi->attributes  = DRF_NUM(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, p2pConnectionType);
     pP2PApi->attributes |= bSpaAccessOnly ? DRF_DEF(_P2PAPI, _ATTRIBUTES, _LINK_TYPE, _SPA) :
                                             DRF_DEF(_P2PAPI, _ATTRIBUTES, _LINK_TYPE, _GPA);
+
+    //
+    // For Nvswitch connected systems, AAS(Alternate Address Space) is set by Nvswitch itself
+    // based on the EGM fabric address range and so there is no need for a separate peer id
+    // in the Nvswitch case.
+    //
     bEgmPeer = (!bSpaAccessOnly &&
                 memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pLocalGpu)) &&
-                memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pRemoteGpu)));
+                memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pRemoteGpu)) &&
+                !GPU_IS_NVSWITCH_DETECTED(pLocalGpu));
+
     if (bSpaAccessOnly &&
         memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pLocalGpu)) &&
         memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pRemoteGpu)))
@@ -585,7 +594,8 @@ p2papiConstruct_IMPL
                                                            DRF_DEF(_P2PAPI, _ATTRIBUTES, _REMOTE_EGM, _YES)));
         }
 
-        if (p2pConnectionType == P2P_CONNECTIVITY_PCIE_BAR1)
+        if ((p2pConnectionType == P2P_CONNECTIVITY_PCIE_BAR1) &&
+            (pCallContext->secInfo.privLevel >= RS_PRIV_LEVEL_KERNEL))
         {
             NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
                                   kbusGetBar1P2PDmaInfo_HAL(pLocalGpu, pRemoteGpu,
@@ -736,7 +746,8 @@ p2papiDestruct_IMPL
                                                      pP2PApi->attributes), end);
         if (!FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _LINK_TYPE, _SPA, pP2PApi->attributes) &&
             memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pLocalGpu)) &&
-            memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pRemoteGpu)))
+            memmgrIsLocalEgmEnabled(GPU_GET_MEMORY_MANAGER(pRemoteGpu)) &&
+            !GPU_IS_NVSWITCH_DETECTED(pLocalGpu))
         {
             status = kbusRemoveP2PMapping_HAL(pLocalGpu, pLocalKernelBus,
                                               pRemoteGpu, pRemoteKernelBus,

@@ -118,6 +118,10 @@ static NV_STATUS __nvoc_thunk_Memory_egmmemGetMapAddrSpace(struct ExtendedGpuMem
     return memGetMapAddrSpace((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_ExtendedGpuMemory_Memory.offset), pCallContext, mapFlags, pAddrSpace);
 }
 
+static NvBool __nvoc_thunk_Memory_egmmemIsExportAllowed(struct ExtendedGpuMemory *pMemory) {
+    return memIsExportAllowed((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_ExtendedGpuMemory_Memory.offset));
+}
+
 static NvU32 __nvoc_thunk_RsResource_egmmemGetRefCount(struct ExtendedGpuMemory *pResource) {
     return resGetRefCount((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_ExtendedGpuMemory_RsResource.offset));
 }
@@ -140,10 +144,6 @@ static NV_STATUS __nvoc_thunk_RsResource_egmmemUnmapFrom(struct ExtendedGpuMemor
 
 static void __nvoc_thunk_RmResource_egmmemControl_Epilogue(struct ExtendedGpuMemory *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_ExtendedGpuMemory_RmResource.offset), pCallContext, pParams);
-}
-
-static NV_STATUS __nvoc_thunk_RsResource_egmmemControlLookup(struct ExtendedGpuMemory *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_ExtendedGpuMemory_RsResource.offset), pParams, ppEntry);
 }
 
 static NV_STATUS __nvoc_thunk_Memory_egmmemControl(struct ExtendedGpuMemory *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
@@ -172,6 +172,10 @@ static NV_STATUS __nvoc_thunk_RmResource_egmmemControlSerialization_Prologue(str
 
 static NvBool __nvoc_thunk_StandardMemory_egmmemCanCopy(struct ExtendedGpuMemory *pStandardMemory) {
     return stdmemCanCopy((struct StandardMemory *)(((unsigned char *)pStandardMemory) + __nvoc_rtti_ExtendedGpuMemory_StandardMemory.offset));
+}
+
+static NvBool __nvoc_thunk_RsResource_egmmemIsPartialUnmapSupported(struct ExtendedGpuMemory *pResource) {
+    return resIsPartialUnmapSupported((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_ExtendedGpuMemory_RsResource.offset));
 }
 
 static NV_STATUS __nvoc_thunk_Memory_egmmemIsReady(struct ExtendedGpuMemory *pMemory, NvBool bCopyConstructorContext) {
@@ -248,6 +252,8 @@ static void __nvoc_init_funcTable_ExtendedGpuMemory_1(ExtendedGpuMemory *pThis) 
 
     pThis->__egmmemGetMapAddrSpace__ = &__nvoc_thunk_Memory_egmmemGetMapAddrSpace;
 
+    pThis->__egmmemIsExportAllowed__ = &__nvoc_thunk_Memory_egmmemIsExportAllowed;
+
     pThis->__egmmemGetRefCount__ = &__nvoc_thunk_RsResource_egmmemGetRefCount;
 
     pThis->__egmmemAddAdditionalDependants__ = &__nvoc_thunk_RsResource_egmmemAddAdditionalDependants;
@@ -259,8 +265,6 @@ static void __nvoc_init_funcTable_ExtendedGpuMemory_1(ExtendedGpuMemory *pThis) 
     pThis->__egmmemUnmapFrom__ = &__nvoc_thunk_RsResource_egmmemUnmapFrom;
 
     pThis->__egmmemControl_Epilogue__ = &__nvoc_thunk_RmResource_egmmemControl_Epilogue;
-
-    pThis->__egmmemControlLookup__ = &__nvoc_thunk_RsResource_egmmemControlLookup;
 
     pThis->__egmmemControl__ = &__nvoc_thunk_Memory_egmmemControl;
 
@@ -275,6 +279,8 @@ static void __nvoc_init_funcTable_ExtendedGpuMemory_1(ExtendedGpuMemory *pThis) 
     pThis->__egmmemControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_egmmemControlSerialization_Prologue;
 
     pThis->__egmmemCanCopy__ = &__nvoc_thunk_StandardMemory_egmmemCanCopy;
+
+    pThis->__egmmemIsPartialUnmapSupported__ = &__nvoc_thunk_RsResource_egmmemIsPartialUnmapSupported;
 
     pThis->__egmmemIsReady__ = &__nvoc_thunk_Memory_egmmemIsReady;
 
@@ -308,21 +314,26 @@ void __nvoc_init_ExtendedGpuMemory(ExtendedGpuMemory *pThis) {
     __nvoc_init_funcTable_ExtendedGpuMemory(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_ExtendedGpuMemory(ExtendedGpuMemory **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_ExtendedGpuMemory(ExtendedGpuMemory **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     ExtendedGpuMemory *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(ExtendedGpuMemory), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(ExtendedGpuMemory));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_ExtendedGpuMemory);
 
     pThis->__nvoc_base_StandardMemory.__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -337,16 +348,25 @@ NV_STATUS __nvoc_objCreate_ExtendedGpuMemory(ExtendedGpuMemory **ppThis, Dynamic
     status = __nvoc_ctor_ExtendedGpuMemory(pThis, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_ExtendedGpuMemory_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_ExtendedGpuMemory_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_StandardMemory.__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(ExtendedGpuMemory));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;

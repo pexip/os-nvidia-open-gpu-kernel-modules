@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 1993-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -73,6 +73,15 @@ typedef struct ENGSTATE_TRANSITION_DATA
     NvU64 transitionStartTimeNs;
 } ENGSTATE_TRANSITION_DATA;
 
+// Engine status for each state
+typedef struct ENGSTATE_STATUS
+{
+    NV_STATUS engStatus;
+#if NV_PRINTF_STRINGS_ALLOWED
+    char name[100];
+#endif
+} ENGSTATE_STATUS;
+
 typedef struct OBJENGSTATE *POBJENGSTATE;
 
 #define ENG_GET_FIFO(p)                 (engstateGetFifo(staticCast((p), OBJENGSTATE)))
@@ -83,11 +92,16 @@ typedef struct OBJENGSTATE *POBJENGSTATE;
  * Defines the structure used to contain all generic information related to
  * the OBJENGSTATE.
  */
+
+// Private field names are wrapped in PRIVATE_FIELD, which does nothing for
+// the matching C source file, but causes diagnostics to be issued if another
+// source file references the field.
 #ifdef NVOC_ENG_STATE_H_PRIVATE_ACCESS_ALLOWED
 #define PRIVATE_FIELD(x) x
 #else
 #define PRIVATE_FIELD(x) NVOC_PRIVATE_FIELD(x)
 #endif
+
 struct OBJENGSTATE {
     const struct NVOC_RTTI *__nvoc_rtti;
     struct Object __nvoc_base_Object;
@@ -112,6 +126,7 @@ struct OBJENGSTATE {
     struct OBJGPU *pGpu;
     ENGSTATE_STATE currentState;
     ENGSTATE_STATS stats[11];
+    ENGSTATE_STATUS status[11];
     char name[100];
 };
 
@@ -274,6 +289,16 @@ static inline void engstateLogStateTransitionPost(struct OBJENGSTATE *arg0, ENGS
 #define engstateLogStateTransitionPost(arg0, arg1, arg2) engstateLogStateTransitionPost_IMPL(arg0, arg1, arg2)
 #endif //__nvoc_eng_state_h_disabled
 
+void engstateLogStateStatus_IMPL(struct OBJENGSTATE *arg0, ENGSTATE_STATE arg1, NV_STATUS status);
+
+#ifdef __nvoc_eng_state_h_disabled
+static inline void engstateLogStateStatus(struct OBJENGSTATE *arg0, ENGSTATE_STATE arg1, NV_STATUS status) {
+    NV_ASSERT_FAILED_PRECOMP("OBJENGSTATE was disabled!");
+}
+#else //__nvoc_eng_state_h_disabled
+#define engstateLogStateStatus(arg0, arg1, status) engstateLogStateStatus_IMPL(arg0, arg1, status)
+#endif //__nvoc_eng_state_h_disabled
+
 const char *engstateGetName_IMPL(struct OBJENGSTATE *arg0);
 
 #ifdef __nvoc_eng_state_h_disabled
@@ -342,4 +367,5 @@ static inline struct OBJFIFO *engstateGetFifo(POBJENGSTATE pEngstate) {
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif // _G_ENG_STATE_NVOC_H_

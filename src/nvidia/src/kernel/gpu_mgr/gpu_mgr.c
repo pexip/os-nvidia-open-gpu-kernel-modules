@@ -29,7 +29,9 @@
 
 #include "core/system.h"
 #include "core/locks.h"
+#include "platform/sli/sli.h"
 #include "gpu_mgr/gpu_mgr.h"
+#include "gpu/device/device.h"
 #include "gpu/gpu.h"
 #include "tls/tls.h"
 #include "nvrm_registry.h"
@@ -38,6 +40,7 @@
 #include "nv-firmware-registry.h"
 
 #include "kernel/gpu/intr/intr.h"
+#include "vgpu/sdk-structures.h"
 #include "virtualization/hypervisor/hypervisor.h"
 #include "platform/chipset/chipset.h"
 #include "published/pcie_switch/pcie_switch_ref.h"
@@ -45,10 +48,12 @@
 #include "gpu/mem_sys/kern_mem_sys.h"
 #include "gpu/conf_compute/conf_compute.h"
 #include "gpu/gpu_fabric_probe.h"
+#include "gpu/mig_mgr/gpu_instance_subscription.h"
+#include "ctrl/ctrlc56f.h"
 
 // local static funcs
 static void   gpumgrSetAttachInfo(OBJGPU *, GPUATTACHARG *);
-static void   gpumgrGetGpuHalFactor(NvU32 *pChipId0, NvU32 *pChipId1, NvU32 *pSocChipId0, RM_RUNTIME_VARIANT *pRmVariant, GPUATTACHARG *pAttachArg);
+static void   gpumgrGetGpuHalFactor(NvU32 *pChipId0, NvU32 *pChipId1, NvU32 *pSocChipId0, RM_RUNTIME_VARIANT *pRmVariant, TEGRA_CHIP_TYPE *pTegraType, GPUATTACHARG *pAttachArg);
 static NvBool _gpumgrGetPcieP2PCapsFromCache(NvU32 gpuMask, NvU8* pP2PWriteCapsStatus, NvU8* pP2PReadCapsStatus);
 
 static void
@@ -144,6 +149,7 @@ _gpumgrDetermineConfComputeCapabilities
         pGpuMgr->ccCaps.bHccFeatureCapable = pGpu->getProperty(pGpu, PDB_PROP_GPU_CC_FEATURE_CAPABLE);
         pGpuMgr->ccCaps.bCCFeatureEnabled = bCCFeatureEnabled;
         pGpuMgr->ccCaps.bDevToolsModeEnabled = gpuIsCCDevToolsModeEnabled(pGpu);
+        pGpuMgr->ccCaps.bMultiGpuProtectedPcieModeEnabled = gpuIsCCMultiGpuProtectedPcieModeEnabled(pGpu);
 
         if (pGpuMgr->ccCaps.bDevToolsModeEnabled)
         {
@@ -174,9 +180,34 @@ _gpumgrDetermineConfComputeCapabilities
         NV_ASSERT_OR_RETURN(pGpuMgr->ccCaps.bDevToolsModeEnabled ==
             gpuIsCCDevToolsModeEnabled(pGpu),
             NV_ERR_INVALID_STATE);
+
+        NV_ASSERT_OR_RETURN(pGpuMgr->ccCaps.bMultiGpuProtectedPcieModeEnabled ==
+            gpuIsCCMultiGpuProtectedPcieModeEnabled(pGpu),
+            NV_ERR_INVALID_STATE);
     }
 
     return NV_OK;
+}
+
+static void
+_gpumgrCacheClearMIGGpuIdInfo(NvU32 gpuId)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].gpuId == gpuId)
+        {
+            portMemSet(&pGpuMgr->cachedMIGInfo[i], 0x0, sizeof(pGpuMgr->cachedMIGInfo[i]));
+            break;
+        }
+    }
+
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
 }
 
 //
@@ -218,6 +249,15 @@ gpumgrConstruct_IMPL(OBJGPUMGR *pGpuMgr)
 
     NV_ASSERT_OK_OR_RETURN(gpumgrInitPcieP2PCapsCache(pGpuMgr));
 
+    pGpuMgr->cachedMIGInfoLock =
+        portSyncRwLockCreate(portMemAllocatorGetGlobalNonPaged());
+    NV_ASSERT_OR_RETURN(pGpuMgr->cachedMIGInfoLock != NULL,
+                        NV_ERR_INSUFFICIENT_RESOURCES);
+
+    portMemSet(pGpuMgr->cachedMIGInfo, 0, sizeof(pGpuMgr->cachedMIGInfo));
+
+    pGpuMgr->ccAttackerAdvantage = SECURITY_POLICY_ATTACKER_ADVANTAGE_DEFAULT;
+
     return NV_OK;
 }
 
@@ -229,8 +269,57 @@ gpumgrDestruct_IMPL(OBJGPUMGR *pGpuMgr)
 
     portSyncMutexDestroy(pGpuMgr->probedGpusLock);
 
-    gpumgrDestroyPcieP2PCapsCache(pGpuMgr);
+    portSyncRwLockDestroy(pGpuMgr->cachedMIGInfoLock);
 
+    gpumgrDestroyPcieP2PCapsCache(pGpuMgr);
+}
+
+static NvBool
+_gpumgrThreadHasExpandedGpuVisibilityInTls(void)
+{
+    NvP64 entry = tlsEntryGet(TLS_ENTRY_ID_GPUMGR_EXPANDED_GPU_VISIBILITY);
+    return (entry != NvP64_NULL) && (entry == ((NvP64) 1));
+}
+
+NvBool
+gpumgrThreadHasExpandedGpuVisibility(void)
+{
+    if (RMCFG_FEATURE_PLATFORM_UNIX)
+    {
+        return _gpumgrThreadHasExpandedGpuVisibilityInTls();
+    }
+    else
+    {
+        //
+        // Bug 4376209
+        // Non-UNIX platforms have expanded GPU visibility by default for now
+        // (this is OK as they do not have parallel init yet).
+        //
+        return NV_TRUE;
+    }
+}
+
+NV_STATUS
+gpumgrThreadEnableExpandedGpuVisibility(void)
+{
+    NvP64 *pEntry = tlsEntryAcquire(TLS_ENTRY_ID_GPUMGR_EXPANDED_GPU_VISIBILITY);
+    if (pEntry == NULL)
+    {
+        return NV_ERR_INSUFFICIENT_RESOURCES;
+    }
+
+    *pEntry = (NvP64) 1;
+    return NV_OK;
+}
+
+void
+gpumgrThreadDisableExpandedGpuVisibility(void)
+{
+    if (_gpumgrThreadHasExpandedGpuVisibilityInTls())
+    {
+        NvU32 refCount = tlsEntryRelease(TLS_ENTRY_ID_GPUMGR_EXPANDED_GPU_VISIBILITY);
+        NV_ASSERT(refCount == 0);
+    }
 }
 
 //
@@ -336,9 +425,20 @@ gpumgrGetGpu(NvU32 gpuInstance)
     NvU32 i;
 
     for (i = 0; i < pGpuMgr->numGpuHandles; i++)
+    {
         if (pGpuMgr->gpuHandleIDList[i].gpuInstance == gpuInstance)
-            if (pGpuMgr->gpuHandleIDList[i].pGpu)
-               return pGpuMgr->gpuHandleIDList[i].pGpu;
+        {
+            OBJGPU *pGpu = pGpuMgr->gpuHandleIDList[i].pGpu;
+            if (pGpu != NULL)
+            {
+                if (gpumgrThreadHasExpandedGpuVisibility() ||
+                    pGpu->getProperty(pGpu, PDB_PROP_GPU_STATE_INITIALIZED))
+                {
+                    return pGpu;
+                }
+            }
+        }
+    }
 
     return NULL;
 }
@@ -409,9 +509,30 @@ gpumgrGetGpuAttachInfo(NvU32 *pGpuCnt, NvU32 *pGpuMask)
     OBJSYS *pSys = SYS_GET_INSTANCE();
     OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
 
+    NvU32 outCount = 0;
+    NvU32 outMask = 0;
+
+    NvU32 gpuMask = pGpuMgr->gpuAttachMask;
+    NvU32 gpuInstance = 0;
+
+    while (gpuInstance != NV_MAX_DEVICES)
+    {
+        OBJGPU *pGpu = gpumgrGetNextGpu(gpuMask, &gpuInstance);
+        if (pGpu == NULL)
+            continue;
+
+        if (gpumgrThreadHasExpandedGpuVisibility() ||
+            pGpu->getProperty(pGpu, PDB_PROP_GPU_STATE_INITIALIZED))
+        {
+            // adjust gpuInstance down one as gpumgrGetNextGpu increments one
+            outMask |= NVBIT(gpuInstance - 1);
+            outCount++;
+        }
+    }
+
     // caller can pass in NULL for outparams that it doesn't need.
-    if (pGpuCnt)  *pGpuCnt  = pGpuMgr->gpuAttachCount;
-    if (pGpuMask) *pGpuMask = pGpuMgr->gpuAttachMask;
+    if (pGpuCnt != NULL)  *pGpuCnt  = outCount;
+    if (pGpuMask != NULL) *pGpuMask = outMask;
 
     return NV_OK;
 }
@@ -595,6 +716,7 @@ gpumgrUnregisterGpuId(NvU32 gpuId)
 
         if (pProbedGpu->gpuId == gpuId)
         {
+            _gpumgrCacheClearMIGGpuIdInfo(gpuId);
             gpumgrRemovePcieP2PCapsFromCache(pProbedGpu->gpuId);
             _gpumgrUnregisterRmCapsForGpuUnderLock(pProbedGpu->gpuDomainBusDevice);
             pProbedGpu->gpuId = NV0000_CTRL_GPU_INVALID_ID;
@@ -759,10 +881,63 @@ gpumgrGetGpuUuidInfo(NvU32 gpuId, NvU8 **ppUuidStr, NvU32 *pUuidStrLen, NvU32 uu
     return status;
 }
 
+static NV_STATUS
+gpumgrGetRegisteredIds
+(
+    NvU64 gpuDomainBusDevice,
+    NvU32 *pGpuId,
+    NvUuid *pUuid,
+    NvBool *pbUuidValid
+)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    NV_STATUS status = NV_ERR_OBJECT_NOT_FOUND;
+
+    portSyncMutexAcquire(pGpuMgr->probedGpusLock);
+
+    for (NvU32 i = 0; i < NV_ARRAY_ELEMENTS(pGpuMgr->probedGpus); i++)
+    {
+        PROBEDGPU *pProbedGpu = &pGpuMgr->probedGpus[i];
+        if (pProbedGpu->gpuId == NV0000_CTRL_GPU_INVALID_ID)
+            continue;
+
+        if (pProbedGpu->gpuDomainBusDevice == gpuDomainBusDevice)
+        {
+            *pGpuId = pProbedGpu->gpuId;
+            *pbUuidValid = pProbedGpu->bUuidValid;
+            if (pProbedGpu->bUuidValid)
+                portMemCopy(pUuid->uuid, sizeof(pUuid->uuid),
+                            pProbedGpu->uuid, sizeof(pProbedGpu->uuid));
+
+            status = NV_OK;
+            break;
+        }
+    }
+
+    portSyncMutexRelease(pGpuMgr->probedGpusLock);
+    return status;
+}
+
 static void
 gpumgrGetGpuHalFactorOfVirtual(NvBool *pIsVirtual, GPUATTACHARG *pAttachArg)
 {
+    DEVICE_MAPPING gpuDevMapping = {0};
+    NvU32  pmcBoot1;
+
+    gpuDevMapping.gpuNvAddr = pAttachArg->regBaseAddr;
+    gpuDevMapping.gpuNvLength = pAttachArg->regLength;
+
     *pIsVirtual = NV_FALSE;
+
+    // Check register NV_PMC_BOOT_1
+    pmcBoot1 = osDevReadReg032(/*pGpu=*/ NULL, &gpuDevMapping, NV_PMC_BOOT_1);
+
+    // VGPU with SRIOV
+    if (FLD_TEST_DRF(_PMC, _BOOT_1, _VGPU, _VF, pmcBoot1))
+    {
+        *pIsVirtual = NV_TRUE;
+    }
 }
 
 NvBool gpumgrGetRmFirmwareLogsEnabled
@@ -771,14 +946,16 @@ NvBool gpumgrGetRmFirmwareLogsEnabled
 )
 {
     // Check for logs
-    if ((enableFirmwareLogsRegVal == NV_REG_ENABLE_GPU_FIRMWARE_LOGS_ENABLE)
-#if defined(DEBUG) || defined(DEVELOP)
-        || (enableFirmwareLogsRegVal == NV_REG_ENABLE_GPU_FIRMWARE_LOGS_ENABLE_ON_DEBUG)
-#endif // defined(DEBUG) || defined(DEVELOP)
-       )
+    if (enableFirmwareLogsRegVal == NV_REG_ENABLE_GPU_FIRMWARE_LOGS_ENABLE)
     {
         return NV_TRUE;
     }
+#if defined(DEBUG) || defined(DEVELOP)
+    if (enableFirmwareLogsRegVal == NV_REG_ENABLE_GPU_FIRMWARE_LOGS_ENABLE_ON_DEBUG)
+    {
+        return NV_TRUE;
+    }
+#endif // defined(DEBUG) || defined(DEVELOP)
 
     return NV_FALSE;
 }
@@ -817,26 +994,25 @@ static NvBool _gpumgrIsRmFirmwareCapableChip(NvU32 pmcBoot42)
     return (DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, pmcBoot42) >= NV_PMC_BOOT_42_ARCHITECTURE_TU100);
 }
 
-static NvBool _gpumgrIsVgxRmFirmwareCapableChip(NvU32 pmcBoot42)
+NvBool gpumgrIsVgxRmFirmwareCapableChip(NvU32 pmcBoot42)
 {
-    return (DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, pmcBoot42) >= NV_PMC_BOOT_42_ARCHITECTURE_GA100) &&
-           (DRF_VAL(_PMC, _BOOT_42, _CHIP_ID, pmcBoot42) > NV_PMC_BOOT_42_CHIP_ID_GA100);
+    if (FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _GH100, pmcBoot42))
+        return NV_TRUE;
+
+    if (FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _AD100, pmcBoot42))
+        return NV_TRUE;
+
+    return NV_FALSE;
 }
 
 static NvBool _gpumgrIsRmFirmwareDefaultChip(NvU32 pmcBoot42)
 {
-    return (DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_GH100);
+    return FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _GH100, pmcBoot42);
 }
 
 static NvBool _gpumgrIsVgxRmFirmwareDefaultChip(NvU32 pmcBoot42)
 {
-    if (DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_GH100)
-        return NV_TRUE;
-
-    if (DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_AD100)
-        return NV_TRUE;
-
-    return NV_FALSE;
+    return gpumgrIsVgxRmFirmwareCapableChip(pmcBoot42);
 }
 
 NvBool gpumgrIsDeviceRmFirmwareCapable
@@ -859,7 +1035,7 @@ NvBool gpumgrIsDeviceRmFirmwareCapable
         bFirmwareCapable = NV_FALSE;
         goto finish;
     }
-    else if (hypervisorIsVgxHyper() && !_gpumgrIsVgxRmFirmwareCapableChip(pmcBoot42))
+    else if (hypervisorIsVgxHyper() && !gpumgrIsVgxRmFirmwareCapableChip(pmcBoot42))
     {
         bFirmwareCapable = NV_FALSE;
         goto finish;
@@ -968,8 +1144,6 @@ static NvBool gpumgrCheckRmFirmwarePolicy
 //
 // Get Gpu Hal factors those are used to init Hal binding
 //
-// TODO : later this function will be used to read out NVOC Halspec init value for OBJGPU
-//
 static void
 gpumgrGetGpuHalFactor
 (
@@ -977,11 +1151,14 @@ gpumgrGetGpuHalFactor
     NvU32  *pChipId1,
     NvU32  *pSocChipId0,
     RM_RUNTIME_VARIANT *pRmVariant,
+    TEGRA_CHIP_TYPE    *pTegraType,
     GPUATTACHARG *pAttachArg
 )
 {
     NvBool isVirtual;
     NvBool isFwClient;
+
+    *pTegraType = TEGRA_CHIP_TYPE_DEFAULT;
 
     // get ChipId0 and ChipId1
     if (pAttachArg->socDeviceArgs.specified)
@@ -1024,6 +1201,20 @@ gpumgrGetGpuHalFactor
         *pSocChipId0 = 0;
 
         gpumgrGetGpuHalFactorOfVirtual(&isVirtual, pAttachArg);
+
+        //
+        // If socChipId0 has valid value, then running environment is SOCV.
+        // The Tegra chip after Ampere arch is using PCIE interface which connects
+        // iGPU to SoC for BAR and control accesses (interrupt).
+        // The code between TEGRA_CHIP_TYPE_PCIE and TEGRA_CHIP_TYPE_SOC
+        // shares same dGPU ARCH specific HAL mostly except manual differences due to
+        // latency of manual updates between nvgpu (Standlone iGPU/Full Chip Verification)
+        // and nvmobile (SOC) trees.
+        //
+        if (pAttachArg->socChipId0 != 0)
+        {
+            *pTegraType = TEGRA_CHIP_TYPE_SOC;
+        }
     }
 
     isFwClient = gpumgrCheckRmFirmwarePolicy(pAttachArg->nvDomainBusDeviceFunc,
@@ -1038,6 +1229,10 @@ gpumgrGetGpuHalFactor
         *pRmVariant = RM_RUNTIME_VARIANT_PF_KERNEL_ONLY;
     else
         *pRmVariant = RM_RUNTIME_VARIANT_PF_MONOLITHIC;    // default, monolithic mode
+
+    NV_PRINTF(LEVEL_INFO,
+        "ChipId0[0x%x] ChipId1[0x%x] SocChipId0[0x%x] isFwClient[%d] RmVariant[%d] tegraType[%d]\n",
+        *pChipId0, *pChipId1, *pSocChipId0, isFwClient, *pRmVariant, *pTegraType);
 }
 
 
@@ -1056,12 +1251,16 @@ _gpumgrCreateGpu(NvU32 gpuInstance, GPUATTACHARG *pAttachArg)
     OBJGPU    *pGpu;
     NV_STATUS  status;
     RM_RUNTIME_VARIANT  rmVariant;
+    TEGRA_CHIP_TYPE     tegraType;
     NvU32      chipId0;     // 32-bit chipId (pmcBoot0 on GPU)
     NvU32      chipId1;     // 32-bit chipId (pmcBoot42 on GPU)
     NvU32      socChipId0;  // 32-bit SOC chipId
     NvU32      hidrev, majorRev;
+    NvU32      gpuId;
+    NvUuid     gpuUuid;
+    NvBool     bGpuUuidValid = NV_FALSE;
 
-    gpumgrGetGpuHalFactor(&chipId0, &chipId1, &socChipId0, &rmVariant, pAttachArg);
+    gpumgrGetGpuHalFactor(&chipId0, &chipId1, &socChipId0, &rmVariant, &tegraType, pAttachArg);
 
     hidrev = DRF_VAL(_PAPB_MISC, _GP_HIDREV, _CHIPID, socChipId0);
     majorRev = DRF_VAL(_PAPB_MISC, _GP_HIDREV, _MAJORREV, socChipId0);
@@ -1074,14 +1273,25 @@ _gpumgrCreateGpu(NvU32 gpuInstance, GPUATTACHARG *pAttachArg)
 
     hidrev = (hidrev << 4) | majorRev;
 
+    //
+    // The OS layer must have previously registered the GPU ID, and may have already registered
+    // the UUID. Pull out the registered IDs for this device from the probed GPU info to pass to
+    // the OBJGPU constructor.
+    //
+    NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, gpumgrGetRegisteredIds(pAttachArg->nvDomainBusDeviceFunc,
+                                                              &gpuId, &gpuUuid, &bGpuUuidValid));
+
     // create OBJGPU with halspec factor initialization value
     status = objCreate(&pGpu, pSys, OBJGPU,
                     /* ChipHal_arch = */ DRF_VAL(_PMC, _BOOT_42, _ARCHITECTURE, chipId1),
                     /* ChipHal_impl = */ DRF_VAL(_PMC, _BOOT_42, _IMPLEMENTATION, chipId1),
                   /* ChipHal_hidrev = */ hidrev,
           /* RmVariantHal_rmVariant = */ rmVariant,
+          /* TegraChipHal_tegraType = */ tegraType,
                  /* DispIpHal_ipver = */ 0,  // initialized later
-                /* ctor.gpuInstance = */ gpuInstance);
+                /* ctor.gpuInstance = */ gpuInstance,
+                      /* ctor.gpuId = */ gpuId,
+                      /* ctor.pUuid = */ bGpuUuidValid ? &gpuUuid : NULL);
     if (status != NV_OK)
     {
         return status;
@@ -1111,6 +1321,59 @@ _gpumgrCreateGpu(NvU32 gpuInstance, GPUATTACHARG *pAttachArg)
 static void
 _gpumgrGetEncSessionStatsReportingState(OBJGPU *pGpu)
 {
+    NvU32 numClasses = 0;
+
+    // Set NvEnc Session Stats reporting state flag to 'not supported' on GPUs with no encoder engine.
+    NV_STATUS nvStatus = gpuGetClassList(pGpu, &numClasses, NULL, MKENGDESC(classId(OBJMSENC), 0));
+    if ((nvStatus != NV_OK) || (numClasses == 0))
+    {
+        pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_NOT_SUPPORTED;
+        return;
+    }
+
+    pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_DISABLED;
+
+#if defined(NVCPU_AARCH64)
+    pGpu->encSessionStatsReportingState = NV_REG_STR_RM_NVENC_SESSION_STATS_REPORTING_STATE_DISABLED;
+#else
+    VGPU_STATIC_INFO *pVSI = GPU_GET_STATIC_INFO(pGpu);
+    if (IS_VIRTUAL(pGpu))
+    {
+        if (pVSI)
+        {
+            pGpu->encSessionStatsReportingState = pVSI->vgpuStaticProperties.encSessionStatsReportingState;
+        }
+        else
+        {
+            pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_ENABLED;
+        }
+    }
+    else
+    {
+        NvU32 encSessionStatsReportingState = NV_REG_STR_RM_NVENC_SESSION_STATS_REPORTING_STATE_DISABLED;;
+
+        // Encoder Sessions Stats report is enabled by default
+        pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_ENABLED;
+
+        // Override the value with the value specified in registry.
+        if (osReadRegistryDword(pGpu,
+                                NV_REG_STR_RM_NVENC_SESSION_STATS_REPORTING_STATE,
+                                &encSessionStatsReportingState) == NV_OK)
+        {
+            switch(encSessionStatsReportingState)
+            {
+                case NV_REG_STR_RM_NVENC_SESSION_STATS_REPORTING_STATE_DISABLED:
+                    pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_DISABLED;
+                    break;
+                case NV_REG_STR_RM_NVENC_SESSION_STATS_REPORTING_STATE_ENABLED:
+                    pGpu->encSessionStatsReportingState = NV2080_CTRL_GPU_INFO_NVENC_STATS_REPORTING_STATE_ENABLED;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+#endif // defined(NVCPU_AARCH64)
 }
 
 //
@@ -1473,8 +1736,6 @@ gpumgrGetSubDeviceMaxValuePlus1(OBJGPU *pGpu)
 static void
 gpumgrSetAttachInfo(OBJGPU *pGpu, GPUATTACHARG *pAttachArg)
 {
-    NvU32 gpuId = NV0000_CTRL_GPU_INVALID_ID;
-
     if (pAttachArg->socDeviceArgs.specified)
     {
         NvU32 idx;
@@ -1550,6 +1811,7 @@ gpumgrSetAttachInfo(OBJGPU *pGpu, GPUATTACHARG *pAttachArg)
         pGpu->fbLength                = pAttachArg->fbLength;
         pGpu->busInfo.IntLine         = pAttachArg->intLine;
         pGpu->gpuDeviceMapCount       = 1;
+        pGpu->cpuNumaNodeId           = pAttachArg->cpuNumaNodeId;
 
         if ( ! pAttachArg->instBaseAddr )
         {
@@ -1575,16 +1837,6 @@ gpumgrSetAttachInfo(OBJGPU *pGpu, GPUATTACHARG *pAttachArg)
             pGpu->registerAccess.gpuInstAddr = pAttachArg->instBaseAddr;
             pGpu->instLength = pAttachArg->instLength;
         }
-    }
-
-    // Generate GPU ID using end-point address for PCIe devices, otherwise use MMIO address
-    gpuId = (!RMCFG_FEATURE_PLATFORM_WINDOWS_LDDM || !pGpu->bIsSOC)
-        ? gpuGenerate32BitId(gpuGetDomain(pGpu), gpuGetBus(pGpu), gpuGetDevice(pGpu))
-        : gpuGenerate32BitIdFromPhysAddr(pAttachArg->devPhysAddr);
-
-    if (gpuId != NV0000_CTRL_GPU_INVALID_ID)
-    {
-        gpumgrSetGpuId(pGpu, gpuId);
     }
 }
 
@@ -1704,7 +1956,7 @@ gpumgrGetNextGpu(NvU32 subDeviceMask, NvU32 *pStartIndex)
 
 
 //
-// gpumgrIsGpuPointerValid - Validates pGpu without dereferencing it.
+// gpumgrIsGpuPointerValid - Validates pGpu is initialized without dereferencing it.
 //
 NvBool
 gpumgrIsGpuPointerValid(OBJGPU *pGpu)
@@ -1732,6 +1984,33 @@ gpumgrIsGpuPointerValid(OBJGPU *pGpu)
 
     return NV_FALSE;
 }
+
+//
+// gpumgrIsGpuPointerAttached - Validates pGpu is attached without dereferencing it.
+//
+NvBool
+gpumgrIsGpuPointerAttached(OBJGPU *pGpu)
+{
+    OBJGPU    *pTempGpu       = NULL;
+    NvU32      gpuMask        = 0;
+    NvU32      gpuCount       = 0;
+    NvU32      gpuIndex       = 0;
+
+    gpumgrGetGpuAttachInfo(&gpuCount, &gpuMask);
+    pTempGpu = gpumgrGetNextGpu(gpuMask, &gpuIndex);
+
+    while(pTempGpu)
+    {
+        if (pTempGpu == pGpu)
+        {
+            return NV_TRUE;
+        }
+        pTempGpu = gpumgrGetNextGpu(gpuMask, &gpuIndex);
+    }
+
+    return NV_FALSE;
+}
+
 
 NvBool gpumgrIsGpuDisplayParent(OBJGPU *pGpu)
 {
@@ -2088,19 +2367,38 @@ gpumgrGetGpuIdInfoV2(NV0000_CTRL_GPU_GET_ID_INFO_V2_PARAMS *pGpuInfo)
 
         if (gpuIsSelfHosted(pGpu) && IS_MIG_IN_USE(pGpu))
         {
-            CALL_CONTEXT     *pCallContext  = resservGetTlsCallContext();
-            RmCtrlParams     *pRmCtrlParams = pCallContext->pControlParams;
-            KernelMIGManager *pKernelMIGManager = GPU_GET_KERNEL_MIG_MANAGER(pGpu);
-            MIG_INSTANCE_REF  ref;
-            NvU32             swizzId;
+            //
+            // We do not have enough information here to route to correct MIG instance.
+            // There may even not be enough state to do this lookup at all as this is a 0x0000 control
+            // but we need to get to Subdevice child. Try extra hard to preserve originally
+            // implemented behavior. See bug 4251227.
+            //
+            CALL_CONTEXT *pCallContext  = resservGetTlsCallContext();
+            RS_ITERATOR it = clientRefIter(pCallContext->pClient, NULL, classId(GPUInstanceSubscription),
+                                           RS_ITERATE_DESCENDANTS, NV_TRUE);
 
-            if (kmigmgrGetInstanceRefFromClient(pGpu, pKernelMIGManager, pRmCtrlParams->hClient, &ref) == NV_OK)
+            while (clientRefIterNext(it.pClient, &it))
             {
-                swizzId = ref.pKernelMIGGpuInstance->swizzId;
+                NvU32 swizzId;
+                GPUInstanceSubscription *pGPUInstanceSubscription =
+                    dynamicCast(it.pResourceRef->pResource, GPUInstanceSubscription);
+
+                if (GPU_RES_GET_GPU(pGPUInstanceSubscription) != pGpu)
+                {
+                    continue;
+                }
+
+                swizzId = gisubscriptionGetMIGGPUInstance(pGPUInstanceSubscription)->swizzId;
+
+                if (swizzId == NVC637_DEVICE_PROFILING_SWIZZID)
+                {
+                    continue;
+                }
                 if (GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu)->memPartitionNumaInfo[swizzId].bInUse)
                 {
                     pGpuInfo->numaId = GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu)->memPartitionNumaInfo[swizzId].numaNodeId;
                 }
+                break;
             }
         }
         else
@@ -2573,7 +2871,7 @@ RmPhysAddr gpumgrGetGpuPhysFbAddr(OBJGPU *pGpu)
 
     physFbAddr = pGpu->busInfo.gpuPhysFbAddr;
 
-    NV_ASSERT(physFbAddr);
+    NV_ASSERT(pGpu->getProperty(pGpu, PDB_PROP_GPU_ZERO_FB) || physFbAddr);
     return physFbAddr;
 }
 
@@ -2664,7 +2962,7 @@ gpumgrAddDeviceInstanceToGpus(NvU32 gpuMask)
  * @return GPUGRP pointer on success, NULL on error
  *
  */
-POBJGPUGRP
+OBJGPUGRP *
 gpumgrGetGpuGrpFromInstance
 (
     NvU32      gpugrpInstance
@@ -2684,7 +2982,7 @@ gpumgrGetGpuGrpFromInstance
  * @return OBJGPUGRP pointer on success, NULL on error
  *
  */
-POBJGPUGRP
+OBJGPUGRP *
 gpumgrGetGpuGrpFromGpu
 (
     OBJGPU    *pGpu
@@ -3578,6 +3876,297 @@ gpumgrUnregisterRmCapsForMIGGI_IMPL(NvU64 gpuDomainBusDevice)
             pGPUInstanceSave->bValid = NV_FALSE;
         }
     }
+}
+
+void
+gpumgrCacheCreateGpuInstance_IMPL(OBJGPU *pGpu, NvU32 swizzId)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    GPUMGR_CACHED_MIG_GPU_INSTANCE *pGpuInstances = NULL;
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].gpuId == pGpu->gpuId)
+        {
+            pGpuInstances = pGpuMgr->cachedMIGInfo[i].gpuInstances;
+            break;
+        }
+    }
+
+    NV_ASSERT_OR_GOTO(pGpuInstances != NULL, done);
+
+    for (i = 0; i < GPUMGR_MAX_GPU_INSTANCES; i++)
+    {
+        if (!pGpuInstances[i].bValid)
+        {
+            pGpuInstances[i].bValid = NV_TRUE;
+            pGpuInstances[i].swizzId = swizzId;
+            goto done;
+        }
+    }
+
+    NV_ASSERT(!"Unreachable");
+
+done:
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
+}
+
+void
+gpumgrCacheDestroyGpuInstance_IMPL(OBJGPU *pGpu, NvU32 swizzId)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    GPUMGR_CACHED_MIG_GPU_INSTANCE *pGpuInstances = NULL;
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].gpuId == pGpu->gpuId)
+        {
+            pGpuInstances = pGpuMgr->cachedMIGInfo[i].gpuInstances;
+            break;
+        }
+    }
+
+    NV_ASSERT_OR_GOTO(pGpuInstances != NULL, done);
+
+    for (i = 0; i < GPUMGR_MAX_GPU_INSTANCES; i++)
+    {
+        if (pGpuInstances[i].bValid &&
+            pGpuInstances[i].swizzId == swizzId)
+        {
+            pGpuInstances[i].bValid = NV_FALSE;
+            goto done;
+        }
+    }
+
+    NV_ASSERT(!"Unreachable");
+
+done:
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
+}
+
+void
+gpumgrCacheCreateComputeInstance_IMPL(OBJGPU *pGpu, NvU32 swizzId, NvU32 ciId)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    GPUMGR_CACHED_MIG_GPU_INSTANCE *pGpuInstances = NULL;
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].gpuId == pGpu->gpuId)
+        {
+            pGpuInstances = pGpuMgr->cachedMIGInfo[i].gpuInstances;
+            break;
+        }
+    }
+
+    NV_ASSERT_OR_GOTO(pGpuInstances != NULL, done);
+
+    for (i = 0; i < GPUMGR_MAX_GPU_INSTANCES; i++)
+    {
+        if (pGpuInstances[i].bValid &&
+            pGpuInstances[i].swizzId == swizzId)
+        {
+            pGpuInstances[i].bValidComputeInstances[ciId] = NV_TRUE;
+            goto done;
+        }
+    }
+
+    NV_ASSERT(!"Unreachable");
+
+done:
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
+}
+
+void
+gpumgrCacheDestroyComputeInstance_IMPL(OBJGPU *pGpu, NvU32 swizzId, NvU32 ciId)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    GPUMGR_CACHED_MIG_GPU_INSTANCE *pGpuInstances = NULL;
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].gpuId == pGpu->gpuId)
+        {
+            pGpuInstances = pGpuMgr->cachedMIGInfo[i].gpuInstances;
+            break;
+        }
+    }
+
+    NV_ASSERT_OR_GOTO(pGpuInstances != NULL, done);
+
+    for (i = 0; i < GPUMGR_MAX_GPU_INSTANCES; i++)
+    {
+        if (pGpuInstances[i].bValid &&
+            pGpuInstances[i].swizzId == swizzId)
+        {
+            pGpuInstances[i].bValidComputeInstances[ciId] = NV_FALSE;
+            goto done;
+        }
+    }
+
+    NV_ASSERT(!"Unreachable");
+
+done:
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
+}
+
+void
+gpumgrCacheSetMIGEnabled_IMPL(OBJGPU *pGpu, NvBool bMIGEnabled)
+{
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    GPUMGR_CACHED_MIG_STATE *pMIGInfo = NULL;
+    NvU32 gpuId = pGpu->gpuId;
+    NvU32 i;
+
+    portSyncRwLockAcquireWrite(pGpuMgr->cachedMIGInfoLock);
+
+    for (i = 0; i < NV_MAX_DEVICES; i++)
+    {
+        if (pGpuMgr->cachedMIGInfo[i].bValid &&
+            (pGpuMgr->cachedMIGInfo[i].gpuId == gpuId))
+        {
+            pMIGInfo = &pGpuMgr->cachedMIGInfo[i];
+            break;
+        }
+    }
+
+    if (pMIGInfo == NULL)
+    {
+        // Get first invalid entry, for not yet seen gpuId.
+        for (i = 0; i < NV_MAX_DEVICES; i++)
+        {
+            if (!pGpuMgr->cachedMIGInfo[i].bValid)
+            {
+                pMIGInfo = &pGpuMgr->cachedMIGInfo[i];
+                pMIGInfo->bValid = NV_TRUE;
+                pMIGInfo->gpuId = gpuId;
+                break;
+            }
+        }
+    }
+
+    NV_ASSERT_OR_GOTO(pMIGInfo != NULL, done);
+
+    pMIGInfo->bMIGEnabled = bMIGEnabled;
+    if (!bMIGEnabled)
+    {
+        portMemSet(&pMIGInfo->gpuInstances, 0x0, sizeof(pMIGInfo->gpuInstances));
+    }
+
+done:
+    portSyncRwLockReleaseWrite(pGpuMgr->cachedMIGInfoLock);
+}
+
+NV_STATUS
+gpumgrCacheGetActiveDeviceIds_IMPL
+(
+    NV0000_CTRL_GPU_GET_ACTIVE_DEVICE_IDS_PARAMS *pActiveDeviceIdsParams
+)
+{
+    NV0000_CTRL_GPU_GET_PROBED_IDS_PARAMS probedGpuIds;
+    NV0000_CTRL_GPU_ACTIVE_DEVICE *pDevices = pActiveDeviceIdsParams->devices;
+    NvU32 *pNumDevices = &pActiveDeviceIdsParams->numDevices;
+    NvU32 total = 0;
+    NvU32 i;
+
+    NV_ASSERT_OK_OR_RETURN(gpumgrGetProbedGpuIds(&probedGpuIds));
+
+    OBJSYS *pSys = SYS_GET_INSTANCE();
+    OBJGPUMGR *pGpuMgr = SYS_GET_GPUMGR(pSys);
+    NV_STATUS status = NV_OK;
+
+    portSyncRwLockAcquireRead(pGpuMgr->cachedMIGInfoLock);
+
+    // Walk probed gpus.
+    for (i = 0;
+         (i < NV0000_CTRL_GPU_MAX_PROBED_GPUS) &&
+         (probedGpuIds.gpuIds[i] != NV0000_CTRL_GPU_INVALID_ID); i++)
+    {
+        NvU32 gpuId = probedGpuIds.gpuIds[i];
+        NvBool bGpuHandled = NV_FALSE;
+        NvU32 gpuIdx;
+
+        for (gpuIdx = 0; gpuIdx < NV_MAX_DEVICES; gpuIdx++)
+        {
+            NvU32 giIdx;
+            GPUMGR_CACHED_MIG_STATE *pMIGState = &pGpuMgr->cachedMIGInfo[gpuIdx];
+            GPUMGR_CACHED_MIG_GPU_INSTANCE *pGpuInstances = pMIGState->gpuInstances;
+
+            if (!pMIGState->bValid || (pMIGState->gpuId != gpuId))
+            {
+                continue;
+            }
+
+            // MIG not enabled, add device to list and carry on
+            if (!pMIGState->bMIGEnabled)
+            {
+                break;
+            }
+
+            bGpuHandled = NV_TRUE;
+
+            for (giIdx = 0; giIdx < GPUMGR_MAX_GPU_INSTANCES; giIdx++)
+            {
+                NvU32 ciIdx;
+                NvU32 swizzId = pGpuInstances[giIdx].swizzId;
+                NvBool *pbValidComputeInstances =
+                    pGpuInstances[giIdx].bValidComputeInstances;
+
+                if (!pGpuInstances[giIdx].bValid)
+                    continue;
+
+                for (ciIdx = 0; ciIdx < GPUMGR_MAX_COMPUTE_INSTANCES; ciIdx++)
+                {
+                    if (pbValidComputeInstances[ciIdx])
+                    {
+                        NV_ASSERT_OR_ELSE(total < NV0000_CTRL_GPU_MAX_ACTIVE_DEVICES,
+                                          status = NV_ERR_INVALID_STATE; goto done; );
+
+                        pDevices[total].gpuId = gpuId;
+                        pDevices[total].gpuInstanceId = swizzId;
+                        pDevices[total].computeInstanceId = ciIdx;
+                        total++;
+                    }
+                }
+            }
+        }
+
+        // Not in MIG mode, or we never had it in cache.
+        if (!bGpuHandled)
+        {
+            NV_ASSERT_OR_ELSE(total < NV0000_CTRL_GPU_MAX_ACTIVE_DEVICES,
+                              status = NV_ERR_INVALID_STATE; goto done; );
+
+            pDevices[total].gpuId = gpuId;
+            pDevices[total].gpuInstanceId = NV0000_CTRL_GPU_INVALID_ID;
+            pDevices[total].computeInstanceId = NV0000_CTRL_GPU_INVALID_ID;
+            total++;
+        }
+    }
+
+    *pNumDevices = total;
+
+done:
+    portSyncRwLockReleaseRead(pGpuMgr->cachedMIGInfoLock);
+
+    return status;
 }
 
 /**

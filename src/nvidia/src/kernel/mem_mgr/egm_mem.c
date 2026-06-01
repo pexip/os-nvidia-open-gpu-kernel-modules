@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -51,6 +51,7 @@ egmmemConstruct_IMPL
     NV_STATUS                    rmStatus           = NV_OK;
     FB_ALLOC_INFO               *pFbAllocInfo       = NULL;
     FB_ALLOC_PAGE_FORMAT        *pFbAllocPageFormat = NULL;
+    RM_ATTR_PAGE_SIZE            pageSizeAttr;
     MEMORY_DESCRIPTOR *pMemDesc;
     HWRESOURCE_INFO hwResource;
     NvU64 sizeOut;
@@ -171,7 +172,15 @@ egmmemConstruct_IMPL
 
     memdescSetGpuCacheAttrib(pMemDesc, gpuCacheAttrib);
 
-    NV_ASSERT_OK_OR_GOTO(rmStatus, memdescAlloc(pMemDesc), mem_construct_failed);
+
+    pageSizeAttr = dmaNvos32ToPageSizeAttr(pAllocData->attr, pAllocData->attr2);
+    NV_ASSERT_OK_OR_GOTO(rmStatus, memmgrSetMemDescPageSize_HAL(pGpu, GPU_GET_MEMORY_MANAGER(pGpu), pMemDesc,
+                                            AT_GPU, pageSizeAttr),
+                         mem_construct_failed);
+
+    memdescTagAlloc(rmStatus, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_45, 
+                    pMemDesc);
+    NV_ASSERT_OK_OR_GOTO(rmStatus, rmStatus, mem_construct_failed);
 
     NV_ASSERT_OK_OR_GOTO(rmStatus, memConstructCommon(pMemory,
                                                       pAllocRequest->classNum,
@@ -245,6 +254,10 @@ egmmemValidateParams
     MemoryManager *pMemoryManager = GPU_GET_MEMORY_MANAGER(pGpu);
 
     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, stdmemValidateParams(pGpu, hClient, pAllocData));
+
+    NV_CHECK_OR_RETURN(LEVEL_ERROR,
+                       FLD_TEST_DRF(OS32, _ATTR2, _USE_EGM, _TRUE, pAllocData->attr2),
+                       NV_ERR_INVALID_ARGUMENT);
 
     // Make sure EGM memory is not requested if local EGM is not supported
     if (!memmgrIsLocalEgmEnabled(pMemoryManager))

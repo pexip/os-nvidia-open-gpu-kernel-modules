@@ -113,6 +113,10 @@ static NV_STATUS __nvoc_thunk_Memory_gpushareddataGetMapAddrSpace(struct GpuUser
     return memGetMapAddrSpace((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_GpuUserSharedData_Memory.offset), pCallContext, mapFlags, pAddrSpace);
 }
 
+static NvBool __nvoc_thunk_Memory_gpushareddataIsExportAllowed(struct GpuUserSharedData *pMemory) {
+    return memIsExportAllowed((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_GpuUserSharedData_Memory.offset));
+}
+
 static NvU32 __nvoc_thunk_RsResource_gpushareddataGetRefCount(struct GpuUserSharedData *pResource) {
     return resGetRefCount((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RsResource.offset));
 }
@@ -137,10 +141,6 @@ static void __nvoc_thunk_RmResource_gpushareddataControl_Epilogue(struct GpuUser
     rmresControl_Epilogue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RmResource.offset), pCallContext, pParams);
 }
 
-static NV_STATUS __nvoc_thunk_RsResource_gpushareddataControlLookup(struct GpuUserSharedData *pResource, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams, const struct NVOC_EXPORTED_METHOD_DEF **ppEntry) {
-    return resControlLookup((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RsResource.offset), pParams, ppEntry);
-}
-
 static NV_STATUS __nvoc_thunk_Memory_gpushareddataControl(struct GpuUserSharedData *pMemory, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return memControl((struct Memory *)(((unsigned char *)pMemory) + __nvoc_rtti_GpuUserSharedData_Memory.offset), pCallContext, pParams);
 }
@@ -163,6 +163,10 @@ static NV_STATUS __nvoc_thunk_RsResource_gpushareddataControlFilter(struct GpuUs
 
 static NV_STATUS __nvoc_thunk_RmResource_gpushareddataControlSerialization_Prologue(struct GpuUserSharedData *pResource, CALL_CONTEXT *pCallContext, struct RS_RES_CONTROL_PARAMS_INTERNAL *pParams) {
     return rmresControlSerialization_Prologue((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RmResource.offset), pCallContext, pParams);
+}
+
+static NvBool __nvoc_thunk_RsResource_gpushareddataIsPartialUnmapSupported(struct GpuUserSharedData *pResource) {
+    return resIsPartialUnmapSupported((struct RsResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RsResource.offset));
 }
 
 static NV_STATUS __nvoc_thunk_Memory_gpushareddataIsReady(struct GpuUserSharedData *pMemory, NvBool bCopyConstructorContext) {
@@ -193,14 +197,39 @@ static NvBool __nvoc_thunk_RmResource_gpushareddataAccessCallback(struct GpuUser
     return rmresAccessCallback((struct RmResource *)(((unsigned char *)pResource) + __nvoc_rtti_GpuUserSharedData_RmResource.offset), pInvokingClient, pAllocParams, accessRight);
 }
 
+#if !defined(NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG)
+#define NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(x)      (0)
+#endif
+
+static const struct NVOC_EXPORTED_METHOD_DEF __nvoc_exported_method_def_GpuUserSharedData[] = 
+{
+    {               /*  [0] */
+#if NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
+        /*pFunc=*/      (void (*)(void)) NULL,
+#else
+        /*pFunc=*/      (void (*)(void)) gpushareddataCtrlCmdRequestDataPoll_IMPL,
+#endif // NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
+        /*flags=*/      0x10u,
+        /*accessRight=*/0x0u,
+        /*methodId=*/   0xde0001u,
+        /*paramSize=*/  sizeof(NV00DE_CTRL_REQUEST_DATA_POLL_PARAMS),
+        /*pClassInfo=*/ &(__nvoc_class_def_GpuUserSharedData.classInfo),
+#if NV_PRINTF_STRINGS_ALLOWED
+        /*func=*/       "gpushareddataCtrlCmdRequestDataPoll"
+#endif
+    },
+
+};
+
 const struct NVOC_EXPORT_INFO __nvoc_export_info_GpuUserSharedData = 
 {
-    /*numEntries=*/     0,
-    /*pExportEntries=*/  0
+    /*numEntries=*/     1,
+    /*pExportEntries=*/ __nvoc_exported_method_def_GpuUserSharedData
 };
 
 void __nvoc_dtor_Memory(Memory*);
 void __nvoc_dtor_GpuUserSharedData(GpuUserSharedData *pThis) {
+    __nvoc_gpushareddataDestruct(pThis);
     __nvoc_dtor_Memory(&pThis->__nvoc_base_Memory);
     PORT_UNREFERENCED_VARIABLE(pThis);
 }
@@ -233,6 +262,10 @@ static void __nvoc_init_funcTable_GpuUserSharedData_1(GpuUserSharedData *pThis) 
 
     pThis->__gpushareddataCanCopy__ = &gpushareddataCanCopy_IMPL;
 
+#if !NVOC_EXPORTED_METHOD_DISABLED_BY_FLAG(0x10u)
+    pThis->__gpushareddataCtrlCmdRequestDataPoll__ = &gpushareddataCtrlCmdRequestDataPoll_IMPL;
+#endif
+
     pThis->__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__resCanCopy__ = &__nvoc_thunk_GpuUserSharedData_resCanCopy;
 
     pThis->__gpushareddataCheckMemInterUnmap__ = &__nvoc_thunk_Memory_gpushareddataCheckMemInterUnmap;
@@ -242,6 +275,8 @@ static void __nvoc_init_funcTable_GpuUserSharedData_1(GpuUserSharedData *pThis) 
     pThis->__gpushareddataMapTo__ = &__nvoc_thunk_RsResource_gpushareddataMapTo;
 
     pThis->__gpushareddataGetMapAddrSpace__ = &__nvoc_thunk_Memory_gpushareddataGetMapAddrSpace;
+
+    pThis->__gpushareddataIsExportAllowed__ = &__nvoc_thunk_Memory_gpushareddataIsExportAllowed;
 
     pThis->__gpushareddataGetRefCount__ = &__nvoc_thunk_RsResource_gpushareddataGetRefCount;
 
@@ -255,8 +290,6 @@ static void __nvoc_init_funcTable_GpuUserSharedData_1(GpuUserSharedData *pThis) 
 
     pThis->__gpushareddataControl_Epilogue__ = &__nvoc_thunk_RmResource_gpushareddataControl_Epilogue;
 
-    pThis->__gpushareddataControlLookup__ = &__nvoc_thunk_RsResource_gpushareddataControlLookup;
-
     pThis->__gpushareddataControl__ = &__nvoc_thunk_Memory_gpushareddataControl;
 
     pThis->__gpushareddataUnmap__ = &__nvoc_thunk_Memory_gpushareddataUnmap;
@@ -268,6 +301,8 @@ static void __nvoc_init_funcTable_GpuUserSharedData_1(GpuUserSharedData *pThis) 
     pThis->__gpushareddataControlFilter__ = &__nvoc_thunk_RsResource_gpushareddataControlFilter;
 
     pThis->__gpushareddataControlSerialization_Prologue__ = &__nvoc_thunk_RmResource_gpushareddataControlSerialization_Prologue;
+
+    pThis->__gpushareddataIsPartialUnmapSupported__ = &__nvoc_thunk_RsResource_gpushareddataIsPartialUnmapSupported;
 
     pThis->__gpushareddataIsReady__ = &__nvoc_thunk_Memory_gpushareddataIsReady;
 
@@ -300,21 +335,26 @@ void __nvoc_init_GpuUserSharedData(GpuUserSharedData *pThis) {
     __nvoc_init_funcTable_GpuUserSharedData(pThis);
 }
 
-NV_STATUS __nvoc_objCreate_GpuUserSharedData(GpuUserSharedData **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams) {
+NV_STATUS __nvoc_objCreate_GpuUserSharedData(GpuUserSharedData **ppThis, Dynamic *pParent, NvU32 createFlags, CALL_CONTEXT * arg_pCallContext, struct RS_RES_ALLOC_PARAMS_INTERNAL * arg_pParams)
+{
     NV_STATUS status;
-    Object *pParentObj;
+    Object *pParentObj = NULL;
     GpuUserSharedData *pThis;
 
+    // Assign `pThis`, allocating memory unless suppressed by flag.
     status = __nvoc_handleObjCreateMemAlloc(createFlags, sizeof(GpuUserSharedData), (void**)&pThis, (void**)ppThis);
     if (status != NV_OK)
         return status;
 
+    // Zero is the initial value for everything.
     portMemSet(pThis, 0, sizeof(GpuUserSharedData));
 
+    // Initialize runtime type information.
     __nvoc_initRtti(staticCast(pThis, Dynamic), &__nvoc_class_def_GpuUserSharedData);
 
     pThis->__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object.createFlags = createFlags;
 
+    // Link the child into the parent if there is one unless flagged not to do so.
     if (pParent != NULL && !(createFlags & NVOC_OBJ_CREATE_FLAGS_PARENT_HALSPEC_ONLY))
     {
         pParentObj = dynamicCast(pParent, Object);
@@ -329,16 +369,25 @@ NV_STATUS __nvoc_objCreate_GpuUserSharedData(GpuUserSharedData **ppThis, Dynamic
     status = __nvoc_ctor_GpuUserSharedData(pThis, arg_pCallContext, arg_pParams);
     if (status != NV_OK) goto __nvoc_objCreate_GpuUserSharedData_cleanup;
 
+    // Assignment has no effect if NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT is set.
     *ppThis = pThis;
 
     return NV_OK;
 
 __nvoc_objCreate_GpuUserSharedData_cleanup:
-    // do not call destructors here since the constructor already called them
+
+    // Unlink the child from the parent if it was linked above.
+    if (pParentObj != NULL)
+        objRemoveChild(pParentObj, &pThis->__nvoc_base_Memory.__nvoc_base_RmResource.__nvoc_base_RsResource.__nvoc_base_Object);
+
+    // Do not call destructors here since the constructor already called them.
     if (createFlags & NVOC_OBJ_CREATE_FLAGS_IN_PLACE_CONSTRUCT)
         portMemSet(pThis, 0, sizeof(GpuUserSharedData));
     else
+    {
         portMemFree(pThis);
+        *ppThis = NULL;
+    }
 
     // coverity[leaked_storage:FALSE]
     return status;
