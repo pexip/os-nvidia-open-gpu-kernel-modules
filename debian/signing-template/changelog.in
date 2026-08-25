@@ -1,0 +1,11 @@
+nvidia-open-kernel-@arch@-signed (1+@version_mangled@) @distribution@; urgency=@urgency@
+
+  * Update to nvidia-open-gpu-kernel-modules @version_binary@
+
+ -- Pexip AS <packaging@pexip.com>  @date@
+
+nvidia-open-kernel-@arch@-signed (1) @distribution@; urgency=medium
+
+  * Add template source package for signing
+
+ -- Pexip AS <packaging@pexip.com>  Mon, 24 Aug 2026 17:14:47 +0100

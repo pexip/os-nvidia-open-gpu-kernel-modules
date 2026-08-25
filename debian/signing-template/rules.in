@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+
+SIG_DIR := debian/signatures/nvidia-open-kernel-@kabi@-@arch@
+SIGN_FILE := /usr/lib/linux-kbuild-@kabi@/scripts/sign-file
+
+%:
+	dh $@
+
+# Support *.ko and *.ko.xz; the following shell-in-make is nasty
+override_dh_auto_install:
+	set -e ; \
+	find "$(SIG_DIR)" -name '*.sig' -printf '%P\n' | \
+	while read sig; do \
+		install -m 0755 -d "debian/tmp/$${sig%/*}" ; \
+		case $${sig} in \
+			*.ko.xz.sig)\
+				xz -d < "/$${sig%.sig}" > unsigned.ko ; \
+				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
+					unsigned.ko signed.ko; \
+				xz -9v < signed.ko > "debian/tmp/$${sig}ned"; \
+				rm -f unsigned.ko signed.ko;; \
+			*.ko.sig)\
+				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
+					"/$${sig%.sig}" "debian/tmp/$${sig}ned";; \
+			*)\
+				echo "Unexpected file in the signed list: $(SIG_DIR)/$${sig}}"; \\
+				exit 1;; \
+		esac \
+	done
+
+override_dh_install:
+	dh_install --sourcedir=debian/tmp .

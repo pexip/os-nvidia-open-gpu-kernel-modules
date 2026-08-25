@@ -1,0 +1,29 @@
+{
+  "packages": {
+    "nvidia-open-kernel-unsigned-@kabi@-@arch@": {
+      "trusted_certs": [],
+      "files": [
+        {
+	    "sig_type": "linux-module",
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-drm.ko.xz"
+	},
+        {
+	    "sig_type": "linux-module",
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-modeset.ko.xz"
+	},
+        {
+	    "sig_type": "linux-module",
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-peermem.ko.xz"
+	},
+        {
+	    "sig_type": "linux-module",
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-uvm.ko.xz"
+	},
+        {
+	    "sig_type": "linux-module",
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia.ko.xz"
+	}
+      ]
+    }
+  }
+}

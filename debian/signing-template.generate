@@ -1,0 +1,44 @@
+#!/bin/sh
+set -e -u
+
+distribution="$(dpkg-parsechangelog -S Distribution)"
+urgency="$(dpkg-parsechangelog -S Urgency)"
+date="$(dpkg-parsechangelog -S Date)"
+version_binary="$(dpkg-parsechangelog -S Version)"
+version_mangled="$(dpkg-parsechangelog -S Version | tr '-' '+')"
+pkg_name="nvidia-open-kernel-${DEB_HOST_ARCH}-signed-template"
+final_pkg_name="${pkg_name%-template}"
+kernel_abi=$(ls -dvr1 /lib/modules/*/build 2>/dev/null | cut -d/ -f4 | head -n 1 | sed "s/-${DEB_HOST_ARCH}$//")
+
+subst () {
+	sed \
+		-e "s/@arch@/${DEB_HOST_ARCH}/g" \
+		-e "s/@kabi@/${kernel_abi}/g" \
+		-e "s/@version_binary@/${version_binary}/g" \
+		-e "s/@version_mangled@/${version_mangled}/g" \
+		-e "s/@distribution@/${distribution}/g" \
+		-e "s/@urgency@/${urgency}/g" \
+		-e "s/@date@/${date}/g" \
+		-e "s/@final_pkg_name@/${final_pkg_name}/g" \
+		"$@"
+}
+
+template='./debian/signing-template'
+pkg_dir="debian/${pkg_name}/usr/share/code-signing/${pkg_name}"
+pkg_deb="${pkg_dir}/source-template/debian"
+
+install -m 0755 -d "${pkg_dir}"
+subst < ./debian/signing-template.json.in > "${pkg_dir}/files.json"
+
+find "${template}" -type f -printf '%P\n' |
+while read path
+do
+	src="${template}/${path}"
+	dst=$(echo "${pkg_deb}/${path}" | subst)
+
+	install -m 0755 -d "${dst%/*}"
+	subst < "${src}" > "${dst%.in}"
+	chmod --reference="${src}" "${dst%.in}"
+done
+
+exit 0

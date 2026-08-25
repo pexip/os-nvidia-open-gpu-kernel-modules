@@ -1,0 +1,22 @@
+Source: nvidia-open-kernel-@arch@-signed
+Section: gpu/kernel
+Priority: optional
+Maintainer: Pexip AS <packaging@pexip.com>
+Rules-Requires-Root: no
+Standards-Version: 4.3.0
+Build-Depends: debhelper (>= 10.1~),
+ linux-kbuild-@kabi@,
+ nvidia-open-kernel-unsigned-@kabi@-@arch@ (= @version_binary@),
+
+Package: nvidia-open-kernel-@kabi@-@arch@
+Architecture: @arch@
+Depends: ${misc:Depends},
+Built-Using: nvidia-open-gpu-kernel-modules (= @version_binary@)
+Description: NVIDIA signed open kernel modules
+ This package provides a pre-built binary of the NVIDIA binary kernel modules.
+ .
+ The NVIDIA binary driver provides optimized hardware acceleration of
+ OpenGL/GLX/EGL/GLES applications via a direct-rendering X Server
+ for graphics cards using NVIDIA chip sets.
+ .
+ This package is built for linux-image-@kabi@.

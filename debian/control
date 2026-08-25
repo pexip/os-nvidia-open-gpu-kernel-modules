@@ -139,3 +139,10 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
  for graphics cards using NVIDIA chip sets.
  .
  ${nvidia:Models}
+
+Package: nvidia-open-kernel-amd64-signed-template
+Architecture: amd64
+Depends: ${misc:Depends},
+Description: NVIDIA open kernel module ${nvidia:VariantDesc} signed template
+ This package contains template files for nvidia-open-kernel-amd64-signed
+ This is only needed for Secure Boot signing.

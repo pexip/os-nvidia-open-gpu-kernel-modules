@@ -101,7 +101,7 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
  Building the kernel modules has been tested up to Linux ${nvidia:kmod:tested:Linux}.
 
 #Package: ${nvidia-kernel}-prebuilt
-Package: nvidia-open-kernel-@KABI@
+Package: nvidia-open-kernel-unsigned-@KABI@
 Architecture: amd64 arm64
 Depends:
  linux-image-${kernel:ABIVersion},
@@ -139,3 +139,10 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
  for graphics cards using NVIDIA chip sets.
  .
  ${nvidia:Models}
+
+Package: nvidia-open-kernel-@ARCH@-signed-template
+Architecture: amd64
+Depends: ${misc:Depends},
+Description: NVIDIA open kernel module ${nvidia:VariantDesc} signed template
+ This package contains template files for nvidia-open-kernel-@ARCH@-signed
+ This is only needed for Secure Boot signing.
