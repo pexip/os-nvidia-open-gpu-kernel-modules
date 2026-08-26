@@ -1,3 +1,10 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u5) pexip-trixie; urgency=medium
+
+  * Tweak the building of the signed modules packages again
+    Name the kernel modules correctly and things might work
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Wed, 26 Aug 2026 16:41:40 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u4) pexip-trixie; urgency=medium
 
   * Tweak the building of the signed modules packages

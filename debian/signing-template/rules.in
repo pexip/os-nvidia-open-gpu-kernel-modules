@@ -22,14 +22,14 @@ override_dh_auto_install:
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig} sha256 dummy \
 					unsigned.ko signed.ko; \
 				echo "... Recompressing"; \
-				xz -9v < signed.ko > "$(BUILD_DIR)/$${sig}ned"; \
+				xz -9v < signed.ko > "$(BUILD_DIR)/$${sig%.sig}"; \
 				echo "... Cleaning up"; \
 				rm -f unsigned.ko signed.ko;; \
 			*.ko.sig)\
 				echo "$${sig%.sig}:"; \
 				echo "... Signing"; \
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
-					"/$${sig%.sig}" "$(BUILD_DIR)/$${sig}ned";; \
+					"/$${sig%.sig}" "$(BUILD_DIR)/$${sig%.sig}";; \
 			*)\
 				echo "Unexpected file in the signed list: $(SIG_DIR)/$${sig}}"; \
 				exit 1;; \
