@@ -2,6 +2,7 @@
 
 SIG_DIR := debian/signatures/nvidia-open-kernel-unsigned-@kabi@-@arch@
 SIGN_FILE := /usr/lib/linux-kbuild-@kabi@/scripts/sign-file
+BUILD_DIR := debian/nvidia-open-kernel-@kabi@-@arch@
 
 %:
 	dh $@
@@ -11,7 +12,7 @@ override_dh_auto_install:
 	@set -e ; \
 	find "$(SIG_DIR)" -name '*.sig' -printf '%P\n' | \
 	while read sig; do \
-		install -m 0755 -d "debian/tmp/$${sig%/*}" ; \
+		install -m 0755 -d "$(BUILD_DIR)/$${sig%/*}" ; \
 		case $${sig} in \
 			*.ko.xz.sig)\
 				echo "$${sig%.sig}:"; \
@@ -21,19 +22,16 @@ override_dh_auto_install:
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig} sha256 dummy \
 					unsigned.ko signed.ko; \
 				echo "... Recompressing"; \
-				xz -9v < signed.ko > "debian/tmp/$${sig}ned"; \
+				xz -9v < signed.ko > "$(BUILD_DIR)/$${sig}ned"; \
 				echo "... Cleaning up"; \
 				rm -f unsigned.ko signed.ko;; \
 			*.ko.sig)\
 				echo "$${sig%.sig}:"; \
 				echo "... Signing"; \
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
-					"/$${sig%.sig}" "debian/tmp/$${sig}ned";; \
+					"/$${sig%.sig}" "$(BUILD_DIR)/$${sig}ned";; \
 			*)\
 				echo "Unexpected file in the signed list: $(SIG_DIR)/$${sig}}"; \
 				exit 1;; \
 		esac \
 	done
-
-override_dh_install:
-	dh_install --sourcedir=debian/tmp .

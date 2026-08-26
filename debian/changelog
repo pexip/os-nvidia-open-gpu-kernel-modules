@@ -1,3 +1,12 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u4) pexip-trixie; urgency=medium
+
+  * Tweak the building of the signed modules packages
+    + Build in the normal package build directory so that
+      dh_installmodules runs appropriately and adds maintainer script
+      snippets for the package.
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Wed, 26 Aug 2026 15:46:24 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u3) pexip-trixie; urgency=medium
 
   * Add an epoch to the signed modules packages so they'll be accepted
