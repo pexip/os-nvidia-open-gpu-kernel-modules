@@ -143,7 +143,7 @@ Description: NVIDIA open kernel module ${nvidia:VariantDesc}
  ${nvidia:Models}
 
 Package: nvidia-open-kernel-@ARCH@-signed-template
-Architecture: amd64
+Architecture: amd64 arm64
 Depends: ${misc:Depends},
 Description: NVIDIA open kernel module ${nvidia:VariantDesc} signed template
  This package contains template files for nvidia-open-kernel-@ARCH@-signed
