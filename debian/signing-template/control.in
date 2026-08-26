@@ -10,7 +10,7 @@ Build-Depends: debhelper (>= 10.1~),
 
 Package: nvidia-open-kernel-@kabi@-@arch@
 Architecture: @arch@
-Depends: ${misc:Depends},
+Depends: linux-image-@kabi@, @extra_deps@, ${misc:Depends}
 Built-Using: nvidia-open-gpu-kernel-modules (= @version_binary@)
 Description: NVIDIA signed open kernel modules
  This package provides a pre-built binary of the NVIDIA binary kernel modules.

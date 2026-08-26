@@ -103,17 +103,19 @@ Description: NVIDIA open kernel module source${nvidia:VariantDesc}
 #Package: ${nvidia-kernel}-prebuilt
 Package: nvidia-open-kernel-unsigned-@KABI@
 Architecture: amd64 arm64
-Depends:
+Recommends:
  linux-image-${kernel:ABIVersion},
  firmware-${nvidia}-gsp (= ${nvidia:Version}) | firmware-nvidia-gsp-${nvidia:Version},
  ${nvidia-kernel}-support--v1,
+Depends:
  ${misc:Depends}
 Provides:
  ${nvidia-kernel}-${nvidia:Version},
  nvidia-open-kernel-${nvidia:Version}
 Description: NVIDIA open kernel module ${nvidia:VariantDesc}
- This package provides a pre-built binary of the NVIDIA binary kernel modules
- needed by ${nvidia}-driver.
+ This package provides *unsigned* pre-built binaries of the NVIDIA
+ binary kernel modules needed by ${nvidia}-driver. This package should
+ not normally be installed - use the signed version instead.
  .
  The NVIDIA binary driver provides optimized hardware acceleration of
  OpenGL/GLX/EGL/GLES applications via a direct-rendering X Server

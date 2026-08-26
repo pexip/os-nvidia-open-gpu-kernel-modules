@@ -10,6 +10,10 @@ pkg_name="nvidia-open-kernel-${DEB_HOST_ARCH}-signed-template"
 final_pkg_name="${pkg_name%-template}"
 kernel_abi=$(ls -dvr1 /lib/modules/*/build 2>/dev/null | cut -d/ -f4 | head -n 1 | sed "s/-${DEB_HOST_ARCH}$//")
 
+# Add extra dependencies for the final signed binary package if we
+# need.
+extra_deps="$1"
+
 subst () {
 	sed \
 		-e "s/@arch@/${DEB_HOST_ARCH}/g" \
@@ -20,6 +24,7 @@ subst () {
 		-e "s/@urgency@/${urgency}/g" \
 		-e "s/@date@/${date}/g" \
 		-e "s/@final_pkg_name@/${final_pkg_name}/g" \
+		-e "s/@extra_deps@/${extra_deps}/g" \
 		"$@"
 }
 

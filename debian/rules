@@ -102,7 +102,8 @@ override_dh_auto_install:
 	find "debian/$(nvidia-kernel)-$(kernel_abi)/lib/modules/$(kernel_abi)" -name 'nvidia*.ko.xz' -exec sh -c 'echo Moving "{}"; mv -v "{}" $$(echo "{}" | sed -e "s#nvidia\([a-z-]*.ko.xz\)#$(module)\1#")' \;
 
 	# Generate the template packages that we'll use for SB signing later
-	./debian/signing-template.generate
+	./debian/signing-template.generate \
+	"firmware-$(nvidia)-gsp (= $(version_major)) | firmware-nvidia-gsp-$(version_major), $(nvidia-kernel)-support--v1"
 
 # nothing to do
 override_dh_auto_test:
