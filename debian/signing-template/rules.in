@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
 
-SIG_DIR := debian/signatures/nvidia-open-kernel-@kabi@-@arch@
+SIG_DIR := debian/signatures/nvidia-open-kernel-unsigned-@kabi@-@arch@
 SIGN_FILE := /usr/lib/linux-kbuild-@kabi@/scripts/sign-file
 
 %:
