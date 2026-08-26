@@ -23,7 +23,7 @@ override_dh_auto_install:
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
 					"/$${sig%.sig}" "debian/tmp/$${sig}ned";; \
 			*)\
-				echo "Unexpected file in the signed list: $(SIG_DIR)/$${sig}}"; \\
+				echo "Unexpected file in the signed list: $(SIG_DIR)/$${sig}}"; \
 				exit 1;; \
 		esac \
 	done
