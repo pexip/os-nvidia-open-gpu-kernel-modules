@@ -1,4 +1,4 @@
-nvidia-open-kernel-@arch@-signed (1+@version_mangled@) @distribution@; urgency=@urgency@
+nvidia-open-kernel-@arch@-signed (1:@version_mangled@) @distribution@; urgency=@urgency@
 
   * Update to nvidia-open-gpu-kernel-modules @version_binary@
 
