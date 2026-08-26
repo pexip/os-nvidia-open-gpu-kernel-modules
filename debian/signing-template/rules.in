@@ -8,18 +8,25 @@ SIGN_FILE := /usr/lib/linux-kbuild-@kabi@/scripts/sign-file
 
 # Support *.ko and *.ko.xz; the following shell-in-make is nasty
 override_dh_auto_install:
-	set -e ; \
+	@set -e ; \
 	find "$(SIG_DIR)" -name '*.sig' -printf '%P\n' | \
 	while read sig; do \
 		install -m 0755 -d "debian/tmp/$${sig%/*}" ; \
 		case $${sig} in \
 			*.ko.xz.sig)\
+				echo "$${sig%.sig}:"; \
+				echo "... Decompressing"; \
 				xz -d < "/$${sig%.sig}" > unsigned.ko ; \
-				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
+				echo "... Signing"; \
+				$(SIGN_FILE) -s $(SIG_DIR)/$${sig} sha256 dummy \
 					unsigned.ko signed.ko; \
+				echo "... Recompressing"; \
 				xz -9v < signed.ko > "debian/tmp/$${sig}ned"; \
+				echo "... Cleaning up"; \
 				rm -f unsigned.ko signed.ko;; \
 			*.ko.sig)\
+				echo "$${sig%.sig}:"; \
+				echo "... Signing"; \
 				$(SIGN_FILE) -s $(SIG_DIR)/$${sig}} sha256 dummy \
 					"/$${sig%.sig}" "debian/tmp/$${sig}ned";; \
 			*)\
