@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u65) pexip-trixie; urgency=medium
+
+  * No-change rebuild to pick up on the latest kernel packages
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Fri, 28 Aug 2026 17:23:40 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u5) pexip-trixie; urgency=medium
 
   * Tweak the building of the signed modules packages again
