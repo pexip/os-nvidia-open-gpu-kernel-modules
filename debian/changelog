@@ -1,3 +1,12 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u66) pexip-trixie; urgency=medium
+
+  * Tweak the dependencies for the signed packages again:
+    + Use the full upstream version for the nvidia packages, not just
+      the major
+    + Add the arch for the kernel ABI
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Wed, 02 Sep 2026 10:58:37 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u65) pexip-trixie; urgency=medium
 
   * No-change rebuild to pick up on the latest kernel packages

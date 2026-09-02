@@ -103,7 +103,7 @@ override_dh_auto_install:
 
 	# Generate the template packages that we'll use for SB signing later
 	./debian/signing-template.generate \
-	"firmware-$(nvidia)-gsp (= $(version_major)) | firmware-nvidia-gsp-$(version_major), $(nvidia-kernel)-support--v1"
+	"firmware-$(nvidia)-gsp (= $(version)) | firmware-nvidia-gsp-$(version), $(nvidia-kernel)-support--v1"
 
 # nothing to do
 override_dh_auto_test:
