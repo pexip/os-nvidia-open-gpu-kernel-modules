@@ -1,3 +1,10 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u69) pexip-trixie; urgency=medium
+
+  * Update the linux-headers build-dep again to
+    linux-headers-6.18.22+pexip25+4-$arch
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Fri, 02 Oct 2026 13:22:56 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u68) pexip-trixie; urgency=medium
 
   * Update the linux-headers build-dep *in control.in*
