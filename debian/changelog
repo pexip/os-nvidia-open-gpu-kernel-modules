@@ -1,6 +1,8 @@
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u72) pexip-trixie; urgency=medium
 
   * Rebuild for 6.18.58.
+  * Import backported patch for changes in pci_resize_resource function:
+    debian/patches/module/0075-backport-NV_PCI_RESIZE_RESOURCE_HAS_EXCLUDE_BARS_ARG.patch
 
  -- Mark Hymers <mark.hymers@pexip.com>  Thu, 22 Oct 2026 16:45:31 +0100
 
