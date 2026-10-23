@@ -1,4 +1,4 @@
-nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u74) UNRELEASED; urgency=medium
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u74) pexip-trixie; urgency=medium
 
   * Fix renaming of modules, broken in the SB changes.
     And tweak the signing template file to use matching names for signing
