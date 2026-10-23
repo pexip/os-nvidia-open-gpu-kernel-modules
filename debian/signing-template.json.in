@@ -5,23 +5,23 @@
       "files": [
         {
 	    "sig_type": "linux-module",
-	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-drm.ko.xz"
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-current-open-drm.ko.xz"
 	},
         {
 	    "sig_type": "linux-module",
-	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-modeset.ko.xz"
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-current-open-modeset.ko.xz"
 	},
         {
 	    "sig_type": "linux-module",
-	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-peermem.ko.xz"
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-current-open-peermem.ko.xz"
 	},
         {
 	    "sig_type": "linux-module",
-	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-uvm.ko.xz"
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-current-open-uvm.ko.xz"
 	},
         {
 	    "sig_type": "linux-module",
-	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia.ko.xz"
+	    "file": "lib/modules/@kabi@-@arch@/kernel/drivers/video/nvidia-current-open.ko.xz"
 	}
       ]
     }

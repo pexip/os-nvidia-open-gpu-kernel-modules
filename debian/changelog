@@ -1,3 +1,10 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u74) UNRELEASED; urgency=medium
+
+  * Fix renaming of modules, broken in the SB changes.
+    And tweak the signing template file to use matching names for signing
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Sat, 24 Oct 2026 00:09:54 +0100
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u73) UNRELEASED; urgency=medium
 
   * Fix compression of signed modules so that CRC32 is used as the XZ
