@@ -1,3 +1,9 @@
+nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u76) pexip-trixie; urgency=medium
+
+  * Rebuild for 6.18.63.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Tue, 17 Nov 2026 10:33:24 +0000
+
 nvidia-open-gpu-kernel-modules (550.163.01-4~bpo13+1+pexip25u75) pexip-trixie; urgency=medium
 
   * Rebuild for 6.18.60.
